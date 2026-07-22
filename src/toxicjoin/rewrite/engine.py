@@ -37,7 +37,7 @@ def enforce_minimum_group_size(
 
     This rewriter intentionally supports one narrow transformation. It never turns
     individual-level output into grouped output and never removes arbitrary clauses.
-    Unsupported cases fail closed instead of producing best-effort SQL.
+    Unsupported or ambiguous bindings fail closed instead of producing best-effort SQL.
     """
 
     if minimum_group_size < 2:
@@ -79,9 +79,13 @@ def enforce_minimum_group_size(
         )
 
     if "UNTRUSTED_GROUP_THRESHOLD_OR_EXPRESSION" in original_plan.analysis_warnings:
-        raise RewriteError("HAVING expressions containing OR are outside the safe rewrite profile")
+        raise RewriteError(
+            "HAVING expressions containing OR are outside the safe rewrite profile"
+        )
     if "UNTRUSTED_GROUP_THRESHOLD_MULTIPLE_SUBJECTS" in original_plan.analysis_warnings:
-        raise RewriteError("multiple threshold subjects are outside the safe rewrite profile")
+        raise RewriteError(
+            "multiple threshold subjects are outside the safe rewrite profile"
+        )
 
     try:
         root = sqlglot.parse_one(sql, read=dialect)
@@ -90,8 +94,11 @@ def enforce_minimum_group_size(
     if not isinstance(root, exp.Select):
         raise RewriteError("rewrite target is not a SELECT")
 
-    reference = matching_refs[0]
-    qualifier = subject_key.alias or reference.alias
+    qualifier = _root_subject_qualifier(
+        root,
+        subject_key=subject_key,
+        matching_refs=matching_refs,
+    )
     subject_expression = exp.column(subject_key.field_path, table=qualifier)
     threshold_expression = exp.GTE(
         this=exp.Count(
@@ -135,3 +142,59 @@ def enforce_minimum_group_size(
         original_plan=original_plan,
         safe_plan=safe_plan,
     )
+
+
+def _root_subject_qualifier(
+    root: exp.Select,
+    *,
+    subject_key: ColumnRef,
+    matching_refs: list[ColumnRef],
+) -> str | None:
+    """Resolve the subject alias visible in the root SELECT scope.
+
+    CTE analysis maps root columns back to physical datasets, so the physical alias
+    stored on the subject key may belong to an inner scope. The rewrite must bind the
+    threshold to the outer alias that is actually executable. Ambiguous candidates are
+    rejected rather than guessed.
+    """
+
+    candidates = {
+        column.table or None
+        for column in _root_scope_columns(root)
+        if column.name == subject_key.field_path
+    }
+    if not candidates:
+        raise RewriteError(
+            "subject key is not referenced in the root query scope required for rewrite"
+        )
+
+    if subject_key.alias in candidates:
+        return subject_key.alias
+
+    matching_aliases = {
+        ref.alias
+        for ref in matching_refs
+        if ref.alias in candidates
+    }
+    if len(matching_aliases) == 1:
+        return next(iter(matching_aliases))
+    if len(candidates) == 1:
+        return next(iter(candidates))
+
+    rendered = ", ".join("<unqualified>" if value is None else value for value in sorted(
+        candidates,
+        key=lambda value: "" if value is None else value,
+    ))
+    raise RewriteError(
+        "subject key maps to multiple root query aliases; explicit safe binding is "
+        f"required: {rendered}"
+    )
+
+
+def _root_scope_columns(root: exp.Select) -> tuple[exp.Column, ...]:
+    columns: list[exp.Column] = []
+    for column in root.find_all(exp.Column):
+        nearest_select = column.find_ancestor(exp.Select)
+        if nearest_select is root:
+            columns.append(column)
+    return tuple(columns)
