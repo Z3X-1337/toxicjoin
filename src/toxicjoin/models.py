@@ -84,12 +84,13 @@ class QueryPlan(StrictModel):
     group_by_columns: tuple[ColumnRef, ...] = ()
     aggregate_functions: tuple[str, ...] = ()
     minimum_group_size_present: int | None = Field(default=None, ge=1)
+    minimum_group_size_subject: ColumnRef | None = None
     is_grouped: bool = False
     contains_wildcard: bool = False
     analysis_warnings: tuple[str, ...] = ()
 
     @model_validator(mode="after")
-    def referenced_columns_cover_structural_columns(self) -> "QueryPlan":
+    def validate_query_plan_consistency(self) -> "QueryPlan":
         referenced = {column.key for column in self.referenced_columns}
         structural = {
             column.key
@@ -105,6 +106,12 @@ class QueryPlan(StrictModel):
             raise ValueError(
                 "referenced_columns must include projected/join/group columns; "
                 f"missing={missing}"
+            )
+        if (self.minimum_group_size_present is None) != (
+            self.minimum_group_size_subject is None
+        ):
+            raise ValueError(
+                "minimum_group_size_present and minimum_group_size_subject must be set together"
             )
         return self
 
