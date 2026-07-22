@@ -102,14 +102,16 @@ class DecisionReceipt(StrictModel):
     created_at: datetime
     mode: ReceiptMode
     task_purpose: str = Field(min_length=1)
-    decision: Decision
-    reason_codes: tuple[ReasonCode, ...]
+    initial_decision: Decision
+    initial_reason_codes: tuple[ReasonCode, ...]
+    final_decision: Decision | None = None
+    final_reason_codes: tuple[ReasonCode, ...] = ()
     policy_version: str = Field(min_length=1)
     sql: ReceiptSqlEvidence
     columns: tuple[ReceiptColumnEvidence, ...]
     verification: tuple[ReceiptVerificationCheck, ...] = ()
     execution: ReceiptExecutionSummary | None = None
-    writeback: ReceiptWriteback = ReceiptWriteback()
+    writeback: ReceiptWriteback = Field(default_factory=ReceiptWriteback)
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
     @field_validator("created_at")
@@ -117,16 +119,20 @@ class DecisionReceipt(StrictModel):
     def created_at_must_be_utc(cls, value: datetime) -> datetime:
         if value.tzinfo is None:
             raise ValueError("created_at must be timezone-aware")
-        utc_value = value.astimezone(timezone.utc)
-        if utc_value.utcoffset() != timezone.utc.utcoffset(utc_value):
-            raise ValueError("created_at could not be normalized to UTC")
-        return utc_value
+        return value.astimezone(timezone.utc)
 
     @model_validator(mode="after")
-    def execution_requires_successful_verification(self) -> "DecisionReceipt":
+    def lifecycle_is_consistent(self) -> "DecisionReceipt":
+        effective_decision = self.final_decision or self.initial_decision
+        if self.final_decision is None and self.final_reason_codes:
+            raise ValueError("final_reason_codes require final_decision")
+        if self.initial_decision == Decision.REWRITE and self.sql.safe_sha256 is None:
+            raise ValueError("REWRITE receipts require safe SQL evidence")
+        if self.final_decision is not None and self.initial_decision != Decision.REWRITE:
+            raise ValueError("final_decision is valid only after an initial REWRITE")
         if self.execution is not None:
-            if self.decision != Decision.ALLOW:
-                raise ValueError("execution summary is allowed only for ALLOW receipts")
+            if effective_decision != Decision.ALLOW:
+                raise ValueError("execution summary is allowed only for an effective ALLOW")
             if not self.verification or not all(check.passed for check in self.verification):
                 raise ValueError("execution summary requires all verification checks to pass")
         return self
