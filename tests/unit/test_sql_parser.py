@@ -10,7 +10,7 @@ def _ref_keys(refs: tuple) -> set[str]:
     return {ref.key for ref in refs}
 
 
-def test_extracts_flagship_sources_joins_and_grouping() -> None:
+def test_extracts_flagship_sources_joins_grouping_and_references() -> None:
     plan = analyze_sql(
         """
         SELECT
@@ -20,6 +20,7 @@ def test_extracts_flagship_sources_joins_and_grouping() -> None:
         FROM customers AS c
         JOIN retention_scores AS r
           ON c.customer_id = r.customer_id
+        WHERE r.churn_score >= 0.65
         GROUP BY c.coarse_region
         HAVING COUNT(DISTINCT c.customer_id) >= 20
         """
@@ -37,6 +38,12 @@ def test_extracts_flagship_sources_joins_and_grouping() -> None:
         "retention_scores.customer_id",
     }
     assert _ref_keys(plan.group_by_columns) == {"customers.coarse_region"}
+    assert _ref_keys(plan.referenced_columns) == {
+        "customers.coarse_region",
+        "customers.customer_id",
+        "retention_scores.churn_score",
+        "retention_scores.customer_id",
+    }
     assert set(plan.aggregate_functions) == {"AVG", "COUNT"}
     assert plan.is_grouped is True
     assert plan.contains_wildcard is False
@@ -50,9 +57,11 @@ def test_extracts_flagship_sources_joins_and_grouping() -> None:
         "DELETE FROM customers",
         "CREATE TABLE copied AS SELECT * FROM customers",
         "DROP TABLE customers",
+        "COPY customers TO 'customers.csv'",
+        "ATTACH 'other.duckdb' AS other",
     ],
 )
-def test_rejects_non_select_statements(sql: str) -> None:
+def test_rejects_non_select_or_external_access_statements(sql: str) -> None:
     with pytest.raises(SqlAnalysisError) as captured:
         analyze_sql(sql)
 
@@ -86,7 +95,7 @@ def test_marks_select_star_for_schema_expansion() -> None:
     assert "SELECT_STAR_REQUIRES_SCHEMA_EXPANSION" in plan.analysis_warnings
 
 
-def test_extracts_physical_sources_from_cte() -> None:
+def test_resolves_cte_output_to_physical_columns() -> None:
     plan = analyze_sql(
         """
         WITH risk AS (
@@ -95,11 +104,35 @@ def test_extracts_physical_sources_from_cte() -> None:
         )
         SELECT risk.customer_id, risk.churn_score
         FROM risk
+        WHERE risk.churn_score > 0.8
         """
     )
 
     assert set(plan.source_datasets) == {"retention_scores"}
-    assert plan.statement_type == "SELECT"
+    assert _ref_keys(plan.projected_columns) == {
+        "retention_scores.customer_id",
+        "retention_scores.churn_score",
+    }
+    assert _ref_keys(plan.referenced_columns) == {
+        "retention_scores.customer_id",
+        "retention_scores.churn_score",
+    }
+    assert not any(ref.dataset.startswith("@") for ref in plan.referenced_columns)
+
+
+def test_resolves_aliased_cte_expression_to_physical_input() -> None:
+    plan = analyze_sql(
+        """
+        WITH risk AS (
+          SELECT customer_id, churn_score * 100 AS churn_percent
+          FROM retention_scores
+        )
+        SELECT risk.churn_percent
+        FROM risk
+        """
+    )
+
+    assert _ref_keys(plan.projected_columns) == {"retention_scores.churn_score"}
 
 
 def test_rejects_cross_join() -> None:
