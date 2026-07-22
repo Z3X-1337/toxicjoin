@@ -10,7 +10,7 @@ def _ref_keys(refs: tuple) -> set[str]:
     return {ref.key for ref in refs}
 
 
-def test_extracts_flagship_sources_joins_grouping_and_references() -> None:
+def test_extracts_flagship_sources_joins_grouping_references_and_threshold() -> None:
     plan = analyze_sql(
         """
         SELECT
@@ -45,6 +45,9 @@ def test_extracts_flagship_sources_joins_grouping_and_references() -> None:
         "retention_scores.customer_id",
     }
     assert set(plan.aggregate_functions) == {"AVG", "COUNT"}
+    assert plan.minimum_group_size_present == 20
+    assert plan.minimum_group_size_subject is not None
+    assert plan.minimum_group_size_subject.key == "customers.customer_id"
     assert plan.is_grouped is True
     assert plan.contains_wildcard is False
 
@@ -133,6 +136,39 @@ def test_resolves_aliased_cte_expression_to_physical_input() -> None:
     )
 
     assert _ref_keys(plan.projected_columns) == {"retention_scores.churn_score"}
+
+
+def test_does_not_trust_or_based_group_threshold() -> None:
+    plan = analyze_sql(
+        """
+        SELECT c.coarse_region, AVG(r.churn_score)
+        FROM customers c
+        JOIN retention_scores r ON c.customer_id = r.customer_id
+        GROUP BY c.coarse_region
+        HAVING COUNT(DISTINCT c.customer_id) >= 20
+            OR AVG(r.churn_score) > 0.9
+        """
+    )
+
+    assert plan.minimum_group_size_present is None
+    assert plan.minimum_group_size_subject is None
+    assert "UNTRUSTED_GROUP_THRESHOLD_OR_EXPRESSION" in plan.analysis_warnings
+
+
+def test_tracks_threshold_subject_even_when_it_is_not_the_customer() -> None:
+    plan = analyze_sql(
+        """
+        SELECT c.coarse_region, COUNT(DISTINCT o.order_id)
+        FROM customers c
+        JOIN orders o ON c.customer_id = o.customer_id
+        GROUP BY c.coarse_region
+        HAVING COUNT(DISTINCT o.order_id) >= 20
+        """
+    )
+
+    assert plan.minimum_group_size_present == 20
+    assert plan.minimum_group_size_subject is not None
+    assert plan.minimum_group_size_subject.key == "orders.order_id"
 
 
 def test_rejects_cross_join() -> None:
