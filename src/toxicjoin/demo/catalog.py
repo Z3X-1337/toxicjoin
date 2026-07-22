@@ -1,0 +1,144 @@
+"""Package-owned governed metadata for deterministic fixture mode."""
+
+from __future__ import annotations
+
+from toxicjoin.context.fixture import FixtureCatalog
+
+
+def default_fixture_catalog() -> FixtureCatalog:
+    """Return the canonical DataHub-shaped synthetic metadata catalog."""
+
+    return FixtureCatalog.model_validate(
+        {
+            "version": "0.1.0",
+            "datasets": {
+                "customers": {
+                    "urn": (
+                        "urn:li:dataset:(urn:li:dataPlatform:duckdb,"
+                        "toxicjoin.customers,PROD)"
+                    ),
+                    "owner": "urn:li:corpuser:data-platform",
+                    "domain": "urn:li:domain:customer-analytics",
+                    "fields": {
+                        "customer_id": {
+                            "category": "STABLE_PSEUDONYM",
+                            "tags": ["toxicjoin:stable-pseudonym"],
+                            "glossary_terms": [
+                                "urn:li:glossaryTerm:StableCustomerIdentifier"
+                            ],
+                        },
+                        "age_band": {
+                            "category": "QUASI_IDENTIFIER",
+                            "tags": ["toxicjoin:quasi-identifier"],
+                            "glossary_terms": ["urn:li:glossaryTerm:AgeBand"],
+                        },
+                        "precise_area": {
+                            "category": "QUASI_IDENTIFIER",
+                            "tags": [
+                                "toxicjoin:precise-location",
+                                "toxicjoin:quasi-identifier",
+                            ],
+                            "glossary_terms": ["urn:li:glossaryTerm:PreciseArea"],
+                        },
+                        "coarse_region": {
+                            "category": "QUASI_IDENTIFIER",
+                            "tags": ["toxicjoin:coarse-location"],
+                            "glossary_terms": ["urn:li:glossaryTerm:CoarseRegion"],
+                        },
+                    },
+                },
+                "orders": {
+                    "urn": (
+                        "urn:li:dataset:(urn:li:dataPlatform:duckdb,"
+                        "toxicjoin.orders,PROD)"
+                    ),
+                    "owner": "urn:li:corpuser:commerce-analytics",
+                    "domain": "urn:li:domain:commerce",
+                    "fields": {
+                        "order_id": {"category": "PUBLIC_OR_LOW_RISK"},
+                        "customer_id": {
+                            "category": "STABLE_PSEUDONYM",
+                            "tags": ["toxicjoin:stable-pseudonym"],
+                        },
+                        "purchase_amount": {
+                            "category": "SENSITIVE_ATTRIBUTE",
+                            "tags": ["toxicjoin:financial"],
+                            "glossary_terms": [
+                                "urn:li:glossaryTerm:PurchaseAmount"
+                            ],
+                        },
+                        "category": {"category": "PUBLIC_OR_LOW_RISK"},
+                        "ordered_at": {"category": "PUBLIC_OR_LOW_RISK"},
+                    },
+                },
+                "support_cases": {
+                    "urn": (
+                        "urn:li:dataset:(urn:li:dataPlatform:duckdb,"
+                        "toxicjoin.support_cases,PROD)"
+                    ),
+                    "owner": "urn:li:corpuser:customer-support",
+                    "domain": "urn:li:domain:customer-experience",
+                    "fields": {
+                        "case_id": {"category": "PUBLIC_OR_LOW_RISK"},
+                        "customer_id": {
+                            "category": "STABLE_PSEUDONYM",
+                            "tags": ["toxicjoin:stable-pseudonym"],
+                        },
+                        "case_category": {
+                            "category": "SENSITIVE_ATTRIBUTE",
+                            "tags": ["toxicjoin:sensitive-support"],
+                            "glossary_terms": [
+                                "urn:li:glossaryTerm:SupportCaseCategory"
+                            ],
+                        },
+                        "sensitivity_level": {
+                            "category": "SENSITIVE_ATTRIBUTE",
+                            "tags": ["toxicjoin:sensitivity-level"],
+                        },
+                    },
+                },
+                "location_activity": {
+                    "urn": (
+                        "urn:li:dataset:(urn:li:dataPlatform:duckdb,"
+                        "toxicjoin.location_activity,PROD)"
+                    ),
+                    "owner": "urn:li:corpuser:product-analytics",
+                    "domain": "urn:li:domain:product-analytics",
+                    "fields": {
+                        "customer_id": {
+                            "category": "STABLE_PSEUDONYM",
+                            "tags": ["toxicjoin:stable-pseudonym"],
+                        },
+                        "precise_area": {
+                            "category": "QUASI_IDENTIFIER",
+                            "tags": [
+                                "toxicjoin:precise-location",
+                                "toxicjoin:quasi-identifier",
+                            ],
+                        },
+                        "activity_count": {"category": "PUBLIC_OR_LOW_RISK"},
+                    },
+                },
+                "retention_scores": {
+                    "urn": (
+                        "urn:li:dataset:(urn:li:dataPlatform:duckdb,"
+                        "toxicjoin.retention_scores,PROD)"
+                    ),
+                    "owner": "urn:li:corpuser:ml-platform",
+                    "domain": "urn:li:domain:machine-learning",
+                    "fields": {
+                        "customer_id": {
+                            "category": "STABLE_PSEUDONYM",
+                            "tags": ["toxicjoin:stable-pseudonym"],
+                        },
+                        "churn_score": {
+                            "category": "SENSITIVE_ATTRIBUTE",
+                            "tags": ["toxicjoin:model-output"],
+                            "glossary_terms": ["urn:li:glossaryTerm:ChurnScore"],
+                        },
+                        "model_timestamp": {"category": "PUBLIC_OR_LOW_RISK"},
+                    },
+                },
+            },
+        }
+    )
