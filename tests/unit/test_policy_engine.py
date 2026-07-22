@@ -15,8 +15,8 @@ from toxicjoin.policy import PolicyEngine, load_policy
 POLICY_PATH = Path(__file__).parents[2] / "src/toxicjoin/policy/policy.yaml"
 
 
-def ref(dataset: str, field: str) -> ColumnRef:
-    return ColumnRef(dataset=dataset, field_path=field)
+def ref(dataset: str, field: str, *, alias: str | None = None) -> ColumnRef:
+    return ColumnRef(dataset=dataset, field_path=field, alias=alias)
 
 
 def context(
@@ -39,18 +39,28 @@ def build_input(
     referenced: tuple[ColumnContext, ...] | None = None,
     grouped: bool = False,
     threshold: int | None = None,
+    threshold_subject: ColumnRef | None = None,
+    expected_subject: ColumnRef | None = None,
 ) -> PolicyInput:
     refs = tuple(item.ref for item in projected)
+    if grouped and expected_subject is None:
+        expected_subject = ref("customers", "customer_id")
+    if threshold is not None and threshold_subject is None:
+        threshold_subject = expected_subject
+
     return PolicyInput(
         task_purpose="Test governed analytics",
         query_plan=QueryPlan(
             statement_type="SELECT",
             source_datasets=("demo",),
             projected_columns=refs,
+            minimum_group_size_present=threshold,
+            minimum_group_size_subject=threshold_subject,
             is_grouped=grouped,
         ),
         projected_context=projected,
         all_referenced_context=referenced or projected,
+        subject_key=expected_subject,
         minimum_group_size_present=threshold,
     )
 
@@ -121,7 +131,7 @@ def test_sensitive_grouped_output_without_threshold_rewrites() -> None:
     assert result.reason_codes == (ReasonCode.SMALL_GROUP_RISK,)
 
 
-def test_sensitive_grouped_output_with_threshold_allows() -> None:
+def test_sensitive_grouped_output_with_trusted_threshold_allows() -> None:
     result = engine().evaluate(
         build_input(
             (
@@ -138,6 +148,29 @@ def test_sensitive_grouped_output_with_threshold_allows() -> None:
     )
 
     assert result.decision == Decision.ALLOW
+    assert result.evidence["trusted_minimum_group_size"] == 20
+
+
+def test_threshold_on_wrong_subject_rewrites() -> None:
+    result = engine().evaluate(
+        build_input(
+            (
+                context("customers", "region", SensitivityCategory.QUASI_IDENTIFIER),
+                context(
+                    "retention_scores",
+                    "avg_churn_score",
+                    SensitivityCategory.SENSITIVE_ATTRIBUTE,
+                ),
+            ),
+            grouped=True,
+            threshold=20,
+            threshold_subject=ref("orders", "order_id"),
+            expected_subject=ref("customers", "customer_id"),
+        )
+    )
+
+    assert result.decision == Decision.REWRITE
+    assert result.evidence["threshold_subject_matches"] is False
 
 
 def test_unclassified_column_fails_closed() -> None:
