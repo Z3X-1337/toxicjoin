@@ -1,7 +1,8 @@
 """Strict schema for immutable ToxicJoin decision receipts.
 
-Receipts contain governed metadata and execution summaries only. Raw query rows,
-warehouse values, secrets, and unredacted literals are intentionally absent.
+Receipts contain governed metadata and deterministic execution summaries only. Raw
+query rows, warehouse values, secrets, unredacted literals, and variable timing data
+are intentionally absent.
 """
 
 from __future__ import annotations
@@ -66,7 +67,6 @@ class ReceiptExecutionSummary(StrictModel):
     columns: tuple[str, ...]
     preview_row_count: int = Field(ge=0)
     truncated: bool
-    elapsed_ms: float = Field(ge=0)
 
 
 class ReceiptWriteback(StrictModel):
