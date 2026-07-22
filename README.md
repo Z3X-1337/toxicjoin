@@ -38,7 +38,7 @@ Requirements: Python 3.11 or 3.12.
 ### Linux or macOS
 
 ```bash
-./run.sh
+bash run.sh
 ```
 
 ### Windows PowerShell
