@@ -13,6 +13,10 @@ dependencies = [
   "httpx>=0.27,<1",
 ]
 
+[project.scripts]
+toxicjoin-api = "toxicjoin.cli:run_api"
+toxicjoin-seed = "toxicjoin.demo.seed:main"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8,<9",
