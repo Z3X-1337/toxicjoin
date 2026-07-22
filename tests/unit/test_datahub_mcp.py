@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict, deque
+from collections import deque
 from typing import Any, Self
 
 import pytest
