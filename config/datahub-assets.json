@@ -1,0 +1,12 @@
+{
+  "version": "1.0",
+  "flagship_dataset": "retention_scores",
+  "flagship_column": "churn_score",
+  "datasets": {
+    "customers": "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.customers,PROD)",
+    "orders": "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.orders,PROD)",
+    "support_cases": "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.support_cases,PROD)",
+    "location_activity": "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.location_activity,PROD)",
+    "retention_scores": "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.retention_scores,PROD)"
+  }
+}
