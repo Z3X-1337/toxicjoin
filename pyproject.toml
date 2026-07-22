@@ -18,6 +18,7 @@ toxicjoin-api = "toxicjoin.cli:run_api"
 toxicjoin-seed = "toxicjoin.demo.seed:main"
 toxicjoin-datahub-seed = "toxicjoin.integrations.datahub_seed:main"
 toxicjoin-datahub-spike = "toxicjoin.integrations.datahub_spike:main"
+toxicjoin-benchmark = "toxicjoin.benchmark.runner:main"
 
 [project.optional-dependencies]
 datahub = [
