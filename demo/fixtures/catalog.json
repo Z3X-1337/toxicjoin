@@ -33,6 +33,9 @@
       "owner": "urn:li:corpuser:commerce-analytics",
       "domain": "urn:li:domain:commerce",
       "fields": {
+        "order_id": {
+          "category": "PUBLIC_OR_LOW_RISK"
+        },
         "customer_id": {
           "category": "STABLE_PSEUDONYM",
           "tags": ["toxicjoin:stable-pseudonym"]
@@ -55,6 +58,9 @@
       "owner": "urn:li:corpuser:customer-support",
       "domain": "urn:li:domain:customer-experience",
       "fields": {
+        "case_id": {
+          "category": "PUBLIC_OR_LOW_RISK"
+        },
         "customer_id": {
           "category": "STABLE_PSEUDONYM",
           "tags": ["toxicjoin:stable-pseudonym"]
