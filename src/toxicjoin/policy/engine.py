@@ -102,8 +102,20 @@ class PolicyEngine:
             SensitivityCategory.SENSITIVE_ATTRIBUTE in referenced_categories
         )
         threshold = policy_input.minimum_group_size_present
+        expected_subject = policy_input.subject_key
+        detected_subject = policy_input.query_plan.minimum_group_size_subject
+        threshold_subject_matches = (
+            expected_subject is not None
+            and detected_subject is not None
+            and expected_subject.key == detected_subject.key
+        )
+        trusted_threshold = threshold if threshold_subject_matches else None
+
         if policy_input.query_plan.is_grouped and sensitive_anywhere:
-            if threshold is None or threshold < self.config.minimum_group_size:
+            if (
+                trusted_threshold is None
+                or trusted_threshold < self.config.minimum_group_size
+            ):
                 return PolicyDecision(
                     decision=Decision.REWRITE,
                     reason_codes=(ReasonCode.SMALL_GROUP_RISK,),
@@ -111,6 +123,13 @@ class PolicyEngine:
                     evidence={
                         "required_minimum_group_size": self.config.minimum_group_size,
                         "detected_minimum_group_size": threshold,
+                        "expected_subject_key": (
+                            expected_subject.key if expected_subject is not None else None
+                        ),
+                        "detected_threshold_subject": (
+                            detected_subject.key if detected_subject is not None else None
+                        ),
+                        "threshold_subject_matches": threshold_subject_matches,
                     },
                     rewrite_required=True,
                 )
@@ -124,6 +143,10 @@ class PolicyEngine:
                 "referenced_categories": [
                     category.value for category in referenced_categories
                 ],
+                "trusted_minimum_group_size": trusted_threshold,
+                "trusted_threshold_subject": (
+                    detected_subject.key if threshold_subject_matches else None
+                ),
             },
         )
 
