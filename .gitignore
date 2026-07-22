@@ -1,4 +1,5 @@
 .venv/
+.toxicjoin/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
@@ -6,8 +7,12 @@ __pycache__/
 .coverage
 htmlcov/
 .env
+.env.*
+!.env.example
 *.db
 *.duckdb
+*.log
+pytest-*.log
 node_modules/
 dist/
 build/
