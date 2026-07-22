@@ -30,9 +30,9 @@ def analyze_sql(sql: str, *, dialect: str = "duckdb") -> QueryPlan:
     """Parse one read-only SELECT statement into a normalized query plan.
 
     The analyzer performs no schema guessing. Qualified references are mapped to
-    their physical source when possible. Unqualified references are accepted only
-    when the current SQL scope has exactly one source; otherwise analysis fails
-    closed with ``AMBIGUOUS_COLUMN``.
+    their physical source when possible, including simple CTE and derived-table
+    projections. Unqualified references are accepted only when the current SQL
+    scope has exactly one source; otherwise analysis fails closed.
     """
 
     if not sql or not sql.strip():
@@ -70,13 +70,14 @@ def analyze_sql(sql: str, *, dialect: str = "duckdb") -> QueryPlan:
 
     source_datasets: set[str] = set()
     projected_columns: set[ColumnRef] = set()
+    referenced_columns: set[ColumnRef] = set()
     join_columns: set[ColumnRef] = set()
     group_by_columns: set[ColumnRef] = set()
     aggregate_functions: set[str] = set()
     warnings: set[str] = set()
 
     for scope in scopes:
-        alias_map, physical_sources = _source_map(scope)
+        physical_sources = _physical_sources(scope)
         source_datasets.update(physical_sources)
         select = scope.expression
 
@@ -88,13 +89,20 @@ def analyze_sql(sql: str, *, dialect: str = "duckdb") -> QueryPlan:
 
         _validate_joins(select)
 
+        referenced_columns.update(
+            _resolve_columns(
+                _columns_belonging_to(select, select),
+                scope=scope,
+                warnings=warnings,
+            )
+        )
+
         for projection in select.expressions:
             if projection.find(exp.Star):
                 warnings.add("SELECT_STAR_REQUIRES_SCHEMA_EXPANSION")
             projected_columns.update(
                 _resolve_columns(
                     _columns_belonging_to(projection, select),
-                    alias_map=alias_map,
                     scope=scope,
                     warnings=warnings,
                 )
@@ -111,7 +119,6 @@ def analyze_sql(sql: str, *, dialect: str = "duckdb") -> QueryPlan:
                 join_columns.update(
                     _resolve_columns(
                         _columns_belonging_to(on_expression, select),
-                        alias_map=alias_map,
                         scope=scope,
                         warnings=warnings,
                     )
@@ -122,7 +129,6 @@ def analyze_sql(sql: str, *, dialect: str = "duckdb") -> QueryPlan:
             group_by_columns.update(
                 _resolve_columns(
                     _columns_belonging_to(group, select),
-                    alias_map=alias_map,
                     scope=scope,
                     warnings=warnings,
                 )
@@ -138,6 +144,7 @@ def analyze_sql(sql: str, *, dialect: str = "duckdb") -> QueryPlan:
         statement_type="SELECT",
         source_datasets=tuple(sorted(source_datasets)),
         projected_columns=_sorted_refs(projected_columns),
+        referenced_columns=_sorted_refs(referenced_columns),
         join_columns=_sorted_refs(join_columns),
         group_by_columns=_sorted_refs(group_by_columns),
         aggregate_functions=tuple(sorted(aggregate_functions)),
@@ -164,6 +171,11 @@ def _reject_forbidden_nodes(root: exp.Select) -> None:
         "Revoke",
         "Use",
         "Set",
+        "Copy",
+        "Attach",
+        "Detach",
+        "Install",
+        "LoadData",
     )
     forbidden_types = tuple(
         node_type
@@ -173,25 +185,16 @@ def _reject_forbidden_nodes(root: exp.Select) -> None:
     if forbidden_types and any(isinstance(node, forbidden_types) for node in root.walk()):
         raise SqlAnalysisError(
             ReasonCode.UNSUPPORTED_STATEMENT,
-            "query contains a mutation, DDL, transaction, or command node",
+            "query contains a mutation, DDL, transaction, command, or external-access node",
         )
 
 
-def _source_map(scope: Scope) -> tuple[dict[str, str], set[str]]:
-    alias_map: dict[str, str] = {}
+def _physical_sources(scope: Scope) -> set[str]:
     physical_sources: set[str] = set()
-
-    for alias, (_, source) in scope.selected_sources.items():
+    for _, source in scope.sources.items():
         if isinstance(source, exp.Table):
-            dataset = _qualified_table_name(source)
-            alias_map[alias] = dataset
-            physical_sources.add(dataset)
-        elif isinstance(source, Scope):
-            alias_map[alias] = f"@derived:{alias}"
-        else:
-            alias_map[alias] = f"@unresolved:{alias}"
-
-    return alias_map, physical_sources
+            physical_sources.add(_qualified_table_name(source))
+    return physical_sources
 
 
 def _qualified_table_name(table: exp.Table) -> str:
@@ -225,37 +228,144 @@ def _validate_joins(select: exp.Select) -> None:
 def _resolve_columns(
     columns: Iterable[exp.Column],
     *,
-    alias_map: dict[str, str],
     scope: Scope,
     warnings: set[str],
+    visited: frozenset[tuple[int, str]] = frozenset(),
 ) -> set[ColumnRef]:
     resolved: set[ColumnRef] = set()
-
     for column in columns:
-        qualifier = column.table
-        if qualifier:
-            dataset = alias_map.get(qualifier)
-            if dataset is None:
-                dataset = f"@unresolved:{qualifier}"
-                warnings.add(f"UNRESOLVED_SOURCE_ALIAS:{qualifier}")
-        else:
-            candidates = tuple(dict.fromkeys(alias_map.values()))
-            if len(candidates) != 1:
-                raise SqlAnalysisError(
-                    ReasonCode.AMBIGUOUS_COLUMN,
-                    f"unqualified column {column.name!r} has {len(candidates)} possible sources",
-                )
-            dataset = candidates[0]
-
-        resolved.add(
-            ColumnRef(
-                dataset=dataset,
-                field_path=column.name,
-                alias=qualifier or None,
+        resolved.update(
+            _resolve_column(
+                column,
+                scope=scope,
+                warnings=warnings,
+                visited=visited,
             )
         )
-
     return resolved
+
+
+def _resolve_column(
+    column: exp.Column,
+    *,
+    scope: Scope,
+    warnings: set[str],
+    visited: frozenset[tuple[int, str]],
+) -> set[ColumnRef]:
+    qualifier = column.table
+    source_name, source = _selected_source(scope, qualifier, column.name)
+
+    if isinstance(source, exp.Table):
+        return {
+            ColumnRef(
+                dataset=_qualified_table_name(source),
+                field_path=column.name,
+                alias=qualifier or source_name or None,
+            )
+        }
+
+    if isinstance(source, Scope):
+        return _resolve_derived_output(
+            output_name=column.name,
+            source_scope=source,
+            source_name=source_name or qualifier or "derived",
+            warnings=warnings,
+            visited=visited,
+        )
+
+    unresolved_name = qualifier or source_name or "unknown"
+    warnings.add(f"UNRESOLVED_SOURCE_ALIAS:{unresolved_name}")
+    return {
+        ColumnRef(
+            dataset=f"@unresolved:{unresolved_name}",
+            field_path=column.name,
+            alias=qualifier or source_name or None,
+        )
+    }
+
+
+def _selected_source(
+    scope: Scope,
+    qualifier: str,
+    column_name: str,
+) -> tuple[str | None, exp.Expression | Scope | None]:
+    if qualifier:
+        selected = scope.selected_sources.get(qualifier)
+        if selected is not None:
+            return qualifier, selected[1]
+        return qualifier, scope.sources.get(qualifier)
+
+    candidates = list(scope.selected_sources.items())
+    if len(candidates) != 1:
+        raise SqlAnalysisError(
+            ReasonCode.AMBIGUOUS_COLUMN,
+            f"unqualified column {column_name!r} has {len(candidates)} possible sources",
+        )
+    source_name, (_, source) = candidates[0]
+    return source_name, source
+
+
+def _resolve_derived_output(
+    *,
+    output_name: str,
+    source_scope: Scope,
+    source_name: str,
+    warnings: set[str],
+    visited: frozenset[tuple[int, str]],
+) -> set[ColumnRef]:
+    visit_key = (id(source_scope), output_name)
+    if visit_key in visited:
+        warnings.add(f"CYCLIC_DERIVED_REFERENCE:{source_name}.{output_name}")
+        return {
+            ColumnRef(
+                dataset=f"@unresolved:{source_name}",
+                field_path=output_name,
+                alias=source_name,
+            )
+        }
+
+    expression = source_scope.expression
+    if not isinstance(expression, exp.Select):
+        warnings.add(f"UNSUPPORTED_DERIVED_SCOPE:{source_name}")
+        return {
+            ColumnRef(
+                dataset=f"@unresolved:{source_name}",
+                field_path=output_name,
+                alias=source_name,
+            )
+        }
+
+    matches = [
+        projection
+        for projection in expression.expressions
+        if projection.alias_or_name == output_name
+    ]
+    if len(matches) != 1:
+        if any(projection.find(exp.Star) for projection in expression.expressions):
+            warnings.add(f"DERIVED_STAR_REQUIRES_SCHEMA_EXPANSION:{source_name}")
+        else:
+            warnings.add(f"UNRESOLVED_DERIVED_COLUMN:{source_name}.{output_name}")
+        return {
+            ColumnRef(
+                dataset=f"@unresolved:{source_name}",
+                field_path=output_name,
+                alias=source_name,
+            )
+        }
+
+    projection = matches[0]
+    source_columns = _columns_belonging_to(projection, expression)
+    if not source_columns:
+        # A literal or COUNT(*) has no governed source field. It is safe to omit from
+        # metadata resolution, while aggregate presence remains in QueryPlan.
+        return set()
+
+    return _resolve_columns(
+        source_columns,
+        scope=source_scope,
+        warnings=warnings,
+        visited=visited | {visit_key},
+    )
 
 
 def _columns_belonging_to(expression: exp.Expression, select: exp.Select) -> tuple[exp.Column, ...]:
@@ -288,4 +398,9 @@ def _nearest_select(node: exp.Expression) -> exp.Select | None:
 
 
 def _sorted_refs(values: set[ColumnRef]) -> tuple[ColumnRef, ...]:
-    return tuple(sorted(values, key=lambda value: (value.dataset, value.field_path, value.alias or "")))
+    return tuple(
+        sorted(
+            values,
+            key=lambda value: (value.dataset, value.field_path, value.alias or ""),
+        )
+    )
