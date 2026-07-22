@@ -26,10 +26,20 @@ class PolicyConfig(BaseModel):
     categories: tuple[SensitivityCategory, ...]
 
 
-def load_policy(path: str | Path) -> PolicyConfig:
-    """Load and strictly validate a policy YAML file."""
+def default_policy_path() -> Path:
+    """Return the canonical policy bundled with the ToxicJoin package."""
 
-    policy_path = Path(path)
+    return Path(__file__).with_name("policy.yaml")
+
+
+def load_policy(path: str | Path | None = None) -> PolicyConfig:
+    """Load and strictly validate a policy YAML file.
+
+    Omitting ``path`` loads the package-owned canonical policy. This prevents
+    callers and tests from depending on an unrelated repository-relative path.
+    """
+
+    policy_path = default_policy_path() if path is None else Path(path)
     try:
         raw = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
     except OSError as exc:
