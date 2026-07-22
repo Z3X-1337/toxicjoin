@@ -48,11 +48,11 @@ Wow moment: a query built from individually acceptable datasets becomes unsafe o
   Acceptance: BLOCK and REWRITE never reach DuckDB; rewritten SQL executes only after a final ALLOW decision; all returned groups meet the threshold; configuration confirms external access is disabled.
   Verified: `pytest tests/integration/test_safe_execution.py -q` and two independent green GitHub Actions workflows on Python 3.11/3.12.
 
-- [ ] **8. Produce immutable receipts**
+- [x] **8. Produce immutable receipts**
   Spec ref: `spec.md > Receipt writer`
-  What to build: Serialize evidence, policy version, SQL hashes, decision, verification, execution summary, and write-back status without raw sensitive rows.
-  Acceptance: Receipts are deterministic apart from ID/time fields, validate against strict models, and contain no raw sensitive rows.
-  Verify: `pytest tests/unit/test_receipts.py -q`
+  What was built: Strict receipts preserve initial/final decisions and policy evidence; store SQL hashes, governed columns, verification checks, deterministic execution summaries, and write-back state; redact SQL literals; exclude result rows and variable timing; calculate a deterministic content hash; use exclusive atomic creation and verify integrity on every read.
+  Acceptance: IDs and timestamps may vary while semantic content remains hash-stable; unknown fields, traversal IDs, lifecycle contradictions, overwrites, and tampered files are rejected; no result rows enter persisted receipts.
+  Verified: `pytest tests/unit/test_receipts.py -q` and full CI on Python 3.11/3.12.
 
 - [ ] **9. Complete real DataHub integration spike**
   Spec ref: `spec.md > DataHub context resolver`, `DataHub write-back`, and `Definition of done for the integration spike`
@@ -60,15 +60,16 @@ Wow moment: a query built from individually acceptable datasets becomes unsafe o
   Acceptance: Sanitized evidence proves Python -> DataHub read -> write -> independent verification; failures exit non-zero.
   Verify: `python scripts/datahub_spike.py --verify`
 
-- [ ] **10. Expose API and curated scenarios**
+- [x] **10. Expose API and curated scenarios**
   Spec ref: `spec.md > API contracts`
-  What to build: Health, analyze, safe-execute, receipt, and demo-scenario endpoints.
-  Acceptance: API tests cover ALLOW, REWRITE, BLOCK, DataHub outage, invalid input, and replay/fixture disclosure without executing unsafe SQL.
-  Verify: `pytest tests/integration/test_api.py -q`
+  What was built: Zero-configuration fixture startup, package-owned governed catalog, pipeline orchestration, Health, Analyze, Safe Execute, Receipt Lookup, and curated scenario endpoints; one-command Windows/Linux launchers; strict request/response models; no-cache and browser-hardening headers.
+  Acceptance: HTTP tests cover ALLOW, REWRITE, BLOCK, context outage, invalid input, COUNT(*) versus SELECT *, executor unavailability, receipt lookup/tamper detection, fixture disclosure, secure headers, and real DuckDB output without executing unsafe SQL.
+  Verified: `pytest tests/integration/test_pipeline.py tests/integration/test_api.py tests/integration/test_api_security_headers.py -q` and full CI on Python 3.11/3.12.
 
 - [ ] **11. Add CI, benchmark, and judge evidence**
   Spec ref: `spec.md > Testing strategy` and `Demo contract`
   What to build: Consolidated CI, 30-query benchmark, confusion matrix, examples, known limitations, and a 90-second judge guide.
+  Current progress: CI is consolidated, tests Python 3.11/3.12, cancels stale PR runs, and retains per-version pytest artifacts. Benchmark, generated evidence, examples, and judge guide remain.
   Acceptance: Fresh checkout passes lint/tests; benchmark results are generated, not hand-edited; examples include allow/rewrite/block receipts.
   Verify: `ruff check . && pytest -q && python -m toxicjoin.benchmark`
 
