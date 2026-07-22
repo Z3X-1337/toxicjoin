@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
@@ -7,7 +8,7 @@ import { DecisionHero } from "./DecisionHero";
 import { ReceiptPanel } from "./ReceiptPanel";
 import { VerificationPanel } from "./VerificationPanel";
 
-function render(element: React.ReactNode): string {
+function render(element: ReactNode): string {
   return renderToStaticMarkup(element);
 }
 
