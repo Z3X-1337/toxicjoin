@@ -22,8 +22,34 @@ def test_benchmark_corpus_is_unique_and_balanced() -> None:
 
 def test_full_benchmark_passes_all_security_gates(tmp_path: Path) -> None:
     report = run_benchmark(output_dir=tmp_path)
+    mismatches = [
+        {
+            "case_id": case.case_id,
+            "expected_initial": case.expected_initial.value,
+            "predicted_initial": case.predicted_initial.value,
+            "expected_effective": case.expected_effective.value,
+            "predicted_effective": case.predicted_effective.value,
+            "expected_reason": case.expected_reason.value,
+            "predicted_initial_reasons": [
+                reason.value for reason in case.predicted_initial_reasons
+            ],
+            "safe_sql_expected": case.safe_sql_expected,
+            "safe_sql_created": case.safe_sql_created,
+            "verification_passed": case.verification_passed,
+        }
+        for case in report.cases
+        if not case.passed
+    ]
 
-    assert report.passed is True
+    assert report.passed is True, json.dumps(
+        {
+            "gate_failures": report.gate_failures,
+            "metrics": report.metrics.model_dump(mode="json"),
+            "mismatches": mismatches,
+        },
+        indent=2,
+        sort_keys=True,
+    )
     assert report.gate_failures == ()
     assert report.metrics.total_cases == 30
     assert report.metrics.initial_accuracy == 1.0
