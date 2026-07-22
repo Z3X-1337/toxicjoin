@@ -76,6 +76,8 @@ def analyze_sql(sql: str, *, dialect: str = "duckdb") -> QueryPlan:
     aggregate_functions: set[str] = set()
     warnings: set[str] = set()
 
+    root_scope: Scope | None = None
+
     for scope in scopes:
         physical_sources = _physical_sources(scope)
         source_datasets.update(physical_sources)
@@ -86,6 +88,9 @@ def analyze_sql(sql: str, *, dialect: str = "duckdb") -> QueryPlan:
                 ReasonCode.UNSUPPORTED_STATEMENT,
                 f"unsupported query scope: {select.key.upper()}",
             )
+
+        if select is root:
+            root_scope = scope
 
         _validate_joins(select)
 
@@ -137,6 +142,18 @@ def analyze_sql(sql: str, *, dialect: str = "duckdb") -> QueryPlan:
         for aggregate in _nodes_belonging_to(select, select, exp.AggFunc):
             aggregate_functions.add(aggregate.key.upper())
 
+    if root_scope is None:
+        raise SqlAnalysisError(
+            ReasonCode.UNSUPPORTED_STATEMENT,
+            "SQLGlot did not expose a root query scope",
+        )
+
+    minimum_group_size, minimum_group_subject = _extract_minimum_group_threshold(
+        root,
+        root_scope,
+        warnings,
+    )
+
     contains_wildcard = any(isinstance(node, exp.Star) for node in root.walk())
     is_grouped = bool(group_by_columns or aggregate_functions)
 
@@ -148,6 +165,8 @@ def analyze_sql(sql: str, *, dialect: str = "duckdb") -> QueryPlan:
         join_columns=_sorted_refs(join_columns),
         group_by_columns=_sorted_refs(group_by_columns),
         aggregate_functions=tuple(sorted(aggregate_functions)),
+        minimum_group_size_present=minimum_group_size,
+        minimum_group_size_subject=minimum_group_subject,
         is_grouped=is_grouped,
         contains_wildcard=contains_wildcard,
         analysis_warnings=tuple(sorted(warnings)),
@@ -223,6 +242,87 @@ def _validate_joins(select: exp.Select) -> None:
                 ReasonCode.UNSUPPORTED_STATEMENT,
                 "implicit or cross joins are outside the supported MVP profile",
             )
+
+
+def _extract_minimum_group_threshold(
+    select: exp.Select,
+    scope: Scope,
+    warnings: set[str],
+) -> tuple[int | None, ColumnRef | None]:
+    having = select.args.get("having")
+    if having is None:
+        return None, None
+
+    body = having.this if isinstance(having, exp.Having) else having
+    if any(isinstance(node, exp.Or) for node in body.walk()):
+        warnings.add("UNTRUSTED_GROUP_THRESHOLD_OR_EXPRESSION")
+        return None, None
+
+    candidates: list[tuple[int, ColumnRef]] = []
+    for node in body.walk():
+        candidate: tuple[exp.Expression, exp.Expression] | None = None
+        if isinstance(node, exp.GTE):
+            candidate = (node.this, node.expression)
+        elif isinstance(node, exp.LTE):
+            candidate = (node.expression, node.this)
+
+        if candidate is None:
+            continue
+
+        count_expression, literal_expression = candidate
+        literal = _integer_literal(literal_expression)
+        distinct_column = _count_distinct_column(count_expression, select)
+        if literal is None or distinct_column is None:
+            continue
+
+        resolved = _resolve_columns(
+            (distinct_column,),
+            scope=scope,
+            warnings=warnings,
+        )
+        if len(resolved) != 1:
+            warnings.add("UNTRUSTED_GROUP_THRESHOLD_AMBIGUOUS_SUBJECT")
+            continue
+        candidates.append((literal, next(iter(resolved))))
+
+    if not candidates:
+        return None, None
+
+    subjects = {column.key for _, column in candidates}
+    if len(subjects) != 1:
+        warnings.add("UNTRUSTED_GROUP_THRESHOLD_MULTIPLE_SUBJECTS")
+        return None, None
+
+    threshold, subject = max(candidates, key=lambda item: item[0])
+    return threshold, subject
+
+
+def _integer_literal(expression: exp.Expression) -> int | None:
+    if not isinstance(expression, exp.Literal) or expression.is_string:
+        return None
+    try:
+        value = int(str(expression.this))
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 1 else None
+
+
+def _count_distinct_column(
+    expression: exp.Expression,
+    select: exp.Select,
+) -> exp.Column | None:
+    if not isinstance(expression, exp.Count):
+        return None
+
+    target = expression.this
+    is_distinct = isinstance(target, exp.Distinct) or bool(expression.args.get("distinct"))
+    if not is_distinct:
+        return None
+
+    columns = _columns_belonging_to(expression, select)
+    if len(columns) != 1:
+        return None
+    return columns[0]
 
 
 def _resolve_columns(
