@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
+from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 
@@ -104,8 +105,10 @@ class DecisionReceipt(StrictModel):
     task_purpose: str = Field(min_length=1)
     initial_decision: Decision
     initial_reason_codes: tuple[ReasonCode, ...]
+    initial_evidence: dict[str, Any] = Field(default_factory=dict)
     final_decision: Decision | None = None
     final_reason_codes: tuple[ReasonCode, ...] = ()
+    final_evidence: dict[str, Any] = Field(default_factory=dict)
     policy_version: str = Field(min_length=1)
     sql: ReceiptSqlEvidence
     columns: tuple[ReceiptColumnEvidence, ...]
@@ -124,8 +127,8 @@ class DecisionReceipt(StrictModel):
     @model_validator(mode="after")
     def lifecycle_is_consistent(self) -> "DecisionReceipt":
         effective_decision = self.final_decision or self.initial_decision
-        if self.final_decision is None and self.final_reason_codes:
-            raise ValueError("final_reason_codes require final_decision")
+        if self.final_decision is None and (self.final_reason_codes or self.final_evidence):
+            raise ValueError("final reason codes and evidence require final_decision")
         if (
             self.initial_decision == Decision.REWRITE
             and effective_decision == Decision.ALLOW
