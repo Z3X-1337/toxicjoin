@@ -75,6 +75,21 @@ def create_app(pipeline: ToxicJoinPipeline | None = None) -> FastAPI:
         )
         application.state.pipeline = pipeline
 
+    @application.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault(
+            "Permissions-Policy",
+            "camera=(), microphone=(), geolocation=()",
+        )
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+        return response
+
     @application.get("/api/health", response_model=HealthResponse)
     def health(request: Request) -> HealthResponse:
         services = _pipeline(request)
