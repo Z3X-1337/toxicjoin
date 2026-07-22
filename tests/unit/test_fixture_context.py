@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from toxicjoin.context import FixtureContextResolver
-from toxicjoin.models import Decision, ReasonCode, SensitivityCategory
+from toxicjoin.models import ColumnRef, Decision, ReasonCode, SensitivityCategory
 from toxicjoin.policy import PolicyEngine, load_policy
 from toxicjoin.sql import analyze_sql
 
@@ -11,6 +11,7 @@ from toxicjoin.sql import analyze_sql
 ROOT = Path(__file__).parents[2]
 CATALOG = ROOT / "demo" / "fixtures" / "catalog.json"
 POLICY = ROOT / "config" / "policy.yaml"
+SUBJECT = ColumnRef(dataset="customers", field_path="customer_id", alias="c")
 
 
 def _resolver() -> FixtureContextResolver:
@@ -58,6 +59,7 @@ def test_compositional_individual_query_blocks() -> None:
         resolution.to_policy_input(
             task_purpose="Export customers with sensitive support cases",
             query_plan=plan,
+            subject_key=SUBJECT,
         )
     )
 
@@ -83,6 +85,7 @@ def test_sensitive_grouped_query_rewrites_without_threshold() -> None:
         resolution.to_policy_input(
             task_purpose="Find regions with elevated churn risk",
             query_plan=plan,
+            subject_key=SUBJECT,
         )
     )
 
@@ -110,10 +113,13 @@ def test_sensitive_grouped_query_allows_with_required_threshold() -> None:
         resolution.to_policy_input(
             task_purpose="Find regions with elevated churn risk",
             query_plan=plan,
-            minimum_group_size_present=20,
+            subject_key=SUBJECT,
         )
     )
 
+    assert plan.minimum_group_size_present == 20
+    assert plan.minimum_group_size_subject is not None
+    assert plan.minimum_group_size_subject.key == SUBJECT.key
     assert decision.decision == Decision.ALLOW
     assert decision.reason_codes == (ReasonCode.NO_COMPOSITIONAL_RISK,)
 
@@ -129,6 +135,7 @@ def test_missing_dataset_fails_closed() -> None:
         resolution.to_policy_input(
             task_purpose="Unknown data request",
             query_plan=plan,
+            subject_key=SUBJECT,
         )
     )
     assert decision.decision == Decision.BLOCK
