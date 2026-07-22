@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "benchmark_version": "1.0",
+  "policy_version": "0.1.0",
+  "source": {
+    "ci_run": 97,
+    "artifact": "toxicjoin-benchmark",
+    "head_sha": "fced08542756452b8769ebc2d980bb900df6e0ca"
+  },
+  "corpus": {
+    "total": 30,
+    "expected_allow": 10,
+    "expected_rewrite": 10,
+    "expected_block": 10
+  },
+  "metrics": {
+    "initial_accuracy": 1.0,
+    "effective_accuracy": 1.0,
+    "reason_accuracy": 1.0,
+    "full_case_accuracy": 1.0,
+    "false_allow_count": 0,
+    "unsafe_effective_allow_count": 0,
+    "rewrite_remediated_count": 6,
+    "rewrite_fail_closed_count": 4,
+    "verified_execution_count": 16
+  },
+  "initial_confusion_matrix": {
+    "ALLOW": {"ALLOW": 10, "REWRITE": 0, "BLOCK": 0},
+    "REWRITE": {"ALLOW": 0, "REWRITE": 10, "BLOCK": 0},
+    "BLOCK": {"ALLOW": 0, "REWRITE": 0, "BLOCK": 10}
+  },
+  "effective_confusion_matrix": {
+    "ALLOW": {"ALLOW": 16, "REWRITE": 0, "BLOCK": 0},
+    "REWRITE": {"ALLOW": 0, "REWRITE": 0, "BLOCK": 0},
+    "BLOCK": {"ALLOW": 0, "REWRITE": 0, "BLOCK": 14}
+  },
+  "data_fingerprint": "bfeae85c4b238e38012aadc6f4c95d24c7a28bcb1da1c35e8eeef5be28be7d16",
+  "full_report_sha256": "4a1b7630012ffd54eba698b6bf1fd66a9dc3b6167d2513ef1c4c5519a8483987",
+  "gate_failures": [],
+  "scope_note": "Deterministic regression corpus for the declared ToxicJoin SQL and policy profile; not a claim of universal privacy detection."
+}
