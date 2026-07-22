@@ -54,13 +54,18 @@ class ContextResolution(StrictModel):
         subject_key: ColumnRef | None = None,
         minimum_group_size_present: int | None = None,
     ) -> PolicyInput:
+        effective_threshold = (
+            minimum_group_size_present
+            if minimum_group_size_present is not None
+            else query_plan.minimum_group_size_present
+        )
         return PolicyInput(
             task_purpose=task_purpose,
             query_plan=query_plan,
             projected_context=self.projected_context,
             all_referenced_context=self.all_referenced_context,
             subject_key=subject_key,
-            minimum_group_size_present=minimum_group_size_present,
+            minimum_group_size_present=effective_threshold,
             upstream_failures=self.failures,
         )
 
