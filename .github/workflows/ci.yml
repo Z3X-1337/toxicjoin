@@ -63,3 +63,31 @@ jobs:
           path: pytest-${{ matrix.python-version }}.log
           if-no-files-found: error
           retention-days: 14
+
+  web:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.16.0"
+
+      - name: Install exact frontend dependencies
+        working-directory: apps/web
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck, test, and build judge interface
+        working-directory: apps/web
+        run: npm run check
+
+      - name: Upload judge interface build
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-judge-interface
+          path: apps/web/dist/
+          if-no-files-found: error
+          retention-days: 30
