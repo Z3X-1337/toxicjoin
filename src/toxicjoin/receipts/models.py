@@ -126,10 +126,12 @@ class DecisionReceipt(StrictModel):
         effective_decision = self.final_decision or self.initial_decision
         if self.final_decision is None and self.final_reason_codes:
             raise ValueError("final_reason_codes require final_decision")
-        if self.initial_decision == Decision.REWRITE and self.sql.safe_sha256 is None:
-            raise ValueError("REWRITE receipts require safe SQL evidence")
-        if self.final_decision is not None and self.initial_decision != Decision.REWRITE:
-            raise ValueError("final_decision is valid only after an initial REWRITE")
+        if (
+            self.initial_decision == Decision.REWRITE
+            and effective_decision == Decision.ALLOW
+            and self.sql.safe_sha256 is None
+        ):
+            raise ValueError("successful REWRITE receipts require safe SQL evidence")
         if self.execution is not None:
             if effective_decision != Decision.ALLOW:
                 raise ValueError("execution summary is allowed only for an effective ALLOW")
