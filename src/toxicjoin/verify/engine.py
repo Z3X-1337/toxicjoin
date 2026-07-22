@@ -49,6 +49,7 @@ def verify_and_execute(
     policy_engine: PolicyEngine,
     executor: DuckDBExecutor,
     required_minimum_group_size: int,
+    require_subject_threshold: bool = True,
     subject_count_column: str = "subject_count",
     forbidden_raw_output_fields: Iterable[str] = (
         "customer_id",
@@ -59,7 +60,7 @@ def verify_and_execute(
     ),
     dialect: str = "duckdb",
 ) -> VerificationResult:
-    """Verify the final SQL, execute only after all preconditions pass, then audit results."""
+    """Verify final SQL, execute only after preconditions pass, then audit results."""
 
     checks: list[VerificationCheck] = []
     try:
@@ -108,11 +109,15 @@ def verify_and_execute(
     checks.append(
         VerificationCheck(
             name="trusted_subject_threshold",
-            passed=threshold_matches,
+            passed=threshold_matches if require_subject_threshold else True,
             detail=(
                 f"COUNT(DISTINCT {subject_key.key}) >= {required_minimum_group_size}"
                 if threshold_matches
-                else "required subject-bound minimum group threshold is absent or insufficient"
+                else (
+                    "subject threshold is not required for this policy outcome"
+                    if not require_subject_threshold
+                    else "required subject-bound minimum group threshold is absent or insufficient"
+                )
             ),
         )
     )
@@ -160,55 +165,70 @@ def verify_and_execute(
             execution_error=str(exc),
         )
 
-    checks.append(
-        VerificationCheck(
-            name="complete_result_set",
-            passed=not execution.truncated,
-            detail=(
-                "all result groups were inspected"
-                if not execution.truncated
-                else "result preview was truncated; all groups could not be verified"
-            ),
-        )
-    )
-
-    normalized_columns = tuple(column.lower() for column in execution.columns)
-    count_column_present = subject_count_column.lower() in normalized_columns
-    checks.append(
-        VerificationCheck(
-            name="subject_count_output",
-            passed=count_column_present,
-            detail=(
-                f"result contains {subject_count_column!r}"
-                if count_column_present
-                else f"result does not contain required {subject_count_column!r} column"
-            ),
-        )
-    )
-
-    group_sizes_valid = False
-    group_detail = "group sizes were not evaluated"
-    if count_column_present and not execution.truncated:
-        index = normalized_columns.index(subject_count_column.lower())
-        try:
-            group_sizes = tuple(int(row[index]) for row in execution.rows)
-        except (IndexError, TypeError, ValueError) as exc:
-            group_detail = f"subject counts are not valid integers: {exc}"
-        else:
-            group_sizes_valid = bool(group_sizes) and min(group_sizes) >= required_minimum_group_size
-            group_detail = (
-                f"minimum observed group size is {min(group_sizes)}"
-                if group_sizes
-                else "query returned no groups; usefulness could not be verified"
+    if require_subject_threshold:
+        checks.append(
+            VerificationCheck(
+                name="complete_result_set",
+                passed=not execution.truncated,
+                detail=(
+                    "all result groups were inspected"
+                    if not execution.truncated
+                    else "result preview was truncated; all groups could not be verified"
+                ),
             )
-
-    checks.append(
-        VerificationCheck(
-            name="observed_group_sizes",
-            passed=group_sizes_valid,
-            detail=group_detail,
         )
-    )
+
+        normalized_columns = tuple(column.lower() for column in execution.columns)
+        count_column_present = subject_count_column.lower() in normalized_columns
+        checks.append(
+            VerificationCheck(
+                name="subject_count_output",
+                passed=count_column_present,
+                detail=(
+                    f"result contains {subject_count_column!r}"
+                    if count_column_present
+                    else f"result does not contain required {subject_count_column!r} column"
+                ),
+            )
+        )
+
+        group_sizes_valid = False
+        group_detail = "group sizes were not evaluated"
+        if count_column_present and not execution.truncated:
+            index = normalized_columns.index(subject_count_column.lower())
+            try:
+                group_sizes = tuple(int(row[index]) for row in execution.rows)
+            except (IndexError, TypeError, ValueError) as exc:
+                group_detail = f"subject counts are not valid integers: {exc}"
+            else:
+                group_sizes_valid = (
+                    bool(group_sizes)
+                    and min(group_sizes) >= required_minimum_group_size
+                )
+                group_detail = (
+                    f"minimum observed group size is {min(group_sizes)}"
+                    if group_sizes
+                    else "query returned no groups; usefulness could not be verified"
+                )
+
+        checks.append(
+            VerificationCheck(
+                name="observed_group_sizes",
+                passed=group_sizes_valid,
+                detail=group_detail,
+            )
+        )
+    else:
+        checks.append(
+            VerificationCheck(
+                name="bounded_preview",
+                passed=True,
+                detail=(
+                    f"returned {execution.preview_row_count} preview rows"
+                    + (" with truncation" if execution.truncated else " without truncation")
+                ),
+            )
+        )
 
     return _result(
         query_plan=query_plan,
