@@ -67,6 +67,12 @@ class ReceiptExecutionSummary(StrictModel):
     columns: tuple[str, ...]
     preview_row_count: int = Field(ge=0)
     truncated: bool
+    elapsed_ms: float = Field(default=0.0, ge=0, exclude=True, repr=False)
+
+    @field_validator("elapsed_ms", mode="before")
+    @classmethod
+    def discard_variable_timing(cls, _: Any) -> float:
+        return 0.0
 
 
 class ReceiptWriteback(StrictModel):
