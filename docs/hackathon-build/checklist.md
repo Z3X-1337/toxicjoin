@@ -1,56 +1,57 @@
 # ToxicJoin Build Checklist
 
 Build mode: autonomous, with review through draft pull requests.
-Verification: automated checks at every item; no automatic merge.
+Verification: automated checks at every item; no automatic merge until the milestone is green.
 Git cadence: one focused branch/PR per milestone.
 Wow moment: a query built from individually acceptable datasets becomes unsafe only after joining them; ToxicJoin explains the derived risk, safely rewrites the SQL, executes it, and leaves a verified decision in DataHub.
 
-- [ ] **1. Lock domain models and statement boundary**
+- [x] **1. Lock domain models and statement boundary**
   Spec ref: `spec.md > Domain models` and `SQL analyzer`
-  What to build: Add typed request, query-plan, evidence, decision, verification, and receipt models. Reject multiple statements and all non-SELECT statements.
-  Acceptance: A single SELECT parses; INSERT/UPDATE/DELETE/DDL and multi-statement inputs return deterministic failure codes.
-  Verify: `pytest tests/unit/test_sql_parser.py -q`
+  What was built: Strict request, query-plan, context, decision, execution, and verification models. Multiple statements and all non-SELECT statements are rejected.
+  Acceptance: A single supported SELECT parses; INSERT/UPDATE/DELETE/DDL and multi-statement inputs return deterministic failure codes.
+  Verified: `pytest tests/unit/test_sql_parser.py -q` and full CI on Python 3.11/3.12.
 
-- [ ] **2. Extract SQL sources and referenced columns**
+- [x] **2. Extract SQL sources and referenced columns**
   Spec ref: `spec.md > SQL analyzer`
-  What to build: Resolve table aliases, joins, projections, group keys, aggregate functions, and CTEs into a normalized QueryPlan.
-  Acceptance: The flagship query produces the expected source tables, join keys, projected columns, and group keys.
-  Verify: `pytest tests/unit/test_sql_parser.py tests/adversarial/test_sql_resolution.py -q`
+  What was built: Resolve table aliases, joins, root projections, all governed references, group keys, aggregate functions, supported CTE lineage, and subject-bound HAVING thresholds into a normalized QueryPlan.
+  Acceptance: The flagship query produces the expected physical sources, join keys, root output lineage, referenced columns, group keys, and trusted threshold subject.
+  Verified: `pytest tests/unit/test_sql_parser.py -q` and full CI on Python 3.11/3.12.
 
-- [ ] **3. Build fixture context resolver**
+- [x] **3. Build fixture context resolver**
   Spec ref: `spec.md > DataHub context resolver` and `Modes`
-  What to build: Load DataHub-shaped fixture metadata and map every referenced field to ColumnContext classifications.
-  Acceptance: Missing datasets, fields, or classifications create explicit metadata-gap reasons and never permit execution.
-  Verify: `pytest tests/unit/test_fixture_context.py -q`
+  What was built: Load DataHub-shaped fixture metadata and map every referenced field to governed ColumnContext classifications and DataHub-like URNs.
+  Acceptance: Missing datasets, fields, classifications, or wildcard expansion create explicit metadata-gap reasons and never permit execution.
+  Verified: `pytest tests/unit/test_fixture_context.py -q` and full CI on Python 3.11/3.12.
 
-- [ ] **4. Implement deterministic policy engine**
+- [x] **4. Implement deterministic policy engine**
   Spec ref: `spec.md > Compositional-risk engine`
-  What to build: Load versioned YAML rules and implement BLOCK > REWRITE > ALLOW priority.
-  Acceptance: Direct-sensitive linkage blocks; pseudonym plus multiple quasi-identifiers plus sensitive data blocks; unsafe grouped output rewrites; low-risk aggregate allows.
-  Verify: `pytest tests/unit/test_policy_engine.py -q`
+  What was built: A package-owned versioned YAML policy with fixed `BLOCK > REWRITE > ALLOW` evaluation and fail-closed upstream failures.
+  Acceptance: Direct-sensitive linkage blocks; pseudonym plus multiple quasi-identifiers plus sensitive data blocks; unsafe grouped output rewrites; only a threshold bound to the expected subject key can allow sensitive grouped output.
+  Verified: `pytest tests/unit/test_policy_engine.py -q` and full CI on Python 3.11/3.12.
 
-- [ ] **5. Seed synthetic DuckDB warehouse**
+- [x] **5. Seed synthetic DuckDB warehouse**
   Spec ref: `spec.md > Flagship synthetic data model`
-  What to build: Deterministically generate customers, orders, support cases, location activity, and retention scores.
-  Acceptance: One command creates the same database and planted scenario every run.
-  Verify: `python -m toxicjoin.demo.seed --output .toxicjoin/demo.duckdb && pytest tests/integration/test_seed.py -q`
+  What was built: Deterministically generate customers, orders, support cases, location activity, and retention scores with a reproducible data fingerprint and no direct identity fields.
+  Acceptance: One command creates the same database and planted privacy boundary every run; coarse regions contain 40 subjects while precise areas contain 10.
+  Verified: `python -m toxicjoin.demo.seed --output .toxicjoin/demo.duckdb` and `pytest tests/integration/test_seed.py -q` in full CI.
 
-- [ ] **6. Implement constrained safe SQL rewrite**
+- [x] **6. Implement constrained safe SQL rewrite**
   Spec ref: `spec.md > Safe SQL rewriter`
-  What to build: Remove identifiers, coarsen configured location fields, add grouping and minimum distinct-subject threshold, then reparse.
-  Acceptance: Flagship SQL becomes executable safe SQL; unsupported rewrites fail closed.
-  Verify: `pytest tests/unit/test_rewriter.py -q`
+  What was built: For already-grouped supported analytics, add or strengthen `HAVING COUNT(DISTINCT subject_key) >= minimum_group_size`, then reparse and validate the bound subject. Unsupported transformations fail closed.
+  Scope cut: automatic identifier removal, location coarsening, and individual-to-grouped synthesis are not claimed in this milestone; they remain optional extensions only if the flagship experience requires them.
+  Acceptance: The flagship grouped SQL becomes executable safe SQL; wrong-subject, OR-based, wildcard, individual-level, and unsupported rewrites fail closed.
+  Verified: `pytest tests/unit/test_rewriter.py -q` and full CI on Python 3.11/3.12.
 
-- [ ] **7. Execute and verify safe SQL**
+- [x] **7. Execute and verify safe SQL**
   Spec ref: `spec.md > DuckDB executor` and `Verification engine`
-  What to build: Read-only executor, bounded preview, timeout, output-column checks, group-size validation, and policy reevaluation.
-  Acceptance: Blocked SQL never reaches DuckDB; rewritten SQL executes only after reevaluation and all groups meet the threshold.
-  Verify: `pytest tests/integration/test_safe_execution.py -q`
+  What was built: Policy-gated read-only executor, disabled external access and extension auto-loading, locked configuration, bounded preview, timeout interruption, raw-output checks, subject-threshold validation, observed group-size validation, and policy reevaluation.
+  Acceptance: BLOCK and REWRITE never reach DuckDB; rewritten SQL executes only after a final ALLOW decision; all returned groups meet the threshold; configuration confirms external access is disabled.
+  Verified: `pytest tests/integration/test_safe_execution.py -q` and two independent green GitHub Actions workflows on Python 3.11/3.12.
 
 - [ ] **8. Produce immutable receipts**
   Spec ref: `spec.md > Receipt writer`
-  What to build: Serialize evidence, policy version, SQL hashes, decision, verification, and execution summary.
-  Acceptance: Receipts are deterministic apart from ID/time fields, validate against Pydantic models, and contain no raw sensitive rows.
+  What to build: Serialize evidence, policy version, SQL hashes, decision, verification, execution summary, and write-back status without raw sensitive rows.
+  Acceptance: Receipts are deterministic apart from ID/time fields, validate against strict models, and contain no raw sensitive rows.
   Verify: `pytest tests/unit/test_receipts.py -q`
 
 - [ ] **9. Complete real DataHub integration spike**
@@ -62,12 +63,12 @@ Wow moment: a query built from individually acceptable datasets becomes unsafe o
 - [ ] **10. Expose API and curated scenarios**
   Spec ref: `spec.md > API contracts`
   What to build: Health, analyze, safe-execute, receipt, and demo-scenario endpoints.
-  Acceptance: API tests cover ALLOW, REWRITE, BLOCK, DataHub outage, and invalid input without executing unsafe SQL.
+  Acceptance: API tests cover ALLOW, REWRITE, BLOCK, DataHub outage, invalid input, and replay/fixture disclosure without executing unsafe SQL.
   Verify: `pytest tests/integration/test_api.py -q`
 
 - [ ] **11. Add CI, benchmark, and judge evidence**
   Spec ref: `spec.md > Testing strategy` and `Demo contract`
-  What to build: GitHub Actions, 30-query benchmark, confusion matrix, examples, known limitations, and 90-second judge guide.
+  What to build: Consolidated CI, 30-query benchmark, confusion matrix, examples, known limitations, and a 90-second judge guide.
   Acceptance: Fresh checkout passes lint/tests; benchmark results are generated, not hand-edited; examples include allow/rewrite/block receipts.
   Verify: `ruff check . && pytest -q && python -m toxicjoin.benchmark`
 
