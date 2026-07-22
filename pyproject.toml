@@ -16,8 +16,12 @@ dependencies = [
 [project.scripts]
 toxicjoin-api = "toxicjoin.cli:run_api"
 toxicjoin-seed = "toxicjoin.demo.seed:main"
+toxicjoin-datahub-spike = "toxicjoin.integrations.datahub_spike:main"
 
 [project.optional-dependencies]
+datahub = [
+  "mcp>=1.27,<2",
+]
 dev = [
   "pytest>=8,<9",
   "pytest-cov>=5,<6",
