@@ -12,7 +12,6 @@ from toxicjoin.rewrite import RewriteError, enforce_minimum_group_size
 
 ROOT = Path(__file__).parents[2]
 CATALOG = ROOT / "demo" / "fixtures" / "catalog.json"
-POLICY = ROOT / "config" / "policy.yaml"
 SUBJECT = ColumnRef(dataset="customers", field_path="customer_id", alias="c")
 
 
@@ -72,7 +71,7 @@ def test_rewritten_query_passes_policy_reevaluation() -> None:
         minimum_group_size=20,
     )
     resolution = FixtureContextResolver.from_path(CATALOG).resolve(result.safe_plan)
-    decision = PolicyEngine(load_policy(POLICY)).evaluate(
+    decision = PolicyEngine(load_policy()).evaluate(
         resolution.to_policy_input(
             task_purpose="Find regions with elevated churn risk",
             query_plan=result.safe_plan,
