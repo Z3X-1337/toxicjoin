@@ -8,6 +8,7 @@ changes. The stable MCP Python SDK v1 is loaded lazily through the optional
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shlex
@@ -168,19 +169,25 @@ class StdioDataHubMcpTransport:
 
         stack = AsyncExitStack()
         try:
-            read_stream, write_stream = await stack.enter_async_context(
-                stdio_client(
-                    StdioServerParameters(
-                        command=self.settings.command,
-                        args=list(self.settings.args),
-                        env=self.settings.child_environment(),
+            async with asyncio.timeout(self.settings.timeout_seconds):
+                read_stream, write_stream = await stack.enter_async_context(
+                    stdio_client(
+                        StdioServerParameters(
+                            command=self.settings.command,
+                            args=list(self.settings.args),
+                            env=self.settings.child_environment(),
+                        )
                     )
                 )
-            )
-            session = await stack.enter_async_context(
-                ClientSession(read_stream, write_stream)
-            )
-            await session.initialize()
+                session = await stack.enter_async_context(
+                    ClientSession(read_stream, write_stream)
+                )
+                await session.initialize()
+        except TimeoutError as exc:
+            await stack.aclose()
+            raise DataHubMcpError(
+                "DataHub MCP session initialization timed out"
+            ) from exc
         except Exception as exc:
             await stack.aclose()
             raise DataHubMcpError(
@@ -200,7 +207,10 @@ class StdioDataHubMcpTransport:
     async def list_tools(self) -> tuple[McpToolDefinition, ...]:
         session = self._require_session()
         try:
-            result = await session.list_tools()
+            async with asyncio.timeout(self.settings.timeout_seconds):
+                result = await session.list_tools()
+        except TimeoutError as exc:
+            raise DataHubMcpError("DataHub MCP list_tools timed out") from exc
         except Exception as exc:
             raise DataHubMcpError("DataHub MCP list_tools failed") from exc
 
@@ -231,7 +241,10 @@ class StdioDataHubMcpTransport:
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         session = self._require_session()
         try:
-            result = await session.call_tool(name, arguments=arguments)
+            async with asyncio.timeout(self.settings.timeout_seconds):
+                result = await session.call_tool(name, arguments=arguments)
+        except TimeoutError as exc:
+            raise DataHubMcpError(f"DataHub MCP tool timed out: {name}") from exc
         except Exception as exc:
             raise DataHubMcpError(f"DataHub MCP tool call failed: {name}") from exc
 
