@@ -83,6 +83,7 @@ class QueryPlan(StrictModel):
     join_columns: tuple[ColumnRef, ...] = ()
     group_by_columns: tuple[ColumnRef, ...] = ()
     aggregate_functions: tuple[str, ...] = ()
+    minimum_group_size_present: int | None = Field(default=None, ge=1)
     is_grouped: bool = False
     contains_wildcard: bool = False
     analysis_warnings: tuple[str, ...] = ()
