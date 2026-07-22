@@ -79,12 +79,33 @@ class QueryPlan(StrictModel):
     statement_type: str
     source_datasets: tuple[str, ...]
     projected_columns: tuple[ColumnRef, ...]
+    referenced_columns: tuple[ColumnRef, ...] = ()
     join_columns: tuple[ColumnRef, ...] = ()
     group_by_columns: tuple[ColumnRef, ...] = ()
     aggregate_functions: tuple[str, ...] = ()
     is_grouped: bool = False
     contains_wildcard: bool = False
     analysis_warnings: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def referenced_columns_cover_structural_columns(self) -> "QueryPlan":
+        referenced = {column.key for column in self.referenced_columns}
+        structural = {
+            column.key
+            for collection in (
+                self.projected_columns,
+                self.join_columns,
+                self.group_by_columns,
+            )
+            for column in collection
+        }
+        if referenced and not structural.issubset(referenced):
+            missing = sorted(structural - referenced)
+            raise ValueError(
+                "referenced_columns must include projected/join/group columns; "
+                f"missing={missing}"
+            )
+        return self
 
 
 class PolicyInput(StrictModel):
