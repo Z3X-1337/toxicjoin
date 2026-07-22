@@ -132,9 +132,15 @@ def build_receipt(
         "task_purpose": task_purpose,
         "initial_decision": initial_decision.decision,
         "initial_reason_codes": initial_decision.reason_codes,
+        "initial_evidence": _json_compatible(initial_decision.evidence),
         "final_decision": final_decision.decision if final_decision is not None else None,
         "final_reason_codes": (
             final_decision.reason_codes if final_decision is not None else ()
+        ),
+        "final_evidence": (
+            _json_compatible(final_decision.evidence)
+            if final_decision is not None
+            else {}
         ),
         "policy_version": initial_decision.policy_version,
         "sql": sql_evidence,
@@ -220,7 +226,6 @@ class ReceiptStore:
                         f"receipt concurrently created with different content: {target}"
                     )
             except OSError:
-                # Portable exclusive fallback for filesystems without hard-link support.
                 descriptor = os.open(
                     target,
                     os.O_WRONLY | os.O_CREAT | os.O_EXCL,
