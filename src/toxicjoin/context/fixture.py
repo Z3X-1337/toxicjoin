@@ -12,10 +12,10 @@ from pathlib import Path
 
 from pydantic import Field
 
+from toxicjoin.context.models import ContextResolution
 from toxicjoin.models import (
     ColumnContext,
     ColumnRef,
-    PolicyInput,
     QueryPlan,
     ReasonCode,
     SensitivityCategory,
@@ -39,35 +39,6 @@ class FixtureDataset(StrictModel):
 class FixtureCatalog(StrictModel):
     version: str = Field(min_length=1)
     datasets: dict[str, FixtureDataset]
-
-
-class ContextResolution(StrictModel):
-    projected_context: tuple[ColumnContext, ...]
-    all_referenced_context: tuple[ColumnContext, ...]
-    failures: tuple[ReasonCode, ...] = ()
-
-    def to_policy_input(
-        self,
-        *,
-        task_purpose: str,
-        query_plan: QueryPlan,
-        subject_key: ColumnRef | None = None,
-        minimum_group_size_present: int | None = None,
-    ) -> PolicyInput:
-        effective_threshold = (
-            minimum_group_size_present
-            if minimum_group_size_present is not None
-            else query_plan.minimum_group_size_present
-        )
-        return PolicyInput(
-            task_purpose=task_purpose,
-            query_plan=query_plan,
-            projected_context=self.projected_context,
-            all_referenced_context=self.all_referenced_context,
-            subject_key=subject_key,
-            minimum_group_size_present=effective_threshold,
-            upstream_failures=self.failures,
-        )
 
 
 def load_fixture_catalog(path: str | Path) -> FixtureCatalog:
@@ -97,8 +68,6 @@ class FixtureContextResolver:
         cache: dict[str, ColumnContext] = {}
 
         if query_plan.contains_wildcard:
-            # Star expansion requires a trusted schema-aware expansion phase. Until that
-            # phase is implemented, fixture and live modes both fail closed.
             failures.append(ReasonCode.UNRESOLVED_COLUMN)
 
         projected_context = self._resolve_many(
