@@ -56,9 +56,10 @@ Wow moment: a query built from individually acceptable datasets becomes unsafe o
 
 - [ ] **9. Complete real DataHub integration spike**
   Spec ref: `spec.md > DataHub context resolver`, `DataHub write-back`, and `Definition of done for the integration spike`
-  What to build: Read schemas/tags/lineage through DataHub MCP, save a Decision, and independently read it back.
-  Acceptance: Sanitized evidence proves Python -> DataHub read -> write -> independent verification; failures exit non-zero.
-  Verify: `python scripts/datahub_spike.py --verify`
+  What is built: Provider-neutral context models; official SDK seed plan for five datasets, 19 fields, controlled tags, glossary terms, and four column-lineage relationships; official MCP stdio transport; runtime tool/schema validation; bounded pagination; normalized live metadata; fail-closed classifications; hard operation timeouts; minimal child environment; Decision write; fresh-process read-back verification; sanitized atomic seed/spike reports; complete fake-SDK and fake-MCP tests.
+  Current gate: Code and protocol are green in CI on Python 3.11/3.12. A real Docker/hosted DataHub run has not yet produced the final `.toxicjoin/datahub-spike.json` evidence report, so this item remains unchecked.
+  Acceptance: Sanitized evidence from the final demo environment proves Python -> DataHub read -> lineage read -> Decision write -> new MCP process -> independent read-back; failures exit non-zero.
+  Verify: `toxicjoin-datahub-seed --yes && toxicjoin-datahub-spike --verify`
 
 - [x] **10. Expose API and curated scenarios**
   Spec ref: `spec.md > API contracts`
