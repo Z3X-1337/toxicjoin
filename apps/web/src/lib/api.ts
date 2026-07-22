@@ -25,14 +25,14 @@ export class ToxicJoinApiError extends Error {
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  headers.set("Content-Type", "application/json");
+
   try {
     const response = await fetch(path, {
       ...init,
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        ...init?.headers,
-      },
+      headers,
       signal: controller.signal,
     });
     if (!response.ok) {
@@ -95,7 +95,9 @@ export async function executeScenario(
     if (!replay) {
       throw new ToxicJoinApiError("Replay scenario not found.");
     }
-    await new Promise((resolve) => window.setTimeout(resolve, 420));
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, 420);
+    });
     return replay;
   }
 
