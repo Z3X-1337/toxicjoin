@@ -12,7 +12,6 @@ import json
 import os
 import shlex
 from contextlib import AsyncExitStack
-from pathlib import Path
 from typing import Any, Protocol, Self
 
 from pydantic import Field, SecretStr
