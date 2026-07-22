@@ -47,6 +47,37 @@ DataHub SDK seed
 
 The repository tests this complete protocol with deterministic fake SDK/MCP transports on Python 3.11 and 3.12. A real live report is intentionally not claimed until the final DataHub environment is started and the read/write/read-back command succeeds.
 
+## Measured benchmark
+
+GitHub Actions runs a balanced 30-query regression corpus through the real pipeline and uploads the complete JSON and Markdown reports.
+
+Current CI-generated result:
+
+- 30 cases: 10 `ALLOW`, 10 `REWRITE`, 10 `BLOCK`;
+- 100% initial decision accuracy on the declared corpus;
+- 100% effective outcome accuracy after rewrite and verification;
+- 100% expected reason-code coverage;
+- zero false allows;
+- zero unsafe effective allows;
+- six rewrites remediated and executed;
+- four rewrite paths failed closed;
+- 16 verified executions.
+
+Evidence:
+
+- [Human-readable benchmark](docs/evidence/benchmark.md)
+- [Machine-readable summary](docs/evidence/benchmark-summary.json)
+- Full report SHA-256: `4a1b7630012ffd54eba698b6bf1fd66a9dc3b6167d2513ef1c4c5519a8483987`
+- Data fingerprint: `bfeae85c4b238e38012aadc6f4c95d24c7a28bcb1da1c35e8eeef5be28be7d16`
+
+Reproduce it:
+
+```bash
+toxicjoin-benchmark --output-dir artifacts/benchmark
+```
+
+The command exits non-zero if any decision, effective outcome, reason, safe-rewrite expectation, false-allow gate, or unsafe-effective-allow gate regresses. This is a deterministic test of the declared supported SQL and policy profile, not a claim of universal privacy detection.
+
 ## Try fixture mode
 
 Requirements: Python 3.11 or 3.12.
@@ -81,6 +112,8 @@ The launcher creates deterministic synthetic data on first startup and serves:
 - Analyze without execution: `POST /api/analyze`
 - Verify and execute only a safe final query: `POST /api/execute-safe`
 - Read and integrity-check a receipt: `GET /api/receipts/{receipt_id}`
+
+A reviewer can follow the exact [90-second judge testing guide](docs/judge-testing.md).
 
 ## Run the live DataHub path
 
@@ -144,6 +177,7 @@ The synthetic warehouse deliberately contains:
 - `SELECT *` is blocked until schema-aware governed expansion exists; `COUNT(*)` remains supported.
 - A group threshold is trusted only when it counts the expected distinct subject key.
 - Thresholds inside `OR` expressions are not trusted.
+- CTE rewrites bind the physical subject key to the unique alias visible in the root query and fail closed on ambiguity.
 - Rewritten SQL passes the same analyzer and policy engine again.
 - DuckDB opens read-only with external access and extension auto-loading disabled, then locks configuration.
 - Verification checks final policy status, raw output fields, full group inspection, and observed subject counts.
@@ -156,8 +190,9 @@ The synthetic warehouse deliberately contains:
 - OpenAI, AWS, database, and unrelated application secrets are not forwarded.
 - Missing assets, unknown payload shapes, conflicting labels, duplicate fields, and incomplete pagination fail closed.
 - DataHub write verification occurs from a new MCP process, not an in-memory write result.
+- CI fails on any benchmark false allow or unsafe effective allow.
 
-See [SECURITY.md](SECURITY.md), [docs/threat-model.md](docs/threat-model.md), and [docs/datahub-live-integration.md](docs/datahub-live-integration.md).
+See [SECURITY.md](SECURITY.md), [docs/threat-model.md](docs/threat-model.md), [docs/datahub-live-integration.md](docs/datahub-live-integration.md), and [docs/judge-testing.md](docs/judge-testing.md).
 
 ## Deterministic scenarios
 
@@ -175,9 +210,10 @@ Fetch the exact payloads from `GET /api/demo/scenarios`.
 python -m pip install -e '.[dev]'
 ruff check src tests
 pytest -q
+toxicjoin-benchmark --output-dir artifacts/benchmark
 ```
 
-GitHub Actions tests Python 3.11 and 3.12. Test diagnostics are uploaded as artifacts even when a run fails.
+GitHub Actions tests Python 3.11 and 3.12. Test diagnostics are uploaded even when a run fails, and the benchmark report is retained as a CI artifact.
 
 Useful focused checks:
 
@@ -185,6 +221,7 @@ Useful focused checks:
 pytest tests/unit/test_sql_parser.py -q
 pytest tests/unit/test_policy_engine.py -q
 pytest tests/unit/test_receipts.py -q
+pytest tests/unit/test_rewriter_cte.py -q
 pytest tests/unit/test_datahub_mcp.py -q
 pytest tests/unit/test_datahub_context.py -q
 pytest tests/unit/test_datahub_settings.py -q
@@ -193,6 +230,7 @@ pytest tests/integration/test_safe_execution.py -q
 pytest tests/integration/test_pipeline.py -q
 pytest tests/integration/test_api.py -q
 pytest tests/integration/test_datahub_spike.py -q
+pytest tests/integration/test_benchmark.py -q
 ```
 
 ## Repository map
@@ -200,6 +238,7 @@ pytest tests/integration/test_datahub_spike.py -q
 ```text
 src/toxicjoin/
   api/           FastAPI contracts, app, and curated scenarios
+  benchmark/     balanced corpus, runner, metrics, and report generation
   context/       fixture and normalized live DataHub context
   demo/          deterministic warehouse and package-owned catalog
   execute/       policy-gated read-only DuckDB execution
@@ -213,15 +252,18 @@ src/toxicjoin/
 
 config/           DataHub asset manifest and policy configuration
 demo/fixtures/    human-readable metadata fixture mirrored by tests
-tests/            unit, integration, adversarial, API, and MCP coverage
-docs/             scope, PRD, spec, threat model, live guide, and evidence
+docs/evidence/    generated benchmark evidence and hashes
+tests/            unit, integration, adversarial, API, MCP, and benchmark coverage
+docs/             scope, PRD, spec, threat model, live guide, judge guide, and evidence
 ```
 
 ## Deliberate limitations
 
-The first rewrite supports an already-grouped analytical query that requires a stronger subject-count threshold. ToxicJoin does not yet claim general SQL repair, automatic identifier removal, location coarsening, or individual-to-grouped query synthesis. Unsupported transformations fail closed.
+The first rewrite supports an already-grouped analytical query that requires a stronger subject-count threshold. ToxicJoin does not yet claim general SQL repair, automatic identifier removal, location coarsening, differential privacy, or individual-to-grouped query synthesis. Unsupported transformations fail closed.
 
 Fixture metadata proves deterministic behavior and judge accessibility. The MCP adapter, seed plan, and two-session verification protocol are tested, but final live evidence must come from the actual demo DataHub environment and must not be fabricated or inferred from mocks.
+
+The benchmark measures the declared supported corpus. Real organizations must validate their own schemas, classifications, subject keys, policies, and workloads.
 
 ## Project principles
 
