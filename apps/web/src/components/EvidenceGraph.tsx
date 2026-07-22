@@ -1,3 +1,5 @@
+import type { CSSProperties } from "react";
+
 import {
   buildEvidenceNodes,
   buildRiskNarrative,
@@ -33,7 +35,7 @@ export function EvidenceGraph({ result }: EvidenceGraphProps) {
                 className={`evidence-node role-${node.role}`}
                 key={node.id}
                 role="listitem"
-                style={{ "--node-delay": `${index * 55}ms` } as React.CSSProperties}
+                style={{ "--node-delay": `${index * 55}ms` } as CSSProperties}
               >
                 <span className="node-dataset">{node.dataset}</span>
                 <strong>{node.field}</strong>
