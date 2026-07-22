@@ -10,7 +10,6 @@ from toxicjoin.sql import analyze_sql
 
 ROOT = Path(__file__).parents[2]
 CATALOG = ROOT / "demo" / "fixtures" / "catalog.json"
-POLICY = ROOT / "config" / "policy.yaml"
 SUBJECT = ColumnRef(dataset="customers", field_path="customer_id", alias="c")
 
 
@@ -19,7 +18,7 @@ def _resolver() -> FixtureContextResolver:
 
 
 def _engine() -> PolicyEngine:
-    return PolicyEngine(load_policy(POLICY))
+    return PolicyEngine(load_policy())
 
 
 def test_resolves_governed_context_with_datahub_identifiers() -> None:
