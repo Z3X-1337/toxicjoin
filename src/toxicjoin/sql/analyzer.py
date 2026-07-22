@@ -28,7 +28,6 @@ def analyze_sql(sql: str, *, dialect: str = "duckdb") -> QueryPlan:
     plan = _analyze_all_scopes(sql, dialect=dialect)
     root = sqlglot.parse_one(sql, read=dialect)
     if not isinstance(root, exp.Select):
-        # The low-level analyzer already rejects this, but keep this boundary explicit.
         raise SqlAnalysisError(
             ReasonCode.UNSUPPORTED_STATEMENT,
             f"only SELECT is supported, received {root.key.upper()}",
@@ -36,10 +35,13 @@ def analyze_sql(sql: str, *, dialect: str = "duckdb") -> QueryPlan:
 
     root_scope = _find_root_scope(root)
     warnings = set(plan.analysis_warnings)
+    warnings.discard("SELECT_STAR_REQUIRES_SCHEMA_EXPANSION")
     root_projected: set[ColumnRef] = set()
+    contains_output_wildcard = False
 
     for projection in root.expressions:
-        if projection.find(exp.Star):
+        if _is_output_wildcard(projection):
+            contains_output_wildcard = True
             warnings.add("SELECT_STAR_REQUIRES_SCHEMA_EXPANSION")
         root_projected.update(
             _resolve_columns(
@@ -52,8 +54,16 @@ def analyze_sql(sql: str, *, dialect: str = "duckdb") -> QueryPlan:
     return plan.model_copy(
         update={
             "projected_columns": _sorted_refs(root_projected),
+            "contains_wildcard": contains_output_wildcard,
             "analysis_warnings": tuple(sorted(warnings)),
         }
+    )
+
+
+def _is_output_wildcard(projection: exp.Expression) -> bool:
+    expression = projection.this if isinstance(projection, exp.Alias) else projection
+    return isinstance(expression, exp.Star) or (
+        isinstance(expression, exp.Column) and isinstance(expression.this, exp.Star)
     )
 
 
