@@ -22,6 +22,7 @@ toxicjoin-datahub-agent-registry = "toxicjoin.integrations.datahub_agent_registr
 toxicjoin-datahub-agent-registry-verify = "toxicjoin.integrations.datahub_agent_registry_verify:main"
 toxicjoin-benchmark = "toxicjoin.benchmark.runner:main"
 toxicjoin-governance-proof = "toxicjoin.benchmark.governance_dependency:main"
+toxicjoin-adversarial = "toxicjoin.benchmark.adversarial:main"
 
 [project.optional-dependencies]
 datahub = [

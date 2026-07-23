@@ -1,0 +1,42 @@
+name: Adversarial Mutation Evidence
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: adversarial-mutations-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  adversarial-mutations:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ToxicJoin
+        run: python -m pip install --upgrade pip && python -m pip install -e '.[dev]'
+
+      - name: Run adversarial mutation gate
+        run: toxicjoin-adversarial --output-dir artifacts/adversarial-mutations
+
+      - name: Upload adversarial mutation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-adversarial-mutations
+          path: artifacts/adversarial-mutations/
+          if-no-files-found: error
+          retention-days: 30
