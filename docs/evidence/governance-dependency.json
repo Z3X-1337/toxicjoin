@@ -1,0 +1,74 @@
+{
+  "schema_version": "1.0",
+  "evaluation_version": "1.0",
+  "policy_version": "0.1.0",
+  "data_fingerprint": "bfeae85c4b238e38012aadc6f4c95d24c7a28bcb1da1c35e8eeef5be28be7d16",
+  "sql_sha256": "85d4a0c328e14d234ef1b589e8d36d5e40c53a2510b3ca2c6aa4bbad40d12e51",
+  "cases": [
+    {
+      "case_id": "complete-governance",
+      "governance_change": "none; canonical governed context",
+      "initial_decision": "REWRITE",
+      "effective_decision": "ALLOW",
+      "initial_reason_codes": [
+        "SMALL_GROUP_RISK"
+      ],
+      "executed": true,
+      "verification_passed": true,
+      "output_group_count": 3,
+      "observed_subject_counts": [
+        40,
+        40,
+        40
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "unclassified-sensitive-field",
+      "governance_change": "retention_scores.churn_score has no governed sensitivity classification",
+      "initial_decision": "BLOCK",
+      "effective_decision": "BLOCK",
+      "initial_reason_codes": [
+        "UNCLASSIFIED_COLUMN"
+      ],
+      "executed": false,
+      "verification_passed": null,
+      "output_group_count": null,
+      "observed_subject_counts": [],
+      "passed": true
+    },
+    {
+      "case_id": "missing-sensitive-field",
+      "governance_change": "retention_scores.churn_score is absent from governed schema metadata",
+      "initial_decision": "BLOCK",
+      "effective_decision": "BLOCK",
+      "initial_reason_codes": [
+        "UNRESOLVED_COLUMN",
+        "UNCLASSIFIED_COLUMN"
+      ],
+      "executed": false,
+      "verification_passed": null,
+      "output_group_count": null,
+      "observed_subject_counts": [],
+      "passed": true
+    },
+    {
+      "case_id": "missing-governed-dataset",
+      "governance_change": "retention_scores is absent from governed dataset metadata",
+      "initial_decision": "BLOCK",
+      "effective_decision": "BLOCK",
+      "initial_reason_codes": [
+        "UNRESOLVED_DATASET",
+        "UNCLASSIFIED_COLUMN"
+      ],
+      "executed": false,
+      "verification_passed": null,
+      "output_group_count": null,
+      "observed_subject_counts": [],
+      "passed": true
+    }
+  ],
+  "unsafe_effective_allow_count": 0,
+  "gate_failures": [],
+  "report_sha256": "5466c06f7ff926eafb897ab18c121ef241a4bc539bd2cf037c4437637ea414a5"
+}
