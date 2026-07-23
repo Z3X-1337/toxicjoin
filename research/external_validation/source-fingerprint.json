@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "experiment": "external-validation-01-source-acquisition",
+  "dataset_doi": "10.24432/C5230J",
+  "official_source_url": "https://archive.ics.uci.edu/static/public/296/diabetes%2B130-us%2Bhospitals%2Bfor%2Byears%2B1999-2008.zip",
+  "source_file_name": "uci-diabetes-296.zip",
+  "source_archive_sha256": "f82ac129da2ddd2299391ff6fbae3a6a58b3edcf59ac9d7bd480c00fe453112a",
+  "diabetic_data_csv_sha256": "0689e7ec031237dc63031b938805c48377748761a3b26acab621567afa24df97",
+  "ids_mapping_csv_sha256": "f1bb82b471cb34649352597572c9b1fb00bd27f77b9f5a22a03dc3eb1039749e",
+  "row_count": 101766,
+  "column_count": 50,
+  "header_sha256": "4a29db639d73662334a5e48d48a961303d0e9ed198b9a8cb23f7a16d99e446fc",
+  "distinct_encounter_id_count": 101766,
+  "duplicate_encounter_id_count": 0,
+  "distinct_patient_nbr_count": 71518,
+  "question_mark_counts": {
+    "diag_1": 21,
+    "diag_2": 358,
+    "diag_3": 1423,
+    "medical_specialty": 49949,
+    "payer_code": 40256,
+    "race": 2273,
+    "weight": 98569
+  },
+  "projection_definition_sha256": "1de1c37c89db932a825733ef6f26347bb3213d79e233eb88ef9167ac88564498",
+  "table_row_counts": {
+    "raw_diabetic_data": 101766,
+    "encounters": 101766,
+    "diagnoses": 101766,
+    "labs": 101766,
+    "medications": 101766,
+    "outcomes": 101766
+  },
+  "raw_values_modified": false,
+  "synthetic_patient_or_encounter_records_added": false,
+  "contains_patient_rows": false,
+  "report_sha256": "232b14bc8d5ce4730e2d3e55a921b7a9601d0287ef60d1d790f1e9b91ed1c89e",
+  "workflow_run": 30050631930,
+  "artifact_id": 8580864307,
+  "artifact_digest": "sha256:67bd34b5bd81c58c5fcf25ae6fd691e646e5d9343cfc837b55411efa20cd64e7",
+  "tested_commit": "084ce3afc921723594497c6c7ef1b16798ca3034",
+  "limitations": [
+    "This retained summary records external source acquisition and projection only.",
+    "No ToxicJoin policy decision was measured in this stage.",
+    "The full clinical rows were deliberately removed before artifact upload."
+  ]
+}
