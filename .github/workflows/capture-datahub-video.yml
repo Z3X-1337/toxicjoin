@@ -136,17 +136,20 @@ jobs:
           assert manifest['console_error_count'] == 0
           assert manifest['page_error_count'] == 0
           assert manifest['agent_registry_evidence']['visual_ui_claimed'] is False
+          assert manifest['lineage_evidence']['visual_mode'] == 'loaded-summary-panel'
+          assert manifest['lineage_evidence']['upstream_dataset_count'] == 4
+          assert manifest['lineage_evidence']['downstream_usage_count'] == 1
 
           expected = {
-              '01-retention-scores-search.png',
-              '02-retention-scores-overview.png',
-              '03-retention-scores-lineage.png',
+              '01-retention-scores-search.png': 20_000,
+              '02-retention-scores-overview.png': 20_000,
+              '03-retention-scores-lineage-summary.png': 10_000,
           }
           actual = {path.name for path in root.glob('*.png')}
-          assert expected <= actual, (expected, actual)
-          for name in expected:
+          assert set(expected) <= actual, (set(expected), actual)
+          for name, minimum_size in expected.items():
               path = root / name
-              assert path.stat().st_size >= 20_000, (name, path.stat().st_size)
+              assert path.stat().st_size >= minimum_size, (name, path.stat().st_size)
 
           registry = json.loads(Path('.toxicjoin/datahub-agent-registry.json').read_text())
           verified = json.loads(Path('.toxicjoin/datahub-agent-registry-verified.json').read_text())
