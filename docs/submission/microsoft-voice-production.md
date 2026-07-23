@@ -2,9 +2,18 @@
 
 This document defines the voice asset that will drive the final demo edit. The final video must be cut to the delivered narration, not the other way around.
 
+## Voice audition
+
+Generate the first two paragraphs with both voices before rendering the full script:
+
+1. **Primary:** `en-US-AndrewMultilingualNeural` — calm, clear, neutral technology-presenter delivery.
+2. **Backup:** `en-US-BrianMultilingualNeural` — slightly deeper delivery if Andrew sounds too light for the product.
+
+Use the same rate, pitch, and pause settings for both samples. Select the voice based on intelligibility, natural paragraph transitions, and correct pronunciation of the product terms—not merely on depth. Do not use a personal or cloned voice.
+
 ## Required output
 
-- Provider: Microsoft neural text-to-speech.
+- Provider: Microsoft Azure Speech neural text-to-speech through Speech Studio Audio Content Creation or the Azure Speech API.
 - Language: native US English.
 - Voice character: calm, intelligent, technically credible, neutral, and easy to understand.
 - Delivery style: modern technology keynote; not a trailer, advertisement, radio announcer, or aggressive sales voice.
@@ -63,6 +72,8 @@ The exact pauses may be adjusted to reach the target duration without making the
 
 ## Acceptance check before sending the audio
 
+- [ ] The two-paragraph Andrew and Brian auditions used identical settings.
+- [ ] The selected voice is documented before rendering the complete narration.
 - [ ] Duration is between 2:30 and 2:45.
 - [ ] The narrator sounds like a native US English technology presenter.
 - [ ] `ToxicJoin`, `DataHub`, `SQL`, `MCP`, and `DuckDB` are pronounced correctly.
