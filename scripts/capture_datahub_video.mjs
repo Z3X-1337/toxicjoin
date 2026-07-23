@@ -1,0 +1,187 @@
+import fs from "node:fs";
+import path from "node:path";
+import { chromium } from "playwright-core";
+
+const uiUrl = process.env.DATAHUB_UI_URL ?? "http://127.0.0.1:9002";
+const username = process.env.DATAHUB_UI_USERNAME ?? "datahub";
+const password = process.env.DATAHUB_UI_PASSWORD ?? "datahub";
+const browserExecutable = process.env.BROWSER_EXECUTABLE;
+const outputDir = process.env.DATAHUB_CAPTURE_DIR ?? ".toxicjoin/video-captures";
+
+if (!browserExecutable || !fs.existsSync(browserExecutable)) {
+  throw new Error(`BROWSER_EXECUTABLE is missing or invalid: ${browserExecutable ?? "unset"}`);
+}
+
+fs.mkdirSync(outputDir, { recursive: true });
+
+const browser = await chromium.launch({
+  headless: true,
+  executablePath: browserExecutable,
+  args: ["--no-sandbox", "--disable-dev-shm-usage"],
+});
+
+const context = await browser.newContext({
+  viewport: { width: 1600, height: 1000 },
+  deviceScaleFactor: 1,
+  reducedMotion: "reduce",
+});
+const page = await context.newPage();
+const consoleErrors = [];
+const pageErrors = [];
+
+page.on("console", (message) => {
+  if (message.type() === "error") consoleErrors.push(message.text());
+});
+page.on("pageerror", (error) => pageErrors.push(String(error)));
+
+const captures = [];
+
+async function settle() {
+  await page.waitForLoadState("domcontentloaded");
+  await page.waitForTimeout(1200);
+}
+
+async function screenshot(name, evidence = []) {
+  const target = path.join(outputDir, `${name}.png`);
+  const bodyText = (await page.locator("body").innerText()).replace(/\s+/g, " ").trim();
+  for (const required of evidence) {
+    if (!bodyText.toLowerCase().includes(required.toLowerCase())) {
+      throw new Error(`${name}: required visible evidence not found: ${required}`);
+    }
+  }
+  await page.screenshot({ path: target, fullPage: true });
+  const stats = fs.statSync(target);
+  if (stats.size < 20_000) {
+    throw new Error(`${name}: screenshot is unexpectedly small (${stats.size} bytes)`);
+  }
+  captures.push({
+    name,
+    file: target,
+    bytes: stats.size,
+    url: page.url(),
+    evidence,
+  });
+}
+
+async function loginIfNeeded() {
+  await page.goto(uiUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await settle();
+
+  const passwordInput = page.locator('input[type="password"]').first();
+  if ((await passwordInput.count()) === 0 || !(await passwordInput.isVisible())) {
+    return;
+  }
+
+  const textInputs = page.locator('input:not([type="password"]):not([type="hidden"])');
+  let userInput = null;
+  for (let i = 0; i < (await textInputs.count()); i += 1) {
+    const candidate = textInputs.nth(i);
+    if (await candidate.isVisible()) {
+      userInput = candidate;
+      break;
+    }
+  }
+  if (!userInput) throw new Error("DataHub login page did not expose a visible username field");
+
+  await userInput.fill(username);
+  await passwordInput.fill(password);
+
+  const loginButton = page
+    .getByRole("button", { name: /sign in|log in|login/i })
+    .first();
+  if ((await loginButton.count()) > 0 && (await loginButton.isVisible())) {
+    await loginButton.click();
+  } else {
+    const submit = page.locator('button[type="submit"]').first();
+    if ((await submit.count()) === 0) throw new Error("DataHub login submit button was not found");
+    await submit.click();
+  }
+
+  await page.waitForLoadState("domcontentloaded");
+  await page.waitForTimeout(1800);
+  if ((await page.locator('input[type="password"]').count()) > 0) {
+    const stillVisible = await page.locator('input[type="password"]').first().isVisible();
+    if (stillVisible) throw new Error("DataHub login did not complete");
+  }
+}
+
+async function findSearchBox() {
+  const candidates = [
+    page.locator('input[placeholder*="Search" i]'),
+    page.getByRole("textbox", { name: /search/i }),
+    page.locator('input[type="search"]'),
+  ];
+  for (const locator of candidates) {
+    const count = await locator.count();
+    for (let i = 0; i < count; i += 1) {
+      const candidate = locator.nth(i);
+      if (await candidate.isVisible()) return candidate;
+    }
+  }
+  throw new Error(`No visible DataHub search box found at ${page.url()}`);
+}
+
+async function searchAndOpen(query, visibleLabel) {
+  await page.goto(uiUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await settle();
+  const search = await findSearchBox();
+  await search.fill(query);
+  await search.press("Enter");
+  await page.waitForTimeout(1800);
+
+  const result = page.getByText(visibleLabel, { exact: false }).first();
+  if ((await result.count()) === 0 || !(await result.isVisible())) {
+    await screenshot(`diagnostic-search-${query.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`);
+    throw new Error(`Search result not found for ${query}: expected visible label ${visibleLabel}`);
+  }
+  await result.click();
+  await settle();
+}
+
+try {
+  await loginIfNeeded();
+  await screenshot("01-datahub-home", ["DataHub"]);
+
+  await searchAndOpen("retention_scores", "retention_scores");
+  await screenshot("02-retention-scores-overview", ["retention_scores", "churn_score"]);
+
+  const lineageControl = page.getByText("Lineage", { exact: true }).first();
+  if ((await lineageControl.count()) === 0 || !(await lineageControl.isVisible())) {
+    throw new Error("retention_scores page does not expose a visible Lineage control");
+  }
+  await lineageControl.click();
+  await page.waitForTimeout(1600);
+  await screenshot("03-retention-scores-lineage", ["retention_scores", "Lineage"]);
+
+  await searchAndOpen("Compositional Risk Review", "Compositional Risk Review");
+  await screenshot("04-compositional-risk-agent-skill", ["Compositional Risk Review"]);
+
+  await searchAndOpen("ToxicJoin Privacy Firewall Agent", "ToxicJoin Privacy Firewall Agent");
+  await screenshot("05-toxicjoin-ai-agent", ["ToxicJoin Privacy Firewall Agent"]);
+
+  if (consoleErrors.length) {
+    throw new Error(`DataHub UI console errors: ${consoleErrors.join(" | ")}`);
+  }
+  if (pageErrors.length) {
+    throw new Error(`DataHub UI page errors: ${pageErrors.join(" | ")}`);
+  }
+
+  const manifest = {
+    schema_version: "1.0",
+    source: "real-datahub-oss-ui",
+    ui_url_origin: new URL(uiUrl).origin,
+    viewport: { width: 1600, height: 1000 },
+    capture_count: captures.length,
+    captures,
+    console_error_count: 0,
+    page_error_count: 0,
+  };
+  fs.writeFileSync(
+    path.join(outputDir, "manifest.json"),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    "utf8",
+  );
+  console.log(JSON.stringify(manifest, null, 2));
+} finally {
+  await browser.close();
+}
