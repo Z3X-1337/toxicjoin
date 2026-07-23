@@ -226,4 +226,28 @@ jobs:
 
   datahub-video-capture:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/video-captures'
-    uses: ./.github/workflows/capture-datahub-video-evidence.yml
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out capture branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Produce real DataHub screenshots and raw video
+        shell: bash
+        run: bash scripts/run_datahub_video_capture_ci.sh
+
+      - name: Upload real DataHub capture package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-real-datahub-video-captures
+          path: artifacts/video-captures
+          if-no-files-found: error
+          retention-days: 30
