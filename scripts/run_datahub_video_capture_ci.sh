@@ -89,6 +89,72 @@ toxicjoin-datahub-seed \
   2>&1 | tee artifacts/video-captures/datahub-seed.log
 cp .toxicjoin/datahub-video-seed.json artifacts/video-captures/
 
+set_stage "seed-capture-view-policy"
+python - <<'PY' 2>&1 | tee artifacts/video-captures/datahub-capture-policy.log
+import json
+from pathlib import Path
+
+from datahub.emitter.mcp import MetadataChangeProposalWrapper
+from datahub.emitter.rest_emitter import DatahubRestEmitter
+from datahub.metadata.schema_classes import (
+    DataHubActorFilterClass,
+    DataHubPolicyInfoClass,
+)
+
+policy_urn = "urn:li:dataHubPolicy:toxicjoin-capture-view"
+privileges = [
+    "VIEW_ENTITY_PAGE",
+    "SEARCH_PRIVILEGE",
+    "GET_COUNTS_PRIVILEGE",
+    "GET_TIMESERIES_ASPECT_PRIVILEGE",
+    "GET_ENTITY_PRIVILEGE",
+    "GET_TIMELINE_PRIVILEGE",
+]
+actor_urn = "urn:li:corpuser:datahub"
+
+policy = DataHubPolicyInfoClass(
+    displayName="ToxicJoin Capture - Root View Entity Pages",
+    description=(
+        "Ephemeral capture-only policy granting the local DataHub quickstart root "
+        "user read access to entity pages used in ToxicJoin demo footage."
+    ),
+    type="METADATA",
+    state="ACTIVE",
+    privileges=privileges,
+    actors=DataHubActorFilterClass(
+        users=[actor_urn],
+        resourceOwners=False,
+        allUsers=False,
+        allGroups=False,
+    ),
+    editable=True,
+)
+
+emitter = DatahubRestEmitter(gms_server="http://127.0.0.1:8080", extra_headers={})
+emitter.test_connection()
+emitter.emit(
+    MetadataChangeProposalWrapper(
+        entityUrn=policy_urn,
+        aspect=policy,
+    )
+)
+
+report = {
+    "schema_version": "1.0",
+    "status": "seeded",
+    "policy_urn": policy_urn,
+    "actor_urn": actor_urn,
+    "privileges": privileges,
+    "scope": "ephemeral-video-capture-only",
+}
+Path(".toxicjoin/capture-policy.json").write_text(
+    json.dumps(report, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+print(json.dumps(report, indent=2, sort_keys=True))
+PY
+cp .toxicjoin/capture-policy.json artifacts/video-captures/
+
 set_stage "write-decision-through-mcp"
 python - <<'PY' 2>&1 | tee artifacts/video-captures/datahub-decision.log
 import asyncio
