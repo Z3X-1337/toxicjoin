@@ -1,10 +1,12 @@
 name: Apply MCP Optional Contract Compatibility
 
 on:
-  push:
-    branches: [agent/mcp-optional-contract-compat]
+  pull_request:
+    branches: [main]
     paths:
       - ".github/workflows/apply-mcp-optional-compat.yml"
+      - "src/toxicjoin/integrations/datahub_mcp.py"
+      - "tests/unit/test_datahub_mcp.py"
   workflow_dispatch:
 
 permissions:
@@ -12,10 +14,11 @@ permissions:
 
 jobs:
   patch-test-commit:
+    if: github.head_ref == 'agent/mcp-optional-contract-compat'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Check out branch
+      - name: Check out source branch
         uses: actions/checkout@v4
         with:
           ref: agent/mcp-optional-contract-compat
@@ -24,8 +27,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Temporary one-shot patch runner; source changes are committed only after
-          # the targeted lint and regression tests below succeed.
           python - <<'PY'
           from pathlib import Path
 
@@ -33,17 +34,20 @@ jobs:
           source = source_path.read_text(encoding='utf-8')
           old = '''        if external_url is not None:\n            arguments["external_url"] = external_url\n\n        payload = await self.transport.call_tool("save_document", arguments)\n'''
           new = '''        save_definition = self._tools.get("save_document")\n        if (\n            external_url is not None\n            and save_definition is not None\n            and "external_url" in save_definition.properties\n        ):\n            arguments["external_url"] = external_url\n\n        payload = await self.transport.call_tool("save_document", arguments)\n'''
-          if source.count(old) != 1:
-              raise SystemExit('save_decision optional argument block not found exactly once')
-          source_path.write_text(source.replace(old, new, 1), encoding='utf-8')
+          if old in source:
+              source_path.write_text(source.replace(old, new, 1), encoding='utf-8')
+          elif new not in source:
+              raise SystemExit('save_decision contract block did not match old or patched form')
 
           test_path = Path('tests/unit/test_datahub_mcp.py')
           tests = test_path.read_text(encoding='utf-8')
           anchor = '''def _grep_documents_contract() -> McpToolDefinition:\n'''
+          marker = '''def test_save_decision_omits_unsupported_external_url() -> None:\n'''
           insertion = '''def test_save_decision_sends_supported_external_url() -> None:\n    transport = FakeTransport(\n        responses={\n            "save_document": [\n                {"document": {"urn": "urn:li:document:with-external-url"}}\n            ]\n        }\n    )\n    client = DataHubMcpClient(transport)\n    asyncio.run(client.discover_and_validate(require_mutations=True))\n\n    urn = asyncio.run(\n        client.save_decision(\n            title="ToxicJoin decision",\n            content="verified marker",\n            related_assets=("urn:li:dataset:test",),\n            external_url="https://example.test/evidence",\n        )\n    )\n\n    assert urn == "urn:li:document:with-external-url"\n    assert transport.calls[-1][1]["external_url"] == "https://example.test/evidence"\n\n\ndef test_save_decision_omits_unsupported_external_url() -> None:\n    tools = list(_official_contracts())\n    save = tools[-1]\n    schema = dict(save.input_schema)\n    properties = dict(save.properties)\n    properties.pop("external_url")\n    schema["properties"] = properties\n    tools[-1] = McpToolDefinition(name="save_document", input_schema=schema)\n\n    transport = FakeTransport(\n        tools=tuple(tools),\n        responses={\n            "save_document": [\n                {"document": {"urn": "urn:li:document:without-external-url"}}\n            ]\n        },\n    )\n    client = DataHubMcpClient(transport)\n    asyncio.run(client.discover_and_validate(require_mutations=True))\n\n    urn = asyncio.run(\n        client.save_decision(\n            title="ToxicJoin decision",\n            content="verified marker",\n            related_assets=("urn:li:dataset:test",),\n            external_url="https://example.test/evidence",\n        )\n    )\n\n    assert urn == "urn:li:document:without-external-url"\n    assert "external_url" not in transport.calls[-1][1]\n\n\n'''
-          if tests.count(anchor) != 1:
-              raise SystemExit('test insertion anchor not found exactly once')
-          test_path.write_text(tests.replace(anchor, insertion + anchor, 1), encoding='utf-8')
+          if marker not in tests:
+              if tests.count(anchor) != 1:
+                  raise SystemExit('test insertion anchor not found exactly once')
+              test_path.write_text(tests.replace(anchor, insertion + anchor, 1), encoding='utf-8')
           PY
 
       - name: Install targeted test dependencies
