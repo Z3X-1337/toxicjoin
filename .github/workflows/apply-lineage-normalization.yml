@@ -1,0 +1,292 @@
+name: Apply Lineage Normalization
+
+on:
+  push:
+    branches: [agent/live-datahub-proof]
+    paths:
+      - ".github/workflows/apply-lineage-normalization.yml"
+  pull_request:
+    paths:
+      - ".github/workflows/apply-lineage-normalization.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/live-datahub-proof
+          fetch-depth: 0
+
+      - name: Normalize official MCP lineage and strengthen gates
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent, indent
+
+          # Normalize official DataHub MCP lineage output into the stable
+          # relationships collection consumed by the snapshot and evidence layers.
+          client_path = Path("src/toxicjoin/integrations/datahub_mcp.py")
+          client = client_path.read_text()
+          start_marker = "    async def get_lineage("
+          end_marker = "\n\n    async def save_decision("
+          start = client.index(start_marker)
+          end = client.index(end_marker, start)
+          method = indent(
+              dedent('''
+              async def get_lineage(
+                  self,
+                  urn: str,
+                  *,
+                  column: str | None = None,
+                  upstream: bool = True,
+                  max_hops: int = 2,
+                  max_results: int = 100,
+              ) -> dict[str, Any]:
+                  payload = await self.transport.call_tool(
+                      "get_lineage",
+                      {
+                          "urn": urn,
+                          "column": column,
+                          "upstream": upstream,
+                          "max_hops": max_hops,
+                          "max_results": max_results,
+                          "offset": 0,
+                      },
+                  )
+                  if not isinstance(payload, dict):
+                      raise DataHubMcpError(
+                          "get_lineage returned an unexpected payload"
+                      )
+
+                  relationships = payload.get("relationships")
+                  if relationships is not None:
+                      if not isinstance(relationships, list) or not all(
+                          isinstance(item, dict) for item in relationships
+                      ):
+                          raise DataHubMcpError(
+                              "get_lineage payload has invalid relationships"
+                          )
+                  else:
+                      direction_key = "upstreams" if upstream else "downstreams"
+                      direction = payload.get(direction_key)
+                      if direction is None:
+                          relationships = []
+                      else:
+                          if not isinstance(direction, dict):
+                              raise DataHubMcpError(
+                                  f"get_lineage payload has invalid {direction_key}"
+                              )
+                          search_results = direction.get("searchResults", [])
+                          if not isinstance(search_results, list) or not all(
+                              isinstance(item, dict) for item in search_results
+                          ):
+                              raise DataHubMcpError(
+                                  "get_lineage payload has invalid searchResults"
+                              )
+                          relationships = search_results
+
+                  normalized = dict(payload)
+                  normalized["relationships"] = relationships
+                  normalized["count"] = len(relationships)
+                  return normalized
+              ''').lstrip(),
+              "    ",
+          ).rstrip()
+          client_path.write_text(client[:start] + method + client[end:])
+
+          # A live snapshot cannot claim lineage verification when the configured
+          # flagship column has no upstream results.
+          context_path = Path("src/toxicjoin/context/datahub.py")
+          context = context_path.read_text()
+          old_context = dedent('''
+                  if not isinstance(lineage.get("relationships", []), list):
+                      raise DataHubMetadataError("DataHub lineage payload has invalid relationships")
+          ''').lstrip()
+          old_context = indent(old_context, "        ")
+          new_context = dedent('''
+                  relationships = lineage.get("relationships")
+                  if not isinstance(relationships, list) or not all(
+                      isinstance(item, dict) for item in relationships
+                  ):
+                      raise DataHubMetadataError(
+                          "DataHub lineage payload has invalid relationships"
+                      )
+                  if not relationships:
+                      raise DataHubMetadataError(
+                          "DataHub returned no upstream lineage for the configured flagship column"
+                      )
+          ''').lstrip()
+          new_context = indent(new_context, "        ")
+          if context.count(old_context) != 1:
+              raise SystemExit("expected snapshot lineage validation block once")
+          context_path.write_text(context.replace(old_context, new_context, 1))
+
+          # A verified spike report must contain at least one relationship.
+          spike_path = Path("src/toxicjoin/integrations/datahub_spike.py")
+          spike = spike_path.read_text()
+          old_field = "    lineage_relationship_count: int = Field(ge=0)\n"
+          new_field = "    lineage_relationship_count: int = Field(ge=1)\n"
+          if spike.count(old_field) != 1:
+              raise SystemExit("expected spike lineage field once")
+          spike_path.write_text(spike.replace(old_field, new_field, 1))
+
+          # The deterministic live seed produces three upstream datasets for
+          # retention_scores.churn_score.
+          workflow_path = Path(".github/workflows/datahub-live.yml")
+          workflow = workflow_path.read_text()
+          gate_marker = (
+              "          assert spike['independent_readback_verified'] is True\n"
+          )
+          gate = gate_marker + (
+              "          assert spike['lineage_relationship_count'] == 3\n"
+          )
+          if "assert spike['lineage_relationship_count'] == 3" not in workflow:
+              if workflow.count(gate_marker) != 1:
+                  raise SystemExit("expected live evidence gate marker once")
+              workflow = workflow.replace(gate_marker, gate, 1)
+          workflow_path.write_text(workflow)
+
+          # Unit coverage for official upstream/downstream shapes and malformed data.
+          mcp_test_path = Path("tests/unit/test_datahub_mcp.py")
+          mcp_tests = mcp_test_path.read_text()
+          addition = dedent('''
+
+          def test_lineage_normalizes_official_upstream_search_results() -> None:
+              relationship = {
+                  "entity": {"urn": "urn:li:dataset:upstream"},
+                  "degree": 1,
+                  "lineageColumns": ["purchase_amount"],
+              }
+              transport = FakeTransport(
+                  responses={
+                      "get_lineage": [
+                          {
+                              "upstreams": {
+                                  "searchResults": [relationship],
+                                  "returned": 1,
+                                  "hasMore": False,
+                              },
+                              "metadata": {
+                                  "queryType": "column-level-lineage"
+                              },
+                          }
+                      ]
+                  }
+              )
+
+              lineage = asyncio.run(
+                  DataHubMcpClient(transport).get_lineage(
+                      "urn:li:dataset:test",
+                      column="churn_score",
+                      upstream=True,
+                  )
+              )
+
+              assert lineage["relationships"] == [relationship]
+              assert lineage["count"] == 1
+
+
+          def test_lineage_preserves_valid_legacy_relationships() -> None:
+              relationship = {"source": "a", "target": "b", "degree": 1}
+              transport = FakeTransport(
+                  responses={
+                      "get_lineage": [
+                          {"relationships": [relationship], "count": 1}
+                      ]
+                  }
+              )
+
+              lineage = asyncio.run(
+                  DataHubMcpClient(transport).get_lineage(
+                      "urn:li:dataset:test"
+                  )
+              )
+
+              assert lineage["relationships"] == [relationship]
+              assert lineage["count"] == 1
+
+
+          def test_lineage_rejects_malformed_official_search_results() -> None:
+              transport = FakeTransport(
+                  responses={
+                      "get_lineage": [
+                          {"upstreams": {"searchResults": "not-a-list"}}
+                      ]
+                  }
+              )
+
+              with pytest.raises(DataHubMcpError, match="searchResults"):
+                  asyncio.run(
+                      DataHubMcpClient(transport).get_lineage(
+                          "urn:li:dataset:test",
+                          column="churn_score",
+                      )
+                  )
+          ''')
+          if "test_lineage_normalizes_official_upstream_search_results" not in mcp_tests:
+              mcp_test_path.write_text(mcp_tests.rstrip() + addition + "\n")
+
+          context_test_path = Path("tests/unit/test_datahub_context.py")
+          context_tests = context_test_path.read_text()
+          context_addition = dedent('''
+
+          def test_empty_live_lineage_fails_closed() -> None:
+              transport = _transport()
+              transport.responses["get_lineage"] = deque(
+                  [{"upstreams": {"searchResults": []}}]
+              )
+
+              with pytest.raises(DataHubMetadataError, match="no upstream lineage"):
+                  asyncio.run(
+                      DataHubSnapshotLoader(
+                          DataHubMcpClient(transport),
+                          _asset_map(),
+                      ).load(require_mutations=False)
+                  )
+          ''')
+          if "test_empty_live_lineage_fails_closed" not in context_tests:
+              context_test_path.write_text(
+                  context_tests.rstrip() + context_addition + "\n"
+              )
+          PY
+
+      - name: Install test dependencies
+        run: python -m pip install -e '.[dev]'
+
+      - name: Verify lineage normalization
+        shell: bash
+        run: |
+          set -o pipefail
+          ruff check src tests
+          pytest \
+            tests/unit/test_datahub_mcp.py \
+            tests/unit/test_datahub_context.py \
+            tests/integration/test_datahub_spike.py \
+            -q
+
+      - name: Commit verified lineage changes
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No lineage changes remain."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            src/toxicjoin/integrations/datahub_mcp.py \
+            src/toxicjoin/context/datahub.py \
+            src/toxicjoin/integrations/datahub_spike.py \
+            tests/unit/test_datahub_mcp.py \
+            tests/unit/test_datahub_context.py \
+            .github/workflows/datahub-live.yml
+          git commit -m "Normalize official DataHub MCP lineage results"
+          git push origin HEAD:agent/live-datahub-proof
