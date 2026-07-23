@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "suite_version": "1.0",
+  "policy_version": "0.1.0",
+  "total_cases": 144,
+  "family_counts": {
+    "churn-profile": 48,
+    "financial-profile": 48,
+    "support-profile": 48
+  },
+  "initial_block_count": 144,
+  "effective_block_count": 144,
+  "intended_reason_count": 144,
+  "unexpected_execution_count": 0,
+  "unsafe_initial_allow_count": 0,
+  "unsafe_effective_allow_count": 0,
+  "gate_failures": [],
+  "report_sha256": "5ae8de95c67ba22f06dfdfd92a405de40252aa0b2b2d9867fd28d6935d51119c",
+  "workflow_run": 30046801748,
+  "artifact_id": 8579435638,
+  "artifact_digest": "sha256:991f2727dc7e60e13f96553e132c4dde1daa4b796f42cafb963b23aeea535e64",
+  "tested_commit": "0e156ff7d9132743d3a73e4761a6a37503ddc364"
+}
