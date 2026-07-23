@@ -66,8 +66,22 @@ page.on("requestfailed", (request) => {
 const sleep = (milliseconds) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-const entityUrl = (entityType, urn) =>
-  `${baseUrl}/${entityType}/${encodeURIComponent(urn)}/`;
+function entityUrls(entityType, urn) {
+  // Current DataHub UI E2E uses encodeURIComponent(urn). The stable OSS
+  // quickstart used by ToxicJoin's live proof can expose an older router that
+  // treats the encoded URN literally. Try the current route first and fall back
+  // to the raw URN only when the rendered page proves the first route invalid.
+  return [
+    {
+      mode: "encoded",
+      url: `${baseUrl}/${entityType}/${encodeURIComponent(urn)}/`,
+    },
+    {
+      mode: "raw",
+      url: `${baseUrl}/${entityType}/${urn}/`,
+    },
+  ];
+}
 
 async function waitForAnyText(candidates, timeout = 30_000) {
   const deadline = Date.now() + timeout;
@@ -125,7 +139,7 @@ async function writePageDiagnostics(prefix, error = null) {
     .catch(() => {});
 }
 
-async function captureCurrent(name, expectedText) {
+async function captureCurrent(name, expectedText, routeMode = null) {
   const matchedText = await waitForAnyText(expectedText, 45_000);
   await sleep(1_600);
   await page.screenshot({
@@ -135,20 +149,37 @@ async function captureCurrent(name, expectedText) {
   captured.push({
     name,
     url: page.url(),
+    route_mode: routeMode,
     matched_text: matchedText,
   });
   await sleep(1_600);
 }
 
-async function capture(name, url, expectedText) {
-  const response = await page.goto(url, {
-    waitUntil: "domcontentloaded",
-    timeout: 60_000,
-  });
-  if (response && response.status() >= 400) {
-    throw new Error(`${name}: HTTP ${response.status()} for ${url}`);
+async function navigateEntity(entityType, urn) {
+  const attempts = [];
+  for (const candidate of entityUrls(entityType, urn)) {
+    const response = await page.goto(candidate.url, {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
+    await sleep(1_400);
+    const bodyText = await page.locator("body").innerText().catch(() => "");
+    const unauthorized = /unauthorized|not authorized to access this page/i.test(bodyText);
+    const status = response?.status() ?? null;
+    attempts.push({ mode: candidate.mode, url: page.url(), status, unauthorized });
+    if (response && response.status() >= 400) continue;
+    if (!unauthorized) {
+      return { mode: candidate.mode, attempts };
+    }
   }
-  await captureCurrent(name, expectedText);
+  throw new Error(
+    `${entityType} navigation failed for ${urn}: ${JSON.stringify(attempts)}`,
+  );
+}
+
+async function captureEntity(name, entityType, urn, expectedText) {
+  const navigation = await navigateEntity(entityType, urn);
+  await captureCurrent(name, expectedText, navigation.mode);
 }
 
 async function loginAsQuickstartAdmin() {
@@ -191,9 +222,10 @@ let captureError = null;
 try {
   await loginAsQuickstartAdmin();
 
-  await capture(
+  await captureEntity(
     "01-dataset-overview",
-    entityUrl("dataset", datasetUrn),
+    "dataset",
+    datasetUrn,
     ["retention_scores", "retention scores", "Retention Scores"],
   );
 
@@ -201,17 +233,20 @@ try {
   await captureCurrent(
     "02-governed-schema",
     ["churn_score", "customer_id", "Schema"],
+    "tab-click",
   );
 
   await clickEntityTab("lineage-tab", "Lineage");
   await captureCurrent(
     "03-column-lineage",
     ["Lineage", "Upstream", "retention_scores"],
+    "tab-click",
   );
 
-  await capture(
+  await captureEntity(
     "04-toxicjoin-decision",
-    entityUrl("document", decisionUrn),
+    "document",
+    decisionUrn,
     [
       "ToxicJoin Decision",
       "Flagship Rewrite Verified",
