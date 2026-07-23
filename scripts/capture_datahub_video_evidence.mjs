@@ -52,6 +52,7 @@ const pageErrors = [];
 const consoleErrors = [];
 const failedRequests = [];
 const captured = [];
+let authorizationEvidence = null;
 page.on("pageerror", (error) => pageErrors.push(String(error)));
 page.on("console", (message) => {
   if (message.type() === "error") consoleErrors.push(message.text());
@@ -67,10 +68,6 @@ const sleep = (milliseconds) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 function entityUrls(entityType, urn) {
-  // Current DataHub UI E2E uses encodeURIComponent(urn). The stable OSS
-  // quickstart used by ToxicJoin's live proof can expose an older router that
-  // treats the encoded URN literally. Try the current route first and fall back
-  // to the raw URN only when the rendered page proves the first route invalid.
   return [
     {
       mode: "encoded",
@@ -81,6 +78,23 @@ function entityUrls(entityType, urn) {
       url: `${baseUrl}/${entityType}/${urn}/`,
     },
   ];
+}
+
+async function executeGraphQL(query, variables = {}) {
+  const response = await page.request.post(`${baseUrl}/api/v2/graphql`, {
+    data: { query, variables },
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!response.ok()) {
+    throw new Error(
+      `DataHub GraphQL request failed: ${response.status()} ${response.statusText()}`,
+    );
+  }
+  const payload = await response.json();
+  if (payload.errors?.length) {
+    throw new Error(`DataHub GraphQL errors: ${JSON.stringify(payload.errors)}`);
+  }
+  return payload.data;
 }
 
 async function waitForAnyText(candidates, timeout = 30_000) {
@@ -112,6 +126,7 @@ async function writePageDiagnostics(prefix, error = null) {
     url: page.url(),
     title: await page.title().catch(() => ""),
     error: error ? String(error?.stack ?? error) : null,
+    authorization: authorizationEvidence,
     page_errors: pageErrors,
     console_errors: consoleErrors,
     failed_requests: failedRequests,
@@ -207,6 +222,105 @@ async function loginAsQuickstartAdmin() {
   await sleep(1_200);
 }
 
+async function prepareCaptureAuthorization() {
+  const me = await executeGraphQL(`
+    query CaptureGetMe {
+      me {
+        corpUser { urn username }
+        platformPrivileges { managePolicies }
+      }
+    }
+  `);
+  const actorUrn = me?.me?.corpUser?.urn;
+  const username = me?.me?.corpUser?.username;
+  const managePolicies = Boolean(me?.me?.platformPrivileges?.managePolicies);
+  if (actorUrn !== "urn:li:corpuser:datahub") {
+    throw new Error(`unexpected DataHub capture actor: ${actorUrn ?? "missing"}`);
+  }
+  if (!managePolicies) {
+    throw new Error("DataHub root capture user does not have managePolicies");
+  }
+
+  // This is the same editable boot policy and privilege set exercised by
+  // DataHub's own smoke-test privileges utility. We activate it only inside the
+  // ephemeral capture environment so the root UI session can render entity pages.
+  const policyUrn = "urn:li:dataHubPolicy:view-entity-page-all";
+  const updated = await executeGraphQL(
+    `mutation CaptureEnableViewEntity($urn: String!, $input: PolicyUpdateInput!) {
+      updatePolicy(urn: $urn, input: $input)
+    }`,
+    {
+      urn: policyUrn,
+      input: {
+        type: "METADATA",
+        state: "ACTIVE",
+        name: "All Users - View Entity Page",
+        description: "Grants entity view to all users",
+        privileges: [
+          "VIEW_ENTITY_PAGE",
+          "SEARCH_PRIVILEGE",
+          "GET_COUNTS_PRIVILEGE",
+          "GET_TIMESERIES_ASPECT_PRIVILEGE",
+          "GET_ENTITY_PRIVILEGE",
+          "GET_TIMELINE_PRIVILEGE",
+        ],
+        actors: {
+          users: [],
+          groups: null,
+          resourceOwners: false,
+          allUsers: true,
+          allGroups: false,
+          resourceOwnersTypes: null,
+        },
+      },
+    },
+  );
+  if (updated?.updatePolicy !== policyUrn) {
+    throw new Error(`unexpected view policy update result: ${JSON.stringify(updated)}`);
+  }
+
+  let privileges = [];
+  for (let attempt = 1; attempt <= 60; attempt += 1) {
+    const result = await executeGraphQL(
+      `query CaptureGrantedPrivileges($input: GetGrantedPrivilegesInput!) {
+        getGrantedPrivileges(input: $input) { privileges }
+      }`,
+      {
+        input: {
+          actorUrn,
+          resourceSpec: {
+            resourceType: "DATASET",
+            resourceUrn: datasetUrn,
+          },
+        },
+      },
+    );
+    privileges = result?.getGrantedPrivileges?.privileges ?? [];
+    if (privileges.includes("VIEW_ENTITY_PAGE")) break;
+    await sleep(1_000);
+  }
+
+  authorizationEvidence = {
+    username,
+    actor_urn: actorUrn,
+    manage_policies: managePolicies,
+    policy_urn: policyUrn,
+    view_entity_page_granted: privileges.includes("VIEW_ENTITY_PAGE"),
+    granted_privileges: [...privileges].sort(),
+  };
+  fs.writeFileSync(
+    path.join(outputDirectory, "capture-authorization.json"),
+    `${JSON.stringify(authorizationEvidence, null, 2)}\n`,
+    "utf8",
+  );
+
+  if (!authorizationEvidence.view_entity_page_granted) {
+    throw new Error(
+      `VIEW_ENTITY_PAGE was not granted after policy-cache wait: ${JSON.stringify(authorizationEvidence)}`,
+    );
+  }
+}
+
 async function clickEntityTab(testId, fallbackName) {
   const byTestId = page.getByTestId(testId);
   if (await byTestId.isVisible({ timeout: 8_000 }).catch(() => false)) {
@@ -221,6 +335,7 @@ async function clickEntityTab(testId, fallbackName) {
 let captureError = null;
 try {
   await loginAsQuickstartAdmin();
+  await prepareCaptureAuthorization();
 
   await captureEntity(
     "01-dataset-overview",
@@ -285,6 +400,7 @@ const report = {
   datahub_ui_url: baseUrl,
   flagship_dataset_urn: datasetUrn,
   decision_document_urn: decisionUrn,
+  authorization: authorizationEvidence,
   captured,
   screenshots: captured.map((entry) => `${entry.name}.png`),
   raw_video: finalVideo ? path.basename(finalVideo) : null,
