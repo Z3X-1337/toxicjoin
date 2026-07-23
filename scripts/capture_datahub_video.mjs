@@ -63,6 +63,45 @@ async function screenshot(name, evidence = []) {
   });
 }
 
+async function persistFailureDiagnostics(error) {
+  const diagnostics = {
+    schema_version: "1.0",
+    status: "failed",
+    error_name: error?.name ?? "Error",
+    error_message: String(error?.message ?? error),
+    url: page.url(),
+    title: await page.title().catch(() => ""),
+    console_errors: consoleErrors,
+    page_errors: pageErrors,
+    captures_completed: captures,
+  };
+
+  try {
+    const text = (await page.locator("body").innerText()).replace(/\s+/g, " ").trim();
+    diagnostics.visible_text = text.slice(0, 12000);
+  } catch {
+    diagnostics.visible_text = "";
+  }
+
+  fs.writeFileSync(
+    path.join(outputDir, "failure.json"),
+    `${JSON.stringify(diagnostics, null, 2)}\n`,
+    "utf8",
+  );
+
+  try {
+    fs.writeFileSync(path.join(outputDir, "failure.html"), await page.content(), "utf8");
+  } catch {
+    // The JSON report remains authoritative even if the DOM is no longer available.
+  }
+
+  try {
+    await page.screenshot({ path: path.join(outputDir, "failure.png"), fullPage: true });
+  } catch {
+    // Preserve the original capture error rather than replacing it with a screenshot error.
+  }
+}
+
 async function loginIfNeeded() {
   await page.goto(uiUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
   await settle();
@@ -182,6 +221,9 @@ try {
     "utf8",
   );
   console.log(JSON.stringify(manifest, null, 2));
+} catch (error) {
+  await persistFailureDiagnostics(error);
+  throw error;
 } finally {
   await browser.close();
 }
