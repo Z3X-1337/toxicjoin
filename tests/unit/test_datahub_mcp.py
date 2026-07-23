@@ -371,3 +371,75 @@ def test_get_entities_rejects_nonstandard_result_envelope() -> None:
     with pytest.raises(DataHubMcpError, match="unexpected payload"):
         asyncio.run(DataHubMcpClient(transport).get_entities((urn,)))
 
+def test_lineage_normalizes_official_upstream_search_results() -> None:
+    relationship = {
+        "entity": {"urn": "urn:li:dataset:upstream"},
+        "degree": 1,
+        "lineageColumns": ["purchase_amount"],
+    }
+    transport = FakeTransport(
+        responses={
+            "get_lineage": [
+                {
+                    "upstreams": {
+                        "searchResults": [relationship],
+                        "returned": 1,
+                        "hasMore": False,
+                    },
+                    "metadata": {
+                        "queryType": "column-level-lineage"
+                    },
+                }
+            ]
+        }
+    )
+
+    lineage = asyncio.run(
+        DataHubMcpClient(transport).get_lineage(
+            "urn:li:dataset:test",
+            column="churn_score",
+            upstream=True,
+        )
+    )
+
+    assert lineage["relationships"] == [relationship]
+    assert lineage["count"] == 1
+
+
+def test_lineage_preserves_valid_legacy_relationships() -> None:
+    relationship = {"source": "a", "target": "b", "degree": 1}
+    transport = FakeTransport(
+        responses={
+            "get_lineage": [
+                {"relationships": [relationship], "count": 1}
+            ]
+        }
+    )
+
+    lineage = asyncio.run(
+        DataHubMcpClient(transport).get_lineage(
+            "urn:li:dataset:test"
+        )
+    )
+
+    assert lineage["relationships"] == [relationship]
+    assert lineage["count"] == 1
+
+
+def test_lineage_rejects_malformed_official_search_results() -> None:
+    transport = FakeTransport(
+        responses={
+            "get_lineage": [
+                {"upstreams": {"searchResults": "not-a-list"}}
+            ]
+        }
+    )
+
+    with pytest.raises(DataHubMcpError, match="searchResults"):
+        asyncio.run(
+            DataHubMcpClient(transport).get_lineage(
+                "urn:li:dataset:test",
+                column="churn_score",
+            )
+        )
+

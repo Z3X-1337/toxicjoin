@@ -423,8 +423,41 @@ class DataHubMcpClient:
             },
         )
         if not isinstance(payload, dict):
-            raise DataHubMcpError("get_lineage returned an unexpected payload")
-        return payload
+            raise DataHubMcpError(
+                "get_lineage returned an unexpected payload"
+            )
+
+        relationships = payload.get("relationships")
+        if relationships is not None:
+            if not isinstance(relationships, list) or not all(
+                isinstance(item, dict) for item in relationships
+            ):
+                raise DataHubMcpError(
+                    "get_lineage payload has invalid relationships"
+                )
+        else:
+            direction_key = "upstreams" if upstream else "downstreams"
+            direction = payload.get(direction_key)
+            if direction is None:
+                relationships = []
+            else:
+                if not isinstance(direction, dict):
+                    raise DataHubMcpError(
+                        f"get_lineage payload has invalid {direction_key}"
+                    )
+                search_results = direction.get("searchResults", [])
+                if not isinstance(search_results, list) or not all(
+                    isinstance(item, dict) for item in search_results
+                ):
+                    raise DataHubMcpError(
+                        "get_lineage payload has invalid searchResults"
+                    )
+                relationships = search_results
+
+        normalized = dict(payload)
+        normalized["relationships"] = relationships
+        normalized["count"] = len(relationships)
+        return normalized
 
     async def save_decision(
         self,

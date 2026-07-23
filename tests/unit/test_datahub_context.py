@@ -324,3 +324,18 @@ def test_duplicate_schema_field_paths_are_rejected() -> None:
                 _asset_map(),
             ).load(require_mutations=False)
         )
+
+def test_empty_live_lineage_fails_closed() -> None:
+    transport = _transport()
+    transport.responses["get_lineage"] = deque(
+        [{"upstreams": {"searchResults": []}}]
+    )
+
+    with pytest.raises(DataHubMetadataError, match="no upstream lineage"):
+        asyncio.run(
+            DataHubSnapshotLoader(
+                DataHubMcpClient(transport),
+                _asset_map(),
+            ).load(require_mutations=False)
+        )
+

@@ -39,7 +39,7 @@ class DataHubSpikeReport(StrictModel):
     discovered_tools: tuple[str, ...]
     verified_entities: tuple[str, ...]
     field_counts: dict[str, int]
-    lineage_relationship_count: int = Field(ge=0)
+    lineage_relationship_count: int = Field(ge=1)
     decision_document_urn: str = Field(pattern=r"^urn:li:document:")
     verification_marker: str = Field(pattern=r"^TOXICJOIN_MCP_[0-9a-f]{32}$")
     marker_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
