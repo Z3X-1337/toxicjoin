@@ -121,7 +121,7 @@ async function scrollTo(selector) {
   const target = page.locator(selector).first();
   await target.waitFor({ state: "visible", timeout: 20_000 });
   await target.scrollIntoViewIfNeeded();
-  await page.evaluate(() => window.scrollBy({ top: -92, behavior: "instant" }));
+  await page.evaluate(() => window.scrollBy({ top: -92, behavior: "auto" }));
   await sleep(850);
 }
 
@@ -190,7 +190,7 @@ try {
 
   // The UI auto-runs the flagship scenario after API bootstrap.
   await waitForOutcome("REWRITE", "ALLOW");
-  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "auto" }));
   await captureCurrent("01-flagship-rewrite-to-allow", {
     scenario_id: flagship.scenario_id,
     initial: "REWRITE",
@@ -222,11 +222,11 @@ try {
     proof: "receipt-without-raw-rows",
   });
 
-  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "auto" }));
   await sleep(700);
   await selectScenarioByTitle(blocked.title);
   await waitForOutcome("BLOCK", "BLOCK");
-  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "auto" }));
   await captureCurrent("06-fail-closed-block", {
     scenario_id: blocked.scenario_id,
     initial: "BLOCK",
@@ -240,11 +240,11 @@ try {
     proof: "execution-intentionally-skipped",
   });
 
-  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "auto" }));
   await sleep(700);
   await selectScenarioByTitle(allowed.title);
   await waitForOutcome("ALLOW", "ALLOW");
-  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "auto" }));
   await captureCurrent("08-low-risk-allow", {
     scenario_id: allowed.scenario_id,
     initial: "ALLOW",
@@ -314,7 +314,9 @@ const report = {
   screenshots: captured.map((entry) => entry.file),
   raw_video: finalVideo ? path.basename(finalVideo) : null,
   page_error_count: pageErrors.length,
+  page_errors: pageErrors,
   console_error_count: consoleErrors.length,
+  console_errors: consoleErrors,
   failed_request_count: failedRequests.length,
   failed_requests: failedRequests,
   failure: captureError ? String(captureError?.stack ?? captureError) : null,
