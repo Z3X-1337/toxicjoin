@@ -67,6 +67,8 @@ def test_exact_authorization_executes_and_mismatches_fail_closed(tmp_path):
     )
     assert result.preview_row_count == 3
 
+    # LIMIT is intentionally not represented in ToxicJoin's current QueryPlan model,
+    # but the exact-SQL binding must still reject this post-authorization mutation.
     changed_sql = SQL + " LIMIT 1"
     verification = verify_execution_authorization(
         authorization=authorization,
@@ -80,7 +82,6 @@ def test_exact_authorization_executes_and_mismatches_fail_closed(tmp_path):
     )
     assert verification.passed is False
     assert "sql" in verification.failed_checks
-    assert "query_plan" in verification.failed_checks
 
     with pytest.raises(AuthorizationError):
         executor.execute_authorized(
@@ -92,6 +93,27 @@ def test_exact_authorization_executes_and_mismatches_fail_closed(tmp_path):
             policy_engine=_engine(),
             now=NOW + timedelta(seconds=1),
         )
+
+    # A true structural mutation changes both exact SQL and parsed-plan bindings.
+    structural_sql = (
+        "SELECT c.coarse_region, c.age_band, "
+        "COUNT(DISTINCT c.customer_id) AS subject_count "
+        "FROM customers c GROUP BY c.coarse_region, c.age_band "
+        "ORDER BY c.coarse_region, c.age_band"
+    )
+    structural_check = verify_execution_authorization(
+        authorization=authorization,
+        sql=structural_sql,
+        task_purpose=TASK,
+        subject_key=SUBJECT,
+        context_resolver=_resolver(),
+        policy_engine=_engine(),
+        secret_key=SECRET,
+        now=NOW + timedelta(seconds=1),
+    )
+    assert structural_check.passed is False
+    assert "sql" in structural_check.failed_checks
+    assert "query_plan" in structural_check.failed_checks
 
 
 def test_context_policy_subject_task_mac_and_expiry_are_bound():
@@ -146,6 +168,8 @@ def test_context_policy_subject_task_mac_and_expiry_are_bound():
     assert subject_check.passed is False
     assert "subject_key" in subject_check.failed_checks
 
+    # Task purpose is independently bound even though the current policy engine does
+    # not use purpose as a decision variable.
     task_check = verify_execution_authorization(
         authorization=authorization,
         sql=SQL,
@@ -158,7 +182,6 @@ def test_context_policy_subject_task_mac_and_expiry_are_bound():
     )
     assert task_check.passed is False
     assert "task_purpose" in task_check.failed_checks
-    assert "policy_decision" in task_check.failed_checks
 
     forged = authorization.model_copy(update={"mac_sha256": "0" * 64})
     forged_check = verify_execution_authorization(
