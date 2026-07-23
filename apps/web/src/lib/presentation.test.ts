@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { replayResults } from "../data/replay";
+import { replayResults } from "../data/judgeReplay";
 import {
   buildEvidenceNodes,
   buildRiskNarrative,
@@ -39,6 +39,9 @@ describe("judge presentation helpers", () => {
   it("shows the minimum-group rewrite as an added SQL line", () => {
     const result = replayResults["rewrite-churn-regions"];
     expect(result?.safe_sql).toBeTruthy();
+    expect(result?.safe_sql?.indexOf("HAVING")).toBeLessThan(
+      result?.safe_sql?.indexOf("ORDER BY") ?? Number.MAX_SAFE_INTEGER,
+    );
     const diff = buildSqlDiff(
       "SELECT region\nFROM governed\nGROUP BY region",
       "SELECT region\nFROM governed\nGROUP BY region\nHAVING COUNT(*) >= 20",
