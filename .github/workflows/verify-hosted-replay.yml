@@ -95,6 +95,8 @@ jobs:
             hosted-replay.html
             hosted-provenance.json
             artifacts/hosted-replay/verification.json
+            artifacts/hosted-replay/diagnostics.json
+            artifacts/hosted-replay/failure.json
             artifacts/hosted-replay/desktop.png
             artifacts/hosted-replay/mobile.png
           if-no-files-found: warn
