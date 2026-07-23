@@ -1,0 +1,12 @@
+{
+  "scenario_id": "allow-public-order-counts",
+  "initial_decision": "ALLOW",
+  "effective_decision": "ALLOW",
+  "reason": "NO_COMPOSITIONAL_RISK",
+  "rewrite": null,
+  "database_called": true,
+  "evidence": [
+    "docs/judge-testing.md",
+    "docs/evidence/benchmark.md"
+  ]
+}
