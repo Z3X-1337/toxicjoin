@@ -6,6 +6,7 @@ on:
 permissions:
   contents: read
 
+# Temporary workflow used only to capture the current Ruff failure.
 jobs:
   diagnose:
     runs-on: ubuntu-latest
