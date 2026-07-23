@@ -27,6 +27,9 @@ datahub = [
   "mcp>=1.27,<2",
   "acryl-datahub==1.6.0.15",
 ]
+agent-registry = [
+  "acryl-datahub==1.6.0.16rc3",
+]
 dev = [
   "pytest>=8,<9",
   "pytest-cov>=5,<6",
