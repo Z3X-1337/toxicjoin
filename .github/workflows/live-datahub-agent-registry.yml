@@ -39,41 +39,21 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install ToxicJoin and pinned DataHub dependencies
+      - name: Install isolated Agent Registry SDK dependency
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install --quiet --upgrade pip wheel setuptools
-          python -m pip install --quiet -e '.[datahub]'
+          python -m pip install --quiet -e '.[agent-registry]'
           python - <<'PY'
-          import importlib
-          import importlib.metadata
-          import traceback
+          from importlib.metadata import version
+          from datahub.api.entities.agent.agent import Agent
+          from datahub.api.entities.agent.agent_skill import AgentSkill
+          from datahub.api.entities.agent.api import Api
 
-          expected = '1.6.0.15'
-          installed = importlib.metadata.version('acryl-datahub')
-          print(f'acryl-datahub={installed}')
-          assert installed == expected, (installed, expected)
-
-          modules = {
-              'Agent': ('datahub.api.entities.agent.agent', 'Agent'),
-              'AgentSkill': ('datahub.api.entities.agent.agent_skill', 'AgentSkill'),
-              'Api': ('datahub.api.entities.agent.api', 'Api'),
-          }
-          failures = []
-          for label, (module_name, attribute) in modules.items():
-              try:
-                  module = importlib.import_module(module_name)
-                  value = getattr(module, attribute)
-              except Exception as exc:
-                  failures.append((label, module_name, type(exc).__name__, str(exc)))
-                  print(f'IMPORT_FAILURE {label}: {module_name}: {type(exc).__name__}: {exc}')
-                  traceback.print_exc()
-              else:
-                  print(f'IMPORT_OK {label}: {module_name}.{attribute} -> {value!r}')
-
-          if failures:
-              raise SystemExit(f'Agent Registry SDK compatibility failures: {failures}')
+          installed = version('acryl-datahub')
+          assert installed == '1.6.0.16rc3', installed
+          print('Agent Registry SDK verified:', installed, Agent, AgentSkill, Api)
           PY
 
       - name: Start DataHub OSS quickstart
@@ -165,6 +145,7 @@ jobs:
               assert forbidden not in evidence, forbidden
 
           print(json.dumps({
+              'sdk_version': '1.6.0.16rc3',
               'agent_urn': registration.agent_urn,
               'skill_urn': registration.skill_urn,
               'tool_count': registration.tool_count,
