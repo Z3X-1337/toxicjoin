@@ -63,3 +63,163 @@ jobs:
           path: pytest-${{ matrix.python-version }}.log
           if-no-files-found: error
           retention-days: 14
+
+  web:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.16.0"
+
+      - name: Install pinned frontend dependencies
+        working-directory: apps/web
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck, test, and build judge interface
+        working-directory: apps/web
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run check 2>&1 | tee web-check.log
+
+      - name: Upload generated package lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-web-lock
+          path: apps/web/package-lock.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload judge interface build
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-judge-interface
+          path: apps/web/dist/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload frontend diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-web-check
+          path: apps/web/web-check.log
+          if-no-files-found: error
+          retention-days: 14
+
+  container:
+    runs-on: ubuntu-latest
+    needs: [test, web]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build production image
+        run: docker build --tag toxicjoin:ci .
+
+      - name: Run hardened production container
+        run: |
+          docker volume create toxicjoin-ci-runtime
+          docker run --detach \
+            --name toxicjoin-ci \
+            --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --mount type=volume,src=toxicjoin-ci-runtime,dst=/var/lib/toxicjoin \
+            --publish 18000:8000 \
+            toxicjoin:ci
+
+      - name: Verify container identity and read-only root
+        shell: bash
+        run: |
+          test "$(docker inspect --format '{{.Config.User}}' toxicjoin-ci)" = "10001:10001"
+          test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' toxicjoin-ci)" = "true"
+
+      - name: Wait for application health
+        shell: bash
+        run: |
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent --show-error http://127.0.0.1:18000/api/health > health.json; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs toxicjoin-ci
+          exit 1
+
+      - name: Execute flagship flow through production container
+        run: |
+          python - <<'PY'
+          import json
+          import urllib.request
+
+          origin = "http://127.0.0.1:18000"
+
+          with urllib.request.urlopen(f"{origin}/", timeout=5) as response:
+              html = response.read().decode("utf-8")
+              assert "ToxicJoin" in html
+              assert response.headers["Cache-Control"] == "no-cache, max-age=0"
+              assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+
+          with urllib.request.urlopen(f"{origin}/api/health", timeout=5) as response:
+              health = json.load(response)
+              assert health["status"] == "ok"
+              assert health["mode"] == "fixture"
+
+          with urllib.request.urlopen(f"{origin}/api/benchmark/summary", timeout=5) as response:
+              benchmark = json.load(response)
+              assert benchmark["corpus"]["total"] == 30
+              assert benchmark["metrics"]["false_allow_count"] == 0
+              assert benchmark["gate_failures"] == []
+
+          with urllib.request.urlopen(f"{origin}/api/demo/scenarios", timeout=5) as response:
+              scenarios = json.load(response)["scenarios"]
+          flagship = next(
+              item for item in scenarios
+              if item["scenario_id"] == "rewrite-churn-regions"
+          )
+          request = urllib.request.Request(
+              f"{origin}/api/execute-safe",
+              method="POST",
+              data=json.dumps(flagship["request"]).encode("utf-8"),
+              headers={"Content-Type": "application/json", "Accept": "application/json"},
+          )
+          with urllib.request.urlopen(request, timeout=10) as response:
+              result = json.load(response)
+
+          assert result["initial_decision"]["decision"] == "REWRITE"
+          assert result["effective_decision"] == "ALLOW"
+          assert result["verification"]["passed"] is True
+          rows = result["verification"]["execution"]["rows"]
+          assert len(rows) == 3
+          assert {int(row[2]) for row in rows} == {40}
+          assert result["receipt"]["execution"]["preview_row_count"] == 3
+          assert "rows" not in result["receipt"]
+          PY
+
+      - name: Capture container logs
+        if: always()
+        run: docker logs toxicjoin-ci > toxicjoin-container.log 2>&1 || true
+
+      - name: Upload container diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-container-log
+          path: toxicjoin-container.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Clean up container
+        if: always()
+        run: |
+          docker rm --force toxicjoin-ci || true
+          docker volume rm toxicjoin-ci-runtime || true

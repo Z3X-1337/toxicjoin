@@ -1,0 +1,39 @@
+services:
+  toxicjoin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: toxicjoin:local
+    ports:
+      - "${TOXICJOIN_PUBLIC_PORT:-8000}:8000"
+    environment:
+      TOXICJOIN_HOST: 0.0.0.0
+      TOXICJOIN_PORT: 8000
+      TOXICJOIN_RUNTIME_DIR: /var/lib/toxicjoin
+      TOXICJOIN_WEB_DIST: /app/apps/web/dist
+    volumes:
+      - toxicjoin-runtime:/var/lib/toxicjoin
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import json, urllib.request;
+          data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3));
+          assert data['status'] == 'ok'
+      interval: 20s
+      timeout: 4s
+      start_period: 25s
+      retries: 3
+
+volumes:
+  toxicjoin-runtime:

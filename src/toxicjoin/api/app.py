@@ -1,4 +1,4 @@
-"""FastAPI application for the ToxicJoin safety pipeline."""
+"""FastAPI application for the ToxicJoin safety pipeline and judge interface."""
 
 from __future__ import annotations
 
@@ -6,9 +6,11 @@ import os
 from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import FastAPI, HTTPException, Path as ApiPath, Request
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from toxicjoin.api.models import (
     DemoScenarioList,
@@ -16,12 +18,30 @@ from toxicjoin.api.models import (
     PipelineResponse,
 )
 from toxicjoin.api.scenarios import SCENARIOS
+from toxicjoin.benchmark.evidence import BENCHMARK_EVIDENCE, BenchmarkEvidenceSummary
 from toxicjoin.context import FixtureContextResolver
 from toxicjoin.demo import default_fixture_catalog, seed_database
 from toxicjoin.execute import DuckDBExecutor
 from toxicjoin.pipeline import PipelineRequest, ToxicJoinPipeline
 from toxicjoin.policy import PolicyEngine, load_policy
 from toxicjoin.receipts import DecisionReceipt, ReceiptMode, ReceiptStore
+
+
+_CONTENT_SECURITY_POLICY = "; ".join(
+    (
+        "default-src 'self'",
+        "base-uri 'none'",
+        "object-src 'none'",
+        "frame-ancestors 'none'",
+        "form-action 'none'",
+        "script-src 'self' https://cdn.jsdelivr.net",
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+        "img-src 'self' data:",
+        "font-src 'self' data:",
+        "connect-src 'self'",
+    )
+)
+_RESERVED_SPA_PREFIXES = ("api/", "docs", "redoc")
 
 
 def create_default_pipeline() -> ToxicJoinPipeline:
@@ -48,9 +68,14 @@ def create_default_pipeline() -> ToxicJoinPipeline:
     )
 
 
-def create_app(pipeline: ToxicJoinPipeline | None = None) -> FastAPI:
-    """Build the API with an injected pipeline or a lazy default fixture pipeline."""
+def create_app(
+    pipeline: ToxicJoinPipeline | None = None,
+    *,
+    web_dist: str | Path | None = None,
+) -> FastAPI:
+    """Build the API and optionally serve a prebuilt judge interface."""
 
+    resolved_web_dist = _resolve_web_dist(web_dist)
     if pipeline is None:
 
         @asynccontextmanager
@@ -75,12 +100,17 @@ def create_app(pipeline: ToxicJoinPipeline | None = None) -> FastAPI:
         )
         application.state.pipeline = pipeline
 
+    application.state.web_dist = resolved_web_dist
+
     @application.middleware("http")
     async def security_headers(request: Request, call_next):
         response = await call_next(request)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+        response.headers.setdefault("Content-Security-Policy", _CONTENT_SECURITY_POLICY)
         response.headers.setdefault(
             "Permissions-Policy",
             "camera=(), microphone=(), geolocation=()",
@@ -88,6 +118,10 @@ def create_app(pipeline: ToxicJoinPipeline | None = None) -> FastAPI:
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store, max-age=0"
             response.headers["Pragma"] = "no-cache"
+        elif request.url.path.startswith("/assets/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            response.headers["Cache-Control"] = "no-cache, max-age=0"
         return response
 
     @application.get("/api/health", response_model=HealthResponse)
@@ -111,6 +145,13 @@ def create_app(pipeline: ToxicJoinPipeline | None = None) -> FastAPI:
             database_ready=database_ready,
             receipt_store_ready=receipt_store_ready,
         )
+
+    @application.get(
+        "/api/benchmark/summary",
+        response_model=BenchmarkEvidenceSummary,
+    )
+    def benchmark_summary() -> BenchmarkEvidenceSummary:
+        return BENCHMARK_EVIDENCE
 
     @application.post("/api/analyze", response_model=PipelineResponse)
     def analyze(payload: PipelineRequest, request: Request) -> PipelineResponse:
@@ -150,7 +191,60 @@ def create_app(pipeline: ToxicJoinPipeline | None = None) -> FastAPI:
     def demo_scenarios() -> DemoScenarioList:
         return DemoScenarioList(scenarios=SCENARIOS)
 
+    if resolved_web_dist is not None:
+        assets = resolved_web_dist / "assets"
+        if assets.is_dir():
+            application.mount(
+                "/assets",
+                StaticFiles(directory=assets, check_dir=True),
+                name="judge-assets",
+            )
+
+        @application.get("/", include_in_schema=False)
+        def judge_interface() -> FileResponse:
+            return FileResponse(resolved_web_dist / "index.html")
+
+        @application.get("/{path:path}", include_in_schema=False)
+        def spa_fallback(path: str) -> FileResponse:
+            normalized = path.lstrip("/")
+            if normalized == "openapi.json" or normalized.startswith(
+                _RESERVED_SPA_PREFIXES
+            ):
+                raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
+            if Path(normalized).suffix:
+                raise HTTPException(status_code=404, detail={"code": "ASSET_NOT_FOUND"})
+            return FileResponse(resolved_web_dist / "index.html")
+
+    else:
+
+        @application.get("/", include_in_schema=False)
+        def service_root() -> JSONResponse:
+            return JSONResponse(
+                {
+                    "name": "ToxicJoin",
+                    "version": _package_version(),
+                    "judge_interface": "not_built",
+                    "api_docs": "/docs",
+                }
+            )
+
     return application
+
+
+def _resolve_web_dist(value: str | Path | None) -> Path | None:
+    candidates: list[Path] = []
+    if value is not None:
+        candidates.append(Path(value))
+    configured = os.getenv("TOXICJOIN_WEB_DIST")
+    if configured:
+        candidates.append(Path(configured))
+    candidates.append(Path("apps/web/dist"))
+
+    for candidate in candidates:
+        resolved = candidate.expanduser().resolve()
+        if resolved.is_dir() and (resolved / "index.html").is_file():
+            return resolved
+    return None
 
 
 def _pipeline(request: Request) -> ToxicJoinPipeline:
@@ -168,7 +262,7 @@ def _run_pipeline(
     payload: PipelineRequest,
     *,
     execute: bool,
-):
+) -> Any:
     pipeline = _pipeline(request)
     try:
         return pipeline.execute_safe(payload) if execute else pipeline.analyze(payload)
