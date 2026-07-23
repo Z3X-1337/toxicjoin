@@ -1,0 +1,27 @@
+{
+  "agent_count": 1,
+  "agent_urn": "urn:li:aiAgent:toxicjoin-privacy-firewall-agent",
+  "consumed_dataset_urns": [
+    "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.customers,PROD)",
+    "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.location_activity,PROD)",
+    "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.orders,PROD)",
+    "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.retention_scores,PROD)",
+    "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.support_cases,PROD)"
+  ],
+  "created_at": "2026-07-23T13:22:50.574849Z",
+  "report_sha256": "37b2fb79f246ba83c472674e5b08b27027af905f241757b324e71dc1a6e6992d",
+  "schema_version": "1.0",
+  "skill_count": 1,
+  "skill_urn": "urn:li:agentSkill:toxicjoin-compositional-risk-review",
+  "source_repository_url": "https://github.com/Z3X-1337/toxicjoin",
+  "source_skill_path": "skills/compositional-risk-review/SKILL.md",
+  "status": "registered",
+  "tool_count": 5,
+  "tool_urns": [
+    "urn:li:api:toxicjoin-datahub-mcp-get-entities",
+    "urn:li:api:toxicjoin-datahub-mcp-get-lineage",
+    "urn:li:api:toxicjoin-datahub-mcp-grep-documents",
+    "urn:li:api:toxicjoin-datahub-mcp-list-schema-fields",
+    "urn:li:api:toxicjoin-datahub-mcp-save-document"
+  ]
+}
