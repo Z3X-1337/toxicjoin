@@ -19,6 +19,7 @@ toxicjoin-seed = "toxicjoin.demo.seed:main"
 toxicjoin-datahub-seed = "toxicjoin.integrations.datahub_seed:main"
 toxicjoin-datahub-spike = "toxicjoin.integrations.datahub_spike:main"
 toxicjoin-datahub-agent-registry = "toxicjoin.integrations.datahub_agent_registry:main"
+toxicjoin-datahub-agent-registry-verify = "toxicjoin.integrations.datahub_agent_registry_verify:main"
 toxicjoin-benchmark = "toxicjoin.benchmark.runner:main"
 
 [project.optional-dependencies]
