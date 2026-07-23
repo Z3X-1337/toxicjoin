@@ -21,6 +21,7 @@ toxicjoin-datahub-spike = "toxicjoin.integrations.datahub_spike:main"
 toxicjoin-datahub-agent-registry = "toxicjoin.integrations.datahub_agent_registry:main"
 toxicjoin-datahub-agent-registry-verify = "toxicjoin.integrations.datahub_agent_registry_verify:main"
 toxicjoin-benchmark = "toxicjoin.benchmark.runner:main"
+toxicjoin-governance-proof = "toxicjoin.benchmark.governance_dependency:main"
 
 [project.optional-dependencies]
 datahub = [
