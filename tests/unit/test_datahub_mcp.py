@@ -283,3 +283,37 @@ def test_independent_marker_readback_accepts_nested_content() -> None:
     )
 
     assert entity["urn"] == urn
+
+def test_get_entities_accepts_fastmcp_collection_result_envelope() -> None:
+    urn = "urn:li:dataset:test"
+    transport = FakeTransport(
+        responses={"get_entities": [{"result": [{"urn": urn}]}]}
+    )
+
+    entities = asyncio.run(DataHubMcpClient(transport).get_entities((urn,)))
+
+    assert entities == ({"urn": urn},)
+
+
+def test_get_entities_still_accepts_bare_list() -> None:
+    urn = "urn:li:dataset:test"
+    transport = FakeTransport(responses={"get_entities": [[{"urn": urn}]]})
+
+    entities = asyncio.run(DataHubMcpClient(transport).get_entities((urn,)))
+
+    assert entities == ({"urn": urn},)
+
+
+def test_get_entities_rejects_nonstandard_result_envelope() -> None:
+    urn = "urn:li:dataset:test"
+    transport = FakeTransport(
+        responses={
+            "get_entities": [
+                {"result": [{"urn": urn}], "metadata": {"unsafe": True}}
+            ]
+        }
+    )
+
+    with pytest.raises(DataHubMcpError, match="unexpected payload"):
+        asyncio.run(DataHubMcpClient(transport).get_entities((urn,)))
+

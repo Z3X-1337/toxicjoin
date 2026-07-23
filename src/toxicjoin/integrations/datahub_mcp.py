@@ -344,6 +344,7 @@ class DataHubMcpClient:
         if not urns:
             return ()
         payload = await self.transport.call_tool("get_entities", {"urns": list(urns)})
+        payload = _unwrap_fastmcp_collection_result(payload)
         if not isinstance(payload, list) or not all(
             isinstance(item, dict) for item in payload
         ):
@@ -464,6 +465,20 @@ class DataHubMcpClient:
                 "independent document read-back did not contain the verification marker"
             )
         return entity
+
+
+
+def _unwrap_fastmcp_collection_result(value: Any) -> Any:
+    """Unwrap FastMCP's standard envelope for non-object output.
+
+    FastMCP exposes list and primitive return values as ``{"result": value}``
+    because MCP structured content must be an object. Only that exact one-key
+    envelope is accepted; additional keys remain a contract failure.
+    """
+
+    if isinstance(value, dict) and set(value) == {"result"}:
+        return value["result"]
+    return value
 
 
 def _parse_json_or_text(value: str) -> Any:
