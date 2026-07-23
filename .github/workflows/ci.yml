@@ -33,8 +33,25 @@ jobs:
       - name: Install package and development tools
         run: python -m pip install --upgrade pip && python -m pip install -e '.[dev]'
 
+      - name: Capture Ruff version
+        run: ruff --version | tee ruff-version-${{ matrix.python-version }}.txt
+
       - name: Lint
-        run: ruff check src tests
+        shell: bash
+        run: |
+          set -o pipefail
+          ruff check src tests 2>&1 | tee ruff-${{ matrix.python-version }}.log
+
+      - name: Upload Ruff diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruff-${{ matrix.python-version }}
+          path: |
+            ruff-version-${{ matrix.python-version }}.txt
+            ruff-${{ matrix.python-version }}.log
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Test
         shell: bash
