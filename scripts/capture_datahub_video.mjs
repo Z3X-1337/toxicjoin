@@ -41,9 +41,7 @@ async function dismissProductTours() {
     const closeButton = page
       .locator('#___reactour button.reactour__close, #___reactour button[aria-label="Close"]')
       .first();
-    if ((await closeButton.count()) === 0 || !(await closeButton.isVisible())) {
-      return;
-    }
+    if ((await closeButton.count()) === 0 || !(await closeButton.isVisible())) return;
     await closeButton.click();
     await page.waitForTimeout(300);
   }
@@ -60,19 +58,41 @@ async function settle() {
   await dismissProductTours();
 }
 
+async function visibleBodyText() {
+  return (await page.locator("body").innerText()).replace(/\s+/g, " ").trim();
+}
+
+async function waitForVisibleText(label, timeoutMs = 30_000) {
+  const locator = page.getByText(label, { exact: false }).first();
+  await locator.waitFor({ state: "visible", timeout: timeoutMs });
+  return locator;
+}
+
 async function screenshot(name, evidence = []) {
   const target = path.join(outputDir, `${name}.png`);
-  const bodyText = (await page.locator("body").innerText()).replace(/\s+/g, " ").trim();
+  const bodyText = await visibleBodyText();
+
+  if (/No results found for/i.test(bodyText)) {
+    throw new Error(`${name}: refusing to capture a DataHub no-results page`);
+  }
+
   for (const required of evidence) {
     if (!bodyText.toLowerCase().includes(required.toLowerCase())) {
       throw new Error(`${name}: required visible evidence not found: ${required}`);
     }
   }
+
+  const visibleSkeletons = page.locator('.ant-skeleton:visible, [class*="skeleton"]:visible');
+  if ((await visibleSkeletons.count()) > 0) {
+    throw new Error(`${name}: visible loading skeletons remain in the DataHub UI`);
+  }
+
   await page.screenshot({ path: target, fullPage: true });
   const stats = fs.statSync(target);
   if (stats.size < 20_000) {
     throw new Error(`${name}: screenshot is unexpectedly small (${stats.size} bytes)`);
   }
+
   captures.push({
     name,
     file: target,
@@ -96,8 +116,7 @@ async function persistFailureDiagnostics(error) {
   };
 
   try {
-    const text = (await page.locator("body").innerText()).replace(/\s+/g, " ").trim();
-    diagnostics.visible_text = text.slice(0, 12000);
+    diagnostics.visible_text = (await visibleBodyText()).slice(0, 12000);
   } catch {
     diagnostics.visible_text = "";
   }
@@ -122,9 +141,6 @@ async function persistFailureDiagnostics(error) {
 }
 
 async function loginIfNeeded() {
-  // Match DataHub's own Playwright/Cypress login contract exactly. Avoid any
-  // role/text fallback because the adjacent SSO button is intentionally not
-  // valid in the local quickstart used for capture evidence.
   await page.addInitScript(() => {
     localStorage.setItem("skipWelcomeModal", "true");
   });
@@ -132,9 +148,7 @@ async function loginIfNeeded() {
   await page.goto(uiUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
   await settle();
 
-  if (!new URL(page.url()).pathname.includes("/login")) {
-    return;
-  }
+  if (!new URL(page.url()).pathname.includes("/login")) return;
 
   const usernameInput = page.locator('input[data-testid="username"]').first();
   const passwordInput = page.locator('input[data-testid="password"]').first();
@@ -189,6 +203,7 @@ async function findSearchBox() {
     page.getByRole("textbox", { name: /search/i }),
     page.locator('input[type="search"]'),
   ];
+
   for (const locator of candidates) {
     const count = await locator.count();
     for (let i = 0; i < count; i += 1) {
@@ -199,47 +214,78 @@ async function findSearchBox() {
   throw new Error(`No visible DataHub search box found at ${page.url()}`);
 }
 
-async function searchAndOpen(query, visibleLabel) {
+async function openRetentionScoresFromSearch() {
   await page.goto(uiUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
   await settle();
-  const search = await findSearchBox();
-  await search.fill(query);
-  await search.press("Enter");
 
-  const result = page.getByText(visibleLabel, { exact: false }).first();
-  try {
-    await result.waitFor({ state: "visible", timeout: 30_000 });
-  } catch {
-    await screenshot(`diagnostic-search-${query.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`);
-    throw new Error(`Search result not found for ${query}: expected visible label ${visibleLabel}`);
+  const search = await findSearchBox();
+  await search.fill("retention_scores");
+  await search.press("Enter");
+  await page.waitForURL((url) => url.pathname.includes("/search"), {
+    waitUntil: "domcontentloaded",
+    timeout: 15_000,
+  });
+
+  const datasetLink = page
+    .locator('a[href*="/dataset/"][href*="toxicjoin.retention_scores"]')
+    .first();
+  await datasetLink.waitFor({ state: "visible", timeout: 30_000 });
+  await dismissProductTours();
+
+  const bodyText = await visibleBodyText();
+  if (/No results found for/i.test(bodyText)) {
+    throw new Error("DataHub search returned a no-results page for retention_scores");
   }
 
-  await dismissProductTours();
-  await result.click();
+  await screenshot("01-retention-scores-search", [
+    "ToxicJoin retention_scores",
+    "churn_score",
+  ]);
+
+  await datasetLink.click();
   await settle();
+}
+
+async function waitForLineageGraph() {
+  const expectedUpstreams = ["customers", "orders", "support_cases", "location_activity"];
+  for (const upstream of expectedUpstreams) {
+    await waitForVisibleText(upstream, 30_000);
+  }
 }
 
 try {
   await loginIfNeeded();
-  await screenshot("01-datahub-home", ["DataHub"]);
 
-  await searchAndOpen("retention_scores", "retention_scores");
-  await screenshot("02-retention-scores-overview", ["retention_scores", "churn_score"]);
+  await openRetentionScoresFromSearch();
+  await waitForVisibleText("churn_score");
+  await waitForVisibleText("customer_id");
+  await waitForVisibleText("model_timestamp");
+  await screenshot("02-retention-scores-overview", [
+    "ToxicJoin retention_scores",
+    "churn_score",
+    "customer_id",
+    "model_timestamp",
+  ]);
 
   const lineageControl = page.getByText("Lineage", { exact: true }).first();
   if ((await lineageControl.count()) === 0 || !(await lineageControl.isVisible())) {
     throw new Error("retention_scores page does not expose a visible Lineage control");
   }
   await lineageControl.click();
-  await page.waitForTimeout(1600);
-  await dismissProductTours();
-  await screenshot("03-retention-scores-lineage", ["retention_scores", "Lineage"]);
-
-  await searchAndOpen("Compositional Risk Review", "Compositional Risk Review");
-  await screenshot("04-compositional-risk-agent-skill", ["Compositional Risk Review"]);
-
-  await searchAndOpen("ToxicJoin Privacy Firewall Agent", "ToxicJoin Privacy Firewall Agent");
-  await screenshot("05-toxicjoin-ai-agent", ["ToxicJoin Privacy Firewall Agent"]);
+  await page.waitForURL((url) => url.pathname.includes("/Lineage"), {
+    waitUntil: "domcontentloaded",
+    timeout: 15_000,
+  });
+  await settle();
+  await waitForLineageGraph();
+  await screenshot("03-retention-scores-lineage", [
+    "ToxicJoin retention_scores",
+    "Lineage",
+    "customers",
+    "orders",
+    "support_cases",
+    "location_activity",
+  ]);
 
   if (consoleErrors.length) {
     throw new Error(`DataHub UI console errors: ${consoleErrors.join(" | ")}`);
@@ -255,9 +301,17 @@ try {
     viewport: { width: 1600, height: 1000 },
     capture_count: captures.length,
     captures,
+    agent_registry_evidence: {
+      visual_ui_claimed: false,
+      reason:
+        "Self-hosted OSS does not expose the Cloud Private Beta Agents UI; Agent Registry proof is retained as independently verified machine evidence.",
+      registry_report: ".toxicjoin/datahub-agent-registry.json",
+      verification_report: ".toxicjoin/datahub-agent-registry-verified.json",
+    },
     console_error_count: 0,
     page_error_count: 0,
   };
+
   fs.writeFileSync(
     path.join(outputDir, "manifest.json"),
     `${JSON.stringify(manifest, null, 2)}\n`,
