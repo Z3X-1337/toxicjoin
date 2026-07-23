@@ -125,22 +125,30 @@ async function loginIfNeeded() {
   await userInput.fill(username);
   await passwordInput.fill(password);
 
-  const loginButton = page
-    .getByRole("button", { name: /sign in|log in|login/i })
-    .first();
-  if ((await loginButton.count()) > 0 && (await loginButton.isVisible())) {
-    await loginButton.click();
+  const explicitLogin = page.locator('button[data-testid="sign-in"]').first();
+  if ((await explicitLogin.count()) > 0 && (await explicitLogin.isVisible())) {
+    await explicitLogin.click();
   } else {
-    const submit = page.locator('button[type="submit"]').first();
-    if ((await submit.count()) === 0) throw new Error("DataHub login submit button was not found");
-    await submit.click();
+    const loginButton = page.getByRole("button", { name: /^login$/i }).first();
+    if ((await loginButton.count()) > 0 && (await loginButton.isVisible())) {
+      await loginButton.click();
+    } else {
+      const submit = page.locator('button[type="submit"]').first();
+      if ((await submit.count()) === 0 || !(await submit.isVisible())) {
+        throw new Error("DataHub password-login submit button was not found");
+      }
+      await submit.click();
+    }
   }
 
   await page.waitForLoadState("domcontentloaded");
   await page.waitForTimeout(1800);
   if ((await page.locator('input[type="password"]').count()) > 0) {
     const stillVisible = await page.locator('input[type="password"]').first().isVisible();
-    if (stillVisible) throw new Error("DataHub login did not complete");
+    if (stillVisible) throw new Error("DataHub password login did not complete");
+  }
+  if (page.url().includes("error_msg=SSO")) {
+    throw new Error("Capture flow entered DataHub SSO instead of password login");
   }
 }
 
