@@ -48,6 +48,9 @@
 - Hard timeouts on MCP initialization, tool discovery, and every tool call.
 - Two-process Decision verification: write in one MCP process, close it, then read and verify the marker in a fresh process.
 - Sanitized atomic seed and spike evidence reports without tokens, private endpoints, passwords, or warehouse rows.
+- A real DataHub OSS evidence gate that seeded governed metadata, read entity/schema/lineage context through the official MCP server, wrote a DataHub `Decision`, restarted the MCP process, and independently verified persisted content.
+- A public deterministic judge Replay that is explicitly labeled as replay evidence and is not represented as live DataHub or live DuckDB execution.
+- A reusable git-backed Compositional Risk Review Agent Skill plus a separate DataHub Agent Registry preview proving Agent → Skill → MCP tools and Agent → governed datasets graph relationships.
 - Balanced 30-query benchmark containing ten ALLOW, ten REWRITE, and ten BLOCK cases.
 - Deterministic benchmark JSON/Markdown generation, report hashing, confusion matrices, and strict regression gates.
 - CI-generated benchmark artifact plus committed human-readable and machine-readable evidence.
@@ -76,6 +79,7 @@
 19. The first benchmark run exposed that a physical subject alias from an inner CTE scope could be used in the root rewrite, producing a safe failure rather than executable SQL.
 20. The rewriter now identifies the unique subject alias visible in the root SELECT scope and rejects multiple candidates instead of guessing.
 21. CI fails if a non-ALLOW case is predicted as ALLOW or if an expected BLOCK becomes an effective ALLOW after rewrite or verification.
+22. Optional MCP mutation arguments are emitted only when the discovered tool schema advertises support, preventing version-specific contract drift from turning a valid DataHub write into a client-side failure.
 
 ## CI evidence
 - Initial full CI exposed six failures: five stale policy paths and one CTE projection-lineage defect.
@@ -86,6 +90,7 @@
 - GitHub Actions `CI` run 82 completed successfully on Python 3.11 and 3.12 after the initial DataHub MCP contract and context tests.
 - GitHub Actions `CI` run 84 completed successfully on Python 3.11 and 3.12 after adding hard MCP timeouts and child-secret isolation tests.
 - GitHub Actions `CI` run 97 completed successfully on Python 3.11 and 3.12 after the CTE root-alias rewrite fix and generated the benchmark artifact.
+- Live DataHub evidence from GitHub Actions run `29975433969` is committed under `docs/evidence/` and is independently hash-verifiable.
 - CI cancels stale runs for the same pull request and persists per-version pytest artifacts for diagnosis.
 
 ## Benchmark evidence
@@ -107,15 +112,38 @@ The benchmark is explicitly scoped to the declared SQL and policy profile. It is
 ## Deliberate scope cut
 The first safe rewrite supports an already-grouped query that needs a stronger subject-count threshold. Automatic identifier removal, location coarsening, differential privacy, and individual-to-grouped synthesis are not claimed yet. Unsupported transformations fail closed. This preserves technical honesty and keeps the flagship vertical slice deterministic.
 
-## External verification gate
-The DataHub SDK seed, live snapshot normalization, MCP read/write/read-back protocol, and reports are implemented and tested over fake transports. The final live evidence remains intentionally unclaimed until Docker or a hosted DataHub instance is available and both commands succeed:
+## External verification gate — passed
+The stable DataHub integration has passed a real DataHub OSS evidence gate. The verified path:
 
 ```text
-toxicjoin-datahub-seed --yes
-toxicjoin-datahub-spike --verify
+DataHub SDK seed
+  -> governed datasets, fields, tags, glossary terms, and lineage
+  -> official MCP discovery + schema validation
+  -> entity/schema/lineage reads
+  -> DataHub Decision write
+  -> close first MCP process
+  -> fresh MCP process
+  -> grep_documents persisted-content verification
+  -> sanitized hash-verifiable evidence reports
 ```
 
-The execution environment used by the assistant does not expose Docker, so it cannot fabricate or substitute this evidence.
+Committed evidence:
 
-## Next milestone
-Build the judge-facing hosted replay/interface, capture the real DataHub seed and read-back evidence, prepare the under-three-minute video, and complete the Devpost handoff.
+- `docs/evidence/datahub-live.md`
+- `docs/evidence/datahub-live-seed.json`
+- `docs/evidence/datahub-live-spike.json`
+- `docs/evidence/datahub-agent-registry.md` for the separate preview-only Agent Registry graph
+- `docs/evidence/hosted-replay.md` for the independently verified public Replay
+
+The stable SDK/MCP path remains independent of the preview Agent Registry capability. Fixture, live, and replay evidence remain explicitly distinguished.
+
+## Submission-close milestone
+The product implementation is technically frozen. Remaining work is submission engineering rather than feature expansion:
+
+1. finish and visually validate the real DataHub UI capture package;
+2. assemble the under-three-minute judge video from verified product and DataHub footage;
+3. synchronize the final Devpost description and evidence links with the frozen implementation;
+4. run the final judge-path and submission-requirement audit;
+5. submit only after explicit final review.
+
+No new product capability should enter `main` during this phase unless it fixes a reproduced defect or a factual documentation inconsistency.
