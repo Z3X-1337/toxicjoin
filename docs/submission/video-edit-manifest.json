@@ -1,0 +1,173 @@
+{
+  "schema_version": "1.0",
+  "project": "ToxicJoin",
+  "output": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "hard_max_seconds": 180,
+    "target_seconds_min": 150,
+    "target_seconds_max": 165
+  },
+  "audio": {
+    "provider": "Microsoft Azure Speech neural TTS",
+    "primary_voice": "en-US-AndrewMultilingualNeural",
+    "backup_voice": "en-US-BrianMultilingualNeural",
+    "format": "WAV PCM 48 kHz",
+    "timing_source_of_truth": true,
+    "rule": "Replace draft section bounds with clause timestamps measured from the supplied final WAV; do not time-stretch the narration to preserve draft cuts."
+  },
+  "visual_rules": [
+    "Use only real ToxicJoin UI, real DataHub UI, repository, CI, and retained evidence.",
+    "Never present hosted Replay as live execution.",
+    "Keep Agent Registry footage labeled preview/development channel.",
+    "Prefer stable visual holds, deliberate cursor movement, and evidence-first zooms over decorative motion.",
+    "No generated product UI, fake DataHub screens, or unsupported claims."
+  ],
+  "sections": [
+    {
+      "id": "problem",
+      "draft_start": 0,
+      "draft_end": 11,
+      "narration_paragraph": 1,
+      "primary_visuals": [
+        "ToxicJoin title on real product interface",
+        "unsafe-query scenario visible in judge cockpit"
+      ],
+      "on_screen_claims": [
+        "Compositional Privacy Firewall for AI Data Agents",
+        "Before the query reaches the warehouse"
+      ]
+    },
+    {
+      "id": "operating-model",
+      "draft_start": 11,
+      "draft_end": 25,
+      "narration_paragraph": 2,
+      "primary_visuals": [
+        "BLOCK / REWRITE → ALLOW / ALLOW scenario cards",
+        "Deterministic policy label"
+      ],
+      "on_screen_claims": [
+        "Policy owns enforcement",
+        "LLM does not override decisions"
+      ]
+    },
+    {
+      "id": "block-proof",
+      "draft_start": 25,
+      "draft_end": 49,
+      "narration_paragraph": 3,
+      "primary_visuals": [
+        "Block compositional re-identification scenario",
+        "evidence graph: stable pseudonym + quasi-identifiers + sensitive support category",
+        "BLOCK decision",
+        "No query was executed",
+        "sanitized receipt hash"
+      ],
+      "required_evidence": [
+        "execution absent",
+        "BLOCK reason visible"
+      ]
+    },
+    {
+      "id": "rewrite-proof",
+      "draft_start": 49,
+      "draft_end": 86,
+      "narration_paragraph": 4,
+      "primary_visuals": [
+        "Rewrite a sensitive churn analysis scenario",
+        "initial REWRITE + SMALL_GROUP_RISK",
+        "original SQL and safe SQL side by side",
+        "highlight HAVING COUNT(DISTINCT c.customer_id) >= 20",
+        "reevaluation transition to ALLOW"
+      ],
+      "required_evidence": [
+        "exact threshold insertion",
+        "same analyzer/policy applied again"
+      ]
+    },
+    {
+      "id": "execution-verification",
+      "draft_start": 86,
+      "draft_end": 111,
+      "narration_paragraph": 5,
+      "primary_visuals": [
+        "verification checks",
+        "three DuckDB result groups",
+        "subject_count = 40 in every group",
+        "Receipt panel"
+      ],
+      "required_evidence": [
+        "final decision ALLOW",
+        "verification passed",
+        "receipt contains evidence but no result rows"
+      ]
+    },
+    {
+      "id": "datahub",
+      "draft_start": 111,
+      "draft_end": 144,
+      "narration_paragraph": 6,
+      "primary_visuals": [
+        "real retention_scores DataHub dataset overview",
+        "governed schema fields/tags/glossary terms",
+        "real column lineage",
+        "real ToxicJoin Decision document",
+        "stable live DataHub evidence page or green Actions proof",
+        "skills/compositional-risk-review/SKILL.md",
+        "Agent Registry preview evidence"
+      ],
+      "required_evidence": [
+        "5 datasets / 19 governed fields",
+        "Decision write and fresh-process read-back",
+        "Agent → Skill → 5 MCP tools → 5 governed datasets"
+      ],
+      "labels": [
+        "Stable SDK/MCP proof",
+        "Agent Registry preview — development channel"
+      ]
+    },
+    {
+      "id": "benchmark",
+      "draft_start": 144,
+      "draft_end": 158,
+      "narration_paragraph": 7,
+      "primary_visuals": [
+        "Benchmark panel",
+        "committed benchmark evidence"
+      ],
+      "required_evidence": [
+        "30 cases",
+        "30/30 initial decisions",
+        "30/30 effective outcomes",
+        "0 false allows",
+        "unsupported rewrites fail closed"
+      ]
+    },
+    {
+      "id": "close",
+      "draft_start": 158,
+      "draft_end": 165,
+      "narration_paragraph": 8,
+      "primary_visuals": [
+        "ToxicJoin product header",
+        "receipt hash",
+        "github.com/Z3X-1337/toxicjoin",
+        "toxicjoin-replay.vercel.app"
+      ],
+      "on_screen_claims": [
+        "Context-aware. Deterministic. Fail closed."
+      ]
+    }
+  ],
+  "post_audio_acceptance": [
+    "Measure exact WAV duration and leading/trailing silence.",
+    "Create timestamped clause transcript from the actual waveform.",
+    "Bind each section to spoken clauses, allowing section lengths to move.",
+    "Build captions from the reviewed technical transcript.",
+    "Run full-video factual review against claims-evidence-map.md.",
+    "Verify final duration under 180 seconds and 1920×1080/30fps export.",
+    "Watch the final encoded video end-to-end before creating a public upload link."
+  ]
+}

@@ -1,0 +1,37 @@
+<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
+  <voice name="en-US-AndrewMultilingualNeural">
+    <prosody rate="-10%" pitch="0%" volume="default">
+      <p>
+        AI data agents can generate useful <say-as interpret-as="characters">SQL</say-as> in seconds. But two acceptable datasets can become sensitive when joined. <sub alias="Toxic Join">ToxicJoin</sub> evaluates that composed output before the query reaches the warehouse.
+      </p>
+      <break time="325ms"/>
+      <p>
+        <sub alias="Toxic Join">ToxicJoin</sub> receives the task purpose, <say-as interpret-as="characters">SQL</say-as>, and expected subject key. A deterministic policy returns allow, safely rewrite, or block. An <say-as interpret-as="characters">LLM</say-as> does not control enforcement.
+      </p>
+      <break time="275ms"/>
+      <p>
+        Here, the agent combines a stable customer pseudonym, two quasi-identifiers, and a sensitive support category. No single source explains the risk. The combination does. <sub alias="Toxic Join">ToxicJoin</sub> blocks the query and never calls <sub alias="Duck D B">DuckDB</sub>.
+      </p>
+      <break time="375ms"/>
+      <p>
+        The flagship query groups a sensitive churn score without a trusted minimum number of customers. <sub alias="Toxic Join">ToxicJoin</sub> adds a subject-bound threshold, reparses the generated <say-as interpret-as="characters">SQL</say-as>, and runs the same policy again. A rewrite is never trusted merely because <sub alias="Toxic Join">ToxicJoin</sub> produced it.
+      </p>
+      <break time="325ms"/>
+      <p>
+        Only after the final decision becomes allow does the read-only executor run. Verification checks the complete result, confirms every region contains forty distinct subjects, rejects forbidden raw output fields, and stores evidence without persisting result rows.
+      </p>
+      <break time="325ms"/>
+      <p>
+        <sub alias="Data Hub">DataHub</sub> is governed context and durable memory. <sub alias="Toxic Join">ToxicJoin</sub> seeds five datasets, nineteen classified fields, tags, glossary terms, and column lineage through the official <say-as interpret-as="characters">SDK</say-as>. Through the official <say-as interpret-as="characters">MCP</say-as> Server, it reads governed context, writes a <sub alias="Data Hub">DataHub</sub> Decision, closes that process, opens a fresh one, and verifies the saved marker. The review procedure is also published as a git-backed <sub alias="Data Hub">DataHub</sub> Agent Skill; a separate preview proves the Agent, Skill, five <say-as interpret-as="characters">MCP</say-as> tools, and five dataset dependencies.
+      </p>
+      <break time="425ms"/>
+      <p>
+        A balanced thirty-query corpus runs through the real pipeline in <say-as interpret-as="characters">CI</say-as>: ten allow, ten rewrite, and ten block. The declared corpus has thirty correct initial decisions, thirty correct effective outcomes, and zero false allows. Unsupported rewrites fail closed.
+      </p>
+      <break time="325ms"/>
+      <p>
+        <sub alias="Toxic Join">ToxicJoin</sub> gives AI data agents a privacy boundary they can explain, enforce, and leave behind in <sub alias="Data Hub">DataHub</sub> for the next agent or reviewer.
+      </p>
+    </prosody>
+  </voice>
+</speak>
