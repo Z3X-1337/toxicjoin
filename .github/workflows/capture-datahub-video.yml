@@ -74,7 +74,7 @@ jobs:
           set -euo pipefail
           toxicjoin-datahub-seed --yes --output .toxicjoin/datahub-seed.json
 
-      - name: Register Agent Skill graph
+      - name: Register and independently verify Agent Skill graph
         shell: bash
         run: |
           set -euo pipefail
@@ -116,12 +116,12 @@ jobs:
           echo "path=$browser_path" >> "$GITHUB_OUTPUT"
           "$browser_path" --version
 
-      - name: Capture real DataHub UI footage frames
+      - name: Capture mature OSS DataHub UI footage frames
         env:
           BROWSER_EXECUTABLE: ${{ steps.browser.outputs.path }}
         run: node scripts/capture_datahub_video.mjs
 
-      - name: Enforce capture manifest
+      - name: Enforce capture manifest and Agent Registry evidence
         shell: bash
         run: |
           set -euo pipefail
@@ -132,22 +132,33 @@ jobs:
           root = Path('.toxicjoin/video-captures')
           manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
           assert manifest['source'] == 'real-datahub-oss-ui'
-          assert manifest['capture_count'] == 5
+          assert manifest['capture_count'] == 3
           assert manifest['console_error_count'] == 0
           assert manifest['page_error_count'] == 0
+          assert manifest['agent_registry_evidence']['visual_ui_claimed'] is False
 
           expected = {
-              '01-datahub-home.png',
+              '01-retention-scores-search.png',
               '02-retention-scores-overview.png',
               '03-retention-scores-lineage.png',
-              '04-compositional-risk-agent-skill.png',
-              '05-toxicjoin-ai-agent.png',
           }
           actual = {path.name for path in root.glob('*.png')}
           assert expected <= actual, (expected, actual)
           for name in expected:
               path = root / name
               assert path.stat().st_size >= 20_000, (name, path.stat().st_size)
+
+          registry = json.loads(Path('.toxicjoin/datahub-agent-registry.json').read_text())
+          verified = json.loads(Path('.toxicjoin/datahub-agent-registry-verified.json').read_text())
+          assert registry['status'] == 'registered'
+          assert registry['tool_count'] == 5
+          assert registry['skill_count'] == 1
+          assert registry['agent_count'] == 1
+          assert verified['status'] == 'verified'
+          assert verified['dependency_skill_count'] == 1
+          assert verified['dependency_tool_count'] == 5
+          assert verified['consumed_dataset_count'] == 5
+
           print(json.dumps(manifest, indent=2))
           PY
 
