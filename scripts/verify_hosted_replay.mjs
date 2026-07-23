@@ -47,6 +47,7 @@ try {
     const pageErrors = [];
     const failedRequests = [];
     const assetResponses = [];
+    const apiResponses = [];
 
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
@@ -59,8 +60,12 @@ try {
       });
     });
     page.on("response", (response) => {
-      if (response.url().includes("/toxicjoin/assets/")) {
-        assetResponses.push({ url: response.url(), status: response.status() });
+      const url = response.url();
+      if (url.includes("cdn.jsdelivr.net/gh/Z3X-1337/toxicjoin@")) {
+        assetResponses.push({ url, status: response.status() });
+      }
+      if (new URL(url).pathname.startsWith("/api/")) {
+        apiResponses.push({ url, status: response.status() });
       }
     });
 
@@ -132,13 +137,23 @@ try {
         `${profile.name}: failed requests: ${JSON.stringify(failedRequests)}`,
       );
     }
-    if (assetResponses.length < 2) {
-      throw new Error(`${profile.name}: expected JavaScript and CSS assets`);
+    if (assetResponses.length !== 2) {
+      throw new Error(
+        `${profile.name}: expected exactly two immutable JavaScript/CSS assets, got ${assetResponses.length}`,
+      );
     }
     const badAssets = assetResponses.filter((asset) => asset.status >= 400);
     if (badAssets.length) {
       throw new Error(
         `${profile.name}: failed static assets: ${JSON.stringify(badAssets)}`,
+      );
+    }
+    const expectedFallbackResponses = apiResponses.filter(
+      (entry) => entry.status === 404,
+    );
+    if (expectedFallbackResponses.length !== 3) {
+      throw new Error(
+        `${profile.name}: expected three API 404 responses before replay fallback, got ${JSON.stringify(apiResponses)}`,
       );
     }
 
@@ -151,7 +166,8 @@ try {
       name: profile.name,
       viewport: { width: profile.width, height: profile.height },
       document_status: response.status(),
-      asset_count: assetResponses.length,
+      immutable_asset_count: assetResponses.length,
+      replay_fallback_api_response_count: expectedFallbackResponses.length,
       horizontal_overflow: false,
       console_error_count: 0,
       page_error_count: 0,
