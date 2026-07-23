@@ -1,0 +1,86 @@
+name: Diagnose Agent Registry SDK
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/diagnose-agent-registry-sdk.yml"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pinned DataHub SDK
+        run: |
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet 'acryl-datahub==1.6.0.15'
+
+      - name: Capture exact Agent Registry import compatibility
+        shell: bash
+        run: |
+          mkdir -p artifacts/agent-registry-sdk
+          python - <<'PY' > artifacts/agent-registry-sdk/imports.txt 2>&1
+          import importlib
+          import importlib.metadata
+          import pkgutil
+          import sys
+          import traceback
+
+          print(f"python={sys.version}")
+          print(f"acryl-datahub={importlib.metadata.version('acryl-datahub')}")
+          targets = (
+              ('Agent', 'datahub.api.entities.agent.agent', 'Agent'),
+              ('AgentSkill', 'datahub.api.entities.agent.agent_skill', 'AgentSkill'),
+              ('Api', 'datahub.api.entities.agent.api', 'Api'),
+          )
+          failed = False
+          for label, module_name, attribute in targets:
+              try:
+                  module = importlib.import_module(module_name)
+                  value = getattr(module, attribute)
+              except Exception as exc:
+                  failed = True
+                  print(f"IMPORT_FAILURE {label} {module_name}.{attribute}: {type(exc).__name__}: {exc}")
+                  traceback.print_exc()
+              else:
+                  print(f"IMPORT_OK {label} {module_name}.{attribute}: {value!r}")
+
+          try:
+              agent_pkg = importlib.import_module('datahub.api.entities.agent')
+          except Exception as exc:
+              print(f"AGENT_PACKAGE_FAILURE: {type(exc).__name__}: {exc}")
+          else:
+              package_path = getattr(agent_pkg, '__path__', None)
+              if package_path:
+                  print('AGENT_SUBMODULES:')
+                  for module in sorted(pkgutil.iter_modules(package_path), key=lambda item: item.name):
+                      print(f"  {module.name}")
+
+          if failed:
+              raise SystemExit(2)
+          PY
+          status=$?
+          cat artifacts/agent-registry-sdk/imports.txt
+          exit "$status"
+
+      - name: Upload compatibility diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-agent-registry-sdk-diagnostic
+          path: artifacts/agent-registry-sdk/imports.txt
+          if-no-files-found: error
+          retention-days: 7
