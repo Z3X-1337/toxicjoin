@@ -103,50 +103,59 @@ async function persistFailureDiagnostics(error) {
 }
 
 async function loginIfNeeded() {
+  // Match DataHub's own Playwright/Cypress login contract exactly. Avoid any
+  // role/text fallback because the adjacent SSO button is intentionally not
+  // valid in the local quickstart used for capture evidence.
+  await page.addInitScript(() => {
+    localStorage.setItem("skipWelcomeModal", "true");
+  });
+
   await page.goto(uiUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
   await settle();
 
-  const passwordInput = page.locator('input[type="password"]').first();
-  if ((await passwordInput.count()) === 0 || !(await passwordInput.isVisible())) {
+  if (!new URL(page.url()).pathname.includes("/login")) {
     return;
   }
 
-  const textInputs = page.locator('input:not([type="password"]):not([type="hidden"])');
-  let userInput = null;
-  for (let i = 0; i < (await textInputs.count()); i += 1) {
-    const candidate = textInputs.nth(i);
-    if (await candidate.isVisible()) {
-      userInput = candidate;
-      break;
-    }
-  }
-  if (!userInput) throw new Error("DataHub login page did not expose a visible username field");
+  const usernameInput = page.locator('input[data-testid="username"]').first();
+  const passwordInput = page.locator('input[data-testid="password"]').first();
+  const signInButton = page.locator('[data-testid="sign-in"]').first();
 
-  await userInput.fill(username);
+  if ((await usernameInput.count()) === 0 || !(await usernameInput.isVisible())) {
+    throw new Error("DataHub login page did not expose the official username field");
+  }
+  if ((await passwordInput.count()) === 0 || !(await passwordInput.isVisible())) {
+    throw new Error("DataHub login page did not expose the official password field");
+  }
+  if ((await signInButton.count()) === 0 || !(await signInButton.isVisible())) {
+    throw new Error("DataHub login page did not expose the official sign-in control");
+  }
+
+  await usernameInput.fill(username);
   await passwordInput.fill(password);
 
-  const explicitLogin = page.locator('button[data-testid="sign-in"]').first();
-  if ((await explicitLogin.count()) > 0 && (await explicitLogin.isVisible())) {
-    await explicitLogin.click();
-  } else {
-    const loginButton = page.getByRole("button", { name: /^login$/i }).first();
-    if ((await loginButton.count()) > 0 && (await loginButton.isVisible())) {
-      await loginButton.click();
-    } else {
-      const submit = page.locator('button[type="submit"]').first();
-      if ((await submit.count()) === 0 || !(await submit.isVisible())) {
-        throw new Error("DataHub password-login submit button was not found");
-      }
-      await submit.click();
-    }
+  if ((await usernameInput.inputValue()) !== username) {
+    throw new Error("DataHub username field did not retain the configured credential");
+  }
+  if ((await passwordInput.inputValue()) !== password) {
+    throw new Error("DataHub password field did not retain the configured credential");
   }
 
-  await page.waitForLoadState("domcontentloaded");
-  await page.waitForTimeout(1800);
-  if ((await page.locator('input[type="password"]').count()) > 0) {
-    const stillVisible = await page.locator('input[type="password"]').first().isVisible();
-    if (stillVisible) throw new Error("DataHub password login did not complete");
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (await signInButton.isEnabled()) break;
+    await page.waitForTimeout(100);
   }
+  if (!(await signInButton.isEnabled())) {
+    throw new Error("DataHub sign-in control remained disabled after credentials were filled");
+  }
+
+  await signInButton.click();
+  await page.waitForURL((url) => !url.pathname.includes("/login"), {
+    waitUntil: "domcontentloaded",
+    timeout: 30_000,
+  });
+  await settle();
+
   if (page.url().includes("error_msg=SSO")) {
     throw new Error("Capture flow entered DataHub SSO instead of password login");
   }
