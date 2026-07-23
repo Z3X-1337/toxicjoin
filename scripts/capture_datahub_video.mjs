@@ -186,13 +186,15 @@ async function searchAndOpen(query, visibleLabel) {
   const search = await findSearchBox();
   await search.fill(query);
   await search.press("Enter");
-  await page.waitForTimeout(1800);
 
   const result = page.getByText(visibleLabel, { exact: false }).first();
-  if ((await result.count()) === 0 || !(await result.isVisible())) {
+  try {
+    await result.waitFor({ state: "visible", timeout: 30_000 });
+  } catch {
     await screenshot(`diagnostic-search-${query.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`);
     throw new Error(`Search result not found for ${query}: expected visible label ${visibleLabel}`);
   }
+
   await result.click();
   await settle();
 }
