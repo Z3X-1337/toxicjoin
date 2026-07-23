@@ -4,12 +4,21 @@ This document defines the voice asset that will drive the final demo edit. The f
 
 ## Voice audition
 
+Two production-ready SSML files are committed beside this document:
+
+- `microsoft-tts-andrew.ssml` — `en-US-AndrewMultilingualNeural`.
+- `microsoft-tts-brian.ssml` — `en-US-BrianMultilingualNeural`.
+
+They use the same narration, pause map, rate, pitch, and pronunciation controls; the voice name is the intentional A/B variable.
+
 Generate the first two paragraphs with both voices before rendering the full script:
 
 1. **Primary:** `en-US-AndrewMultilingualNeural` — calm, clear, neutral technology-presenter delivery.
 2. **Backup:** `en-US-BrianMultilingualNeural` — slightly deeper delivery if Andrew sounds too light for the product.
 
 Use the same rate, pitch, and pause settings for both samples. Select the voice based on intelligibility, natural paragraph transitions, and correct pronunciation of the product terms—not merely on depth. Do not use a personal or cloned voice.
+
+After selecting the voice, render the **full matching SSML file** rather than recreating its settings manually. Do not mix paragraphs from Andrew and Brian in the final narration.
 
 ## Required output
 
@@ -59,7 +68,7 @@ Toxic Join gives AI data agents a privacy boundary they can explain, enforce, an
 
 ## Suggested pause map
 
-Use natural paragraph pauses, approximately:
+The checked-in SSML files already encode the intended pause ranges. When using a UI that ignores SSML breaks, approximate:
 
 - After paragraph 1: 300–350 ms
 - After paragraph 2: 250–300 ms
@@ -68,22 +77,3 @@ Use natural paragraph pauses, approximately:
 - After paragraph 5: 300–350 ms
 - After paragraph 6: 400–450 ms
 - After paragraph 7: 300–350 ms
-
-The exact pauses may be adjusted to reach the target duration without making the speaking rate unnatural. Do not add a dramatic pause inside the DataHub / Agent Skill paragraph; keep that section technically fluent.
-
-## Acceptance check before sending the audio
-
-- [ ] The two-paragraph Andrew and Brian auditions used identical settings.
-- [ ] The selected voice is documented before rendering the complete narration.
-- [ ] Duration is between 2:30 and 2:45.
-- [ ] The narrator sounds like a native US English technology presenter.
-- [ ] `ToxicJoin`, `DataHub`, `SQL`, `MCP`, `SDK`, `CI`, and `DuckDB` are pronounced correctly.
-- [ ] No word is clipped at paragraph boundaries.
-- [ ] No background music or synthetic ambience is embedded.
-- [ ] The file is WAV at 48 kHz.
-- [ ] There is clean silence at the beginning and end.
-- [ ] The exact narration text has not been altered in a way that changes technical claims.
-
-## Video synchronization rule
-
-After the WAV is supplied, create a timestamped transcript from the actual waveform and align every visual cut to the spoken clause. Visuals may be shortened, extended, or rearranged to fit the narration. The narration must not be cut into unnatural fragments merely to preserve the draft storyboard timings.
