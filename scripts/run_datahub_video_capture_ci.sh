@@ -1,10 +1,48 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+
+mkdir -p .toxicjoin artifacts/video-captures
+LOG_FILE="artifacts/video-captures/capture-harness.log"
+STAGE_FILE="artifacts/video-captures/capture-stage.txt"
+
+# Preserve stdout/stderr from the very first setup command so an early quickstart
+# failure still produces a useful artifact.
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+stage="bootstrap"
+printf '%s\n' "$stage" > "$STAGE_FILE"
+
+on_error() {
+  local exit_code=$?
+  {
+    echo "status=failed"
+    echo "stage=$stage"
+    echo "exit_code=$exit_code"
+    echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } > artifacts/video-captures/capture-failure-stage.txt
+  docker ps -a > artifacts/video-captures/docker-ps.txt 2>&1 || true
+  docker compose ls > artifacts/video-captures/docker-compose-ls.txt 2>&1 || true
+  df -h > artifacts/video-captures/disk-usage.txt 2>&1 || true
+  exit "$exit_code"
+}
+trap on_error ERR
+
+set_stage() {
+  stage="$1"
+  printf '%s\n' "$stage" > "$STAGE_FILE"
+  echo "=== ToxicJoin capture stage: $stage ==="
+}
 
 export DATAHUB_GMS_URL="http://127.0.0.1:8080"
 export DATAHUB_GMS_TOKEN="local-quickstart-no-auth"
 export DATAHUB_UI_URL="http://127.0.0.1:9002"
 
+set_stage "free-runner-space"
+sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc || true
+docker system prune --all --force || true
+df -h | tee artifacts/video-captures/disk-before.txt
+
+set_stage "install-python-dependencies"
 python -m pip install --quiet --upgrade pip wheel setuptools uv
 python -m pip install --quiet -e '.[datahub]'
 python - <<'PY'
@@ -14,28 +52,45 @@ print('acryl-datahub', version('acryl-datahub'))
 PY
 uvx --version
 
-datahub docker quickstart
-curl --fail --silent --show-error "$DATAHUB_GMS_URL/health"
+set_stage "start-datahub-quickstart"
+datahub docker quickstart 2>&1 | tee artifacts/video-captures/datahub-quickstart.log
 
-ready=false
+set_stage "verify-datahub-services"
+ready_gms=false
 for attempt in $(seq 1 90); do
-  status=$(curl --silent --output /dev/null --write-out '%{http_code}' "$DATAHUB_UI_URL" || true)
+  if curl --fail --silent --show-error "$DATAHUB_GMS_URL/health" > artifacts/video-captures/gms-health.txt; then
+    ready_gms=true
+    break
+  fi
+  echo "DataHub GMS attempt $attempt is not healthy yet."
+  sleep 3
+done
+test "$ready_gms" = "true"
+
+ready_ui=false
+for attempt in $(seq 1 90); do
+  status=$(curl --silent --output artifacts/video-captures/ui-probe.html --write-out '%{http_code}' "$DATAHUB_UI_URL" || true)
   if [[ "$status" == "200" || "$status" == "302" ]]; then
-    ready=true
+    ready_ui=true
     break
   fi
   echo "DataHub frontend attempt $attempt returned HTTP ${status:-unavailable}."
   sleep 3
 done
-test "$ready" = "true"
+test "$ready_ui" = "true"
 
-mkdir -p .toxicjoin artifacts/video-captures
+docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' \
+  | tee artifacts/video-captures/docker-running.txt
 
+set_stage "seed-governed-metadata"
 toxicjoin-datahub-seed \
   --yes \
-  --output .toxicjoin/datahub-video-seed.json
+  --output .toxicjoin/datahub-video-seed.json \
+  2>&1 | tee artifacts/video-captures/datahub-seed.log
+cp .toxicjoin/datahub-video-seed.json artifacts/video-captures/
 
-python - <<'PY'
+set_stage "write-decision-through-mcp"
+python - <<'PY' 2>&1 | tee artifacts/video-captures/datahub-decision.log
 import asyncio
 import json
 from pathlib import Path
@@ -115,7 +170,9 @@ A rewrite is never trusted merely because ToxicJoin produced it. Unsupported or 
 
 asyncio.run(main())
 PY
+cp .toxicjoin/video-capture-manifest.json artifacts/video-captures/
 
+set_stage "install-browser-client"
 npm install --no-save --no-audit --no-fund playwright-core@1.54.1
 
 browser_path=""
@@ -135,15 +192,19 @@ fi
 export BROWSER_EXECUTABLE="$browser_path"
 export TOXICJOIN_CAPTURE_MANIFEST=".toxicjoin/video-capture-manifest.json"
 export TOXICJOIN_CAPTURE_DIR="artifacts/video-captures"
+
+set_stage "capture-datahub-ui"
 node scripts/capture_datahub_video_evidence.mjs
 
-cp .toxicjoin/video-capture-manifest.json artifacts/video-captures/
-cp .toxicjoin/datahub-video-seed.json artifacts/video-captures/
-sha256sum \
-  artifacts/video-captures/*.json \
-  artifacts/video-captures/*.png \
-  artifacts/video-captures/*.webm \
-  | sort > artifacts/video-captures/SHA256SUMS
+set_stage "hash-capture-package"
+# Hash only files that exist. Diagnostics are intentionally included so every
+# retained capture package has an integrity manifest.
+find artifacts/video-captures -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+  | sort -z \
+  | xargs -0 sha256sum > artifacts/video-captures/SHA256SUMS
 
 cat artifacts/video-captures/capture-report.json
 cat artifacts/video-captures/SHA256SUMS
+
+set_stage "complete"
+rm -f artifacts/video-captures/capture-failure-stage.txt
