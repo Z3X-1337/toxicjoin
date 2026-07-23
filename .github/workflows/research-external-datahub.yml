@@ -1,0 +1,246 @@
+name: Research External DataHub Validation
+
+on:
+  pull_request:
+    paths:
+      - "research/external_validation/**"
+      - ".github/workflows/research-external-datahub.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: research-external-datahub-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  external-datahub:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATAHUB_GMS_URL: http://127.0.0.1:8080
+      DATAHUB_GMS_TOKEN: local-quickstart-auth-disabled
+      DATAHUB_MCP_COMMAND: uvx
+      DATAHUB_MCP_ARGS: --from mcp-server-datahub==0.6.0 mcp-server-datahub
+      DATAHUB_MCP_TIMEOUT_SECONDS: "90"
+      TOOLS_IS_MUTATION_ENABLED: "true"
+      DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED: "false"
+      SAVE_DOCUMENT_TOOL_ENABLED: "true"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc || true
+          docker system prune --all --force || true
+          df -h
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ToxicJoin and DataHub dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip wheel setuptools uv
+          python -m pip install -e '.[datahub]'
+          datahub version
+          uvx --from mcp-server-datahub==0.6.0 mcp-server-datahub --help >/dev/null 2>&1 || true
+
+      - name: Start DataHub OSS quickstart
+        shell: bash
+        run: |
+          set -o pipefail
+          datahub docker quickstart 2>&1 | tee research-datahub-quickstart.log
+
+      - name: Verify DataHub services
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent --show-error http://127.0.0.1:8080/health > research-datahub-health.txt; then
+              break
+            fi
+            sleep 5
+          done
+          curl --fail --silent --show-error http://127.0.0.1:8080/health
+          curl --fail --silent --show-error http://127.0.0.1:9002/ >/dev/null
+
+      - name: Download official UCI source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p research-artifacts/external-datahub
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output research-artifacts/external-datahub/uci-diabetes-296.zip \
+            'https://archive.ics.uci.edu/static/public/296/diabetes%2B130-us%2Bhospitals%2Bfor%2Byears%2B1999-2008.zip'
+
+      - name: Build typed external warehouse
+        run: |
+          python research/external_validation/build_external_warehouse.py \
+            --source research-artifacts/external-datahub/uci-diabetes-296.zip \
+            --database research-artifacts/external-datahub/external-typed.duckdb \
+            --report research-artifacts/external-datahub/warehouse-profile.json
+
+      - name: Seed frozen stewardship metadata into live DataHub
+        shell: bash
+        run: |
+          set -euo pipefail
+          python research/external_validation/seed_external_datahub.py \
+            --database research-artifacts/external-datahub/external-typed.duckdb \
+            --stewardship research/external_validation/stewardship-map.json \
+            --warehouse-profile research-artifacts/external-datahub/warehouse-profile.json \
+            --report research-artifacts/external-datahub/datahub-external-seed.json \
+            --asset-map research-artifacts/external-datahub/datahub-external-assets.json \
+            --yes 2>&1 | tee research-external-datahub-seed.log
+
+      - name: Verify governed snapshot through official DataHub MCP
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import asyncio
+          import hashlib
+          import json
+          from collections import Counter
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          from toxicjoin.context.datahub import DataHubAssetMap, DataHubSnapshotLoader
+          from toxicjoin.integrations.datahub_mcp import (
+              DataHubMcpClient,
+              DataHubMcpSettings,
+              StdioDataHubMcpTransport,
+          )
+
+          OUTPUT = Path('research-artifacts/external-datahub/datahub-external-snapshot.json')
+          ASSET_MAP = Path('research-artifacts/external-datahub/datahub-external-assets.json')
+          WAREHOUSE = json.loads(Path('research-artifacts/external-datahub/warehouse-profile.json').read_text())
+
+          async def run():
+              settings = DataHubMcpSettings.from_env()
+              asset_map = DataHubAssetMap.from_path(ASSET_MAP)
+              async with StdioDataHubMcpTransport(settings) as transport:
+                  client = DataHubMcpClient(transport)
+                  snapshot = await DataHubSnapshotLoader(client, asset_map).load(require_mutations=False)
+
+              categories = Counter(
+                  field.category.value
+                  for dataset in snapshot.catalog.datasets.values()
+                  for field in dataset.fields.values()
+              )
+              field_total = sum(snapshot.field_counts.values())
+              lineage_text = json.dumps(snapshot.lineage_sample, sort_keys=True)
+              expected = {
+                  'DIRECT_IDENTIFIER': 5,
+                  'STABLE_PSEUDONYM': 5,
+                  'QUASI_IDENTIFIER': 3,
+                  'SENSITIVE_ATTRIBUTE': 44,
+                  'PUBLIC_OR_LOW_RISK': 2,
+              }
+
+              assert len(snapshot.verified_entities) == 5
+              assert field_total == 59
+              assert dict(categories) == expected, (dict(categories), expected)
+              assert 'UNCLASSIFIED' not in categories
+              relationships = snapshot.lineage_sample.get('relationships', [])
+              assert isinstance(relationships, list) and relationships
+              assert 'raw_diabetic_data' in lineage_text
+
+              payload = {
+                  'schema_version': '1.0',
+                  'created_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+                  'status': 'verified',
+                  'warehouse_profile_sha256': WAREHOUSE['warehouse_profile_sha256'],
+                  'verified_entities': list(snapshot.verified_entities),
+                  'field_counts': snapshot.field_counts,
+                  'category_counts': dict(sorted(categories.items())),
+                  'lineage_relationship_count': len(relationships),
+                  'raw_upstream_lineage_verified': True,
+                  'discovered_tools': list(snapshot.discovered_tools),
+                  'patient_rows_in_report': False,
+                  'report_sha256': '',
+              }
+              canonical = json.dumps(
+                  {k: v for k, v in payload.items() if k != 'report_sha256'},
+                  sort_keys=True,
+                  separators=(',', ':'),
+                  ensure_ascii=True,
+              ).encode()
+              payload['report_sha256'] = hashlib.sha256(canonical).hexdigest()
+              OUTPUT.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
+              print(json.dumps(payload, indent=2, sort_keys=True))
+
+          asyncio.run(run())
+          PY
+
+      - name: Validate external DataHub seed evidence
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          seed = json.loads(Path('research-artifacts/external-datahub/datahub-external-seed.json').read_text())
+          snapshot = json.loads(Path('research-artifacts/external-datahub/datahub-external-snapshot.json').read_text())
+          warehouse = json.loads(Path('research-artifacts/external-datahub/warehouse-profile.json').read_text())
+
+          assert seed['status'] == 'seeded'
+          assert seed['governed_dataset_count'] == 5
+          assert seed['governed_field_count'] == 59
+          assert seed['lineage_write_count'] == 5
+          assert seed['synthetic_records_added'] == 0
+          assert seed['patient_rows_in_report'] is False
+          assert snapshot['status'] == 'verified'
+          assert snapshot['raw_upstream_lineage_verified'] is True
+          assert snapshot['patient_rows_in_report'] is False
+          assert seed['warehouse_profile_sha256'] == warehouse['warehouse_profile_sha256']
+          assert snapshot['warehouse_profile_sha256'] == warehouse['warehouse_profile_sha256']
+          PY
+
+      - name: Remove external patient data before artifact upload
+        if: always()
+        shell: bash
+        run: |
+          rm -f research-artifacts/external-datahub/uci-diabetes-296.zip
+          rm -f research-artifacts/external-datahub/external-typed.duckdb
+
+      - name: Capture diagnostics
+        if: always()
+        shell: bash
+        run: |
+          docker ps -a > research-datahub-docker-ps.txt 2>&1 || true
+          df -h > research-datahub-disk.txt 2>&1 || true
+
+      - name: Upload sanitized external DataHub evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-external-datahub-evidence
+          path: |
+            research-artifacts/external-datahub/warehouse-profile.json
+            research-artifacts/external-datahub/datahub-external-seed.json
+            research-artifacts/external-datahub/datahub-external-assets.json
+            research-artifacts/external-datahub/datahub-external-snapshot.json
+            research-datahub-health.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload external DataHub diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-external-datahub-diagnostics
+          path: |
+            research-datahub-quickstart.log
+            research-external-datahub-seed.log
+            research-datahub-docker-ps.txt
+            research-datahub-disk.txt
+          if-no-files-found: warn
+          retention-days: 14
