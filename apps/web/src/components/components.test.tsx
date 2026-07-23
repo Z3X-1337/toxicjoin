@@ -2,7 +2,11 @@ import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { replayBenchmark, replayResults, replayScenarios } from "../data/replay";
+import {
+  replayBenchmark,
+  replayResults,
+  replayScenarios,
+} from "../data/judgeReplay";
 import { BenchmarkPanel } from "./BenchmarkPanel";
 import { DecisionHero } from "./DecisionHero";
 import { ReceiptPanel } from "./ReceiptPanel";
