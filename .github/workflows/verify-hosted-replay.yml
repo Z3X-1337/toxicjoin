@@ -4,14 +4,12 @@ on:
   pull_request:
     paths:
       - ".github/workflows/verify-hosted-replay.yml"
-      - ".github/workflows/pages.yml"
-      - "apps/web/**"
       - "scripts/verify_hosted_replay.mjs"
+      - "public/replay/**"
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: read
 
 concurrency:
   group: hosted-replay-verification-${{ github.event.pull_request.number || github.ref }}
@@ -21,6 +19,8 @@ jobs:
   verify-public-replay:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      REPLAY_URL: https://toxicjoin-replay.vercel.app/
 
     steps:
       - name: Check out repository
@@ -68,85 +68,18 @@ jobs:
           echo "path=$browser_path" >> "$GITHUB_OUTPUT"
           "$browser_path" --version
 
-      - name: Inspect official GitHub Pages configuration
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
+      - name: Verify public HTTP response and immutable asset references
         shell: bash
         run: |
           set -euo pipefail
-          api="https://api.github.com/repos/${REPOSITORY}/pages"
-          configured=false
-
-          for attempt in $(seq 1 60); do
-            status=$(curl --silent --output pages-status.json --write-out '%{http_code}' \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "$api" || true)
-
-            case "$status" in
-              200)
-                configured=true
-                break
-                ;;
-              404|202|000)
-                echo "Pages API attempt $attempt returned HTTP ${status:-unavailable}; retrying."
-                sleep 5
-                ;;
-              *)
-                echo "Permanent Pages API error: HTTP $status" >&2
-                cat pages-status.json >&2 || true
-                exit 1
-                ;;
-            esac
-          done
-
-          test "$configured" = "true"
-
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          payload = json.loads(Path('pages-status.json').read_text())
-          assert payload['build_type'] == 'workflow'
-          url = payload['html_url']
-          assert url.startswith('https://')
-          if not url.endswith('/'):
-              url += '/'
-          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as handle:
-              handle.write(f'REPLAY_URL={url}\n')
-          print(json.dumps({
-              'html_url': url,
-              'build_type': payload['build_type'],
-              'status': payload.get('status'),
-              'custom_404': payload.get('custom_404'),
-          }, indent=2))
-          PY
-
-      - name: Wait for public GitHub Pages response
-        shell: bash
-        run: |
-          set -euo pipefail
-          reachable=false
-          for attempt in $(seq 1 60); do
-            status=$(curl --location --silent --output hosted-replay.html --write-out '%{http_code}' "$REPLAY_URL" || true)
-            if [[ "$status" == "200" ]]; then
-              echo "Hosted replay returned HTTP 200 after $attempt attempt(s)."
-              reachable=true
-              break
-            fi
-            if [[ "$status" != "404" && "$status" != "202" && "$status" != "000" ]]; then
-              echo "Permanent hosted replay HTTP error: $status" >&2
-              exit 1
-            fi
-            echo "Attempt $attempt returned HTTP ${status:-unavailable}; retrying."
-            sleep 5
-          done
-          test "$reachable" = "true"
+          status=$(curl --location --silent --output hosted-replay.html --write-out '%{http_code}' "$REPLAY_URL")
+          test "$status" = "200"
           grep -q '<div id="root"></div>' hosted-replay.html
-          grep -q '/toxicjoin/assets/' hosted-replay.html
+          grep -q 'cdn.jsdelivr.net/gh/Z3X-1337/toxicjoin@183571534a35be6a5ae85ed9d75308ada6eba41e/public/replay/assets/index-CIeiud0i.js' hosted-replay.html
+          grep -q 'cdn.jsdelivr.net/gh/Z3X-1337/toxicjoin@183571534a35be6a5ae85ed9d75308ada6eba41e/public/replay/assets/index-C9DIVvrs.css' hosted-replay.html
+          provenance_status=$(curl --location --silent --output hosted-provenance.json --write-out '%{http_code}' "${REPLAY_URL}provenance.json")
+          test "$provenance_status" = "200"
+          grep -q '93c8773c931ece44f0963a0b19e839430e2e49f31fcfcb380a4a6f4c9cf382a7' hosted-provenance.json
 
       - name: Verify desktop and mobile replay in Chromium
         env:
@@ -159,8 +92,8 @@ jobs:
         with:
           name: toxicjoin-hosted-replay-verification
           path: |
-            pages-status.json
             hosted-replay.html
+            hosted-provenance.json
             artifacts/hosted-replay/verification.json
             artifacts/hosted-replay/desktop.png
             artifacts/hosted-replay/mobile.png
