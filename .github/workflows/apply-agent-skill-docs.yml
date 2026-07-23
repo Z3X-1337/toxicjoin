@@ -1,5 +1,6 @@
 name: Apply Agent Skill Documentation
 
+# Temporary workflow; remove after the reviewed changes are committed.
 on:
   push:
     branches: [agent/datahub-agent-skill]
