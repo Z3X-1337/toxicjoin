@@ -1,9 +1,10 @@
 """Prepare the DataHub UI capture script for the ephemeral capture environment.
 
-The capture harness emits a root-only VIEW_ENTITY_PAGE policy directly to local GMS.
-The checked-in browser script historically tried to mutate UI policy state itself. For
-capture runs we replace only that function so the browser becomes read-only: it proves
-that the GMS-emitted policy has propagated before recording any entity page.
+The capture harness assigns the local quickstart `datahub` user to DataHub's
+built-in Admin role directly through local GMS. For capture runs we replace only
+the browser authorization function so it becomes read-only: it proves that the
+role assignment has propagated and that DataHub grants VIEW_ENTITY_PAGE before
+recording any entity page.
 
 This file exists only on the capture-only PR and is not intended to merge into main.
 """
@@ -17,24 +18,29 @@ SCRIPT = Path("scripts/capture_datahub_video_evidence.mjs")
 
 
 REPLACEMENT = r'''async function prepareCaptureAuthorization() {
-  const me = await executeGraphQL(`
-    query CaptureGetMe {
-      me {
-        corpUser { urn username }
-        platformPrivileges { managePolicies }
-      }
-    }
-  `);
-  const actorUrn = me?.me?.corpUser?.urn;
-  const username = me?.me?.corpUser?.username;
-  const managePolicies = Boolean(me?.me?.platformPrivileges?.managePolicies);
-  if (actorUrn !== "urn:li:corpuser:datahub") {
-    throw new Error(`unexpected DataHub capture actor: ${actorUrn ?? "missing"}`);
-  }
-
-  const policyUrn = "urn:li:dataHubPolicy:toxicjoin-capture-view";
+  const expectedActorUrn = "urn:li:corpuser:datahub";
+  const adminRoleUrn = "urn:li:dataHubRole:Admin";
+  let username = null;
+  let actorUrn = null;
+  let managePolicies = false;
   let privileges = [];
+
   for (let attempt = 1; attempt <= 60; attempt += 1) {
+    const me = await executeGraphQL(`
+      query CaptureGetMe {
+        me {
+          corpUser { urn username }
+          platformPrivileges { managePolicies }
+        }
+      }
+    `);
+    actorUrn = me?.me?.corpUser?.urn ?? null;
+    username = me?.me?.corpUser?.username ?? null;
+    managePolicies = Boolean(me?.me?.platformPrivileges?.managePolicies);
+    if (actorUrn !== expectedActorUrn) {
+      throw new Error(`unexpected DataHub capture actor: ${actorUrn ?? "missing"}`);
+    }
+
     const result = await executeGraphQL(
       `query CaptureGrantedPrivileges($input: GetGrantedPrivilegesInput!) {
         getGrantedPrivileges(input: $input) { privileges }
@@ -50,16 +56,16 @@ REPLACEMENT = r'''async function prepareCaptureAuthorization() {
       },
     );
     privileges = result?.getGrantedPrivileges?.privileges ?? [];
-    if (privileges.includes("VIEW_ENTITY_PAGE")) break;
+    if (managePolicies && privileges.includes("VIEW_ENTITY_PAGE")) break;
     await sleep(1_000);
   }
 
   authorizationEvidence = {
     username,
     actor_urn: actorUrn,
+    role_urn: adminRoleUrn,
+    assignment_source: "direct-gms-capture-only",
     manage_policies: managePolicies,
-    policy_urn: policyUrn,
-    policy_source: "direct-gms-capture-only",
     view_entity_page_granted: privileges.includes("VIEW_ENTITY_PAGE"),
     granted_privileges: [...privileges].sort(),
   };
@@ -69,9 +75,14 @@ REPLACEMENT = r'''async function prepareCaptureAuthorization() {
     "utf8",
   );
 
+  if (!authorizationEvidence.manage_policies) {
+    throw new Error(
+      `Admin role did not grant managePolicies after cache wait: ${JSON.stringify(authorizationEvidence)}`,
+    );
+  }
   if (!authorizationEvidence.view_entity_page_granted) {
     throw new Error(
-      `VIEW_ENTITY_PAGE was not granted after policy-cache wait: ${JSON.stringify(authorizationEvidence)}`,
+      `Admin role did not grant VIEW_ENTITY_PAGE after cache wait: ${JSON.stringify(authorizationEvidence)}`,
     );
   }
 }
@@ -89,8 +100,10 @@ def main() -> None:
     patched = text[:start] + REPLACEMENT + text[end:]
     if "CaptureEnableViewEntity" in patched:
         raise RuntimeError("runtime capture patch left a UI policy mutation behind")
-    if 'policy_source: "direct-gms-capture-only"' not in patched:
-        raise RuntimeError("runtime capture patch did not install the GMS policy verifier")
+    if 'assignment_source: "direct-gms-capture-only"' not in patched:
+        raise RuntimeError("runtime capture patch did not install the Admin-role verifier")
+    if 'role_urn: adminRoleUrn' not in patched:
+        raise RuntimeError("runtime capture patch did not retain Admin role evidence")
 
     SCRIPT.write_text(patched, encoding="utf-8")
 
