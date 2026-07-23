@@ -3,7 +3,7 @@ import {
   replayHealth,
   replayResults,
   replayScenarios,
-} from "../data/replay";
+} from "../data/judgeReplay";
 import type {
   BenchmarkSummary,
   DemoScenario,
