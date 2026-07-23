@@ -473,7 +473,12 @@ class DataHubMcpClient:
             "document_type": "Decision",
             "related_assets": list(related_assets),
         }
-        if external_url is not None:
+        save_definition = self._tools.get("save_document")
+        if (
+            external_url is not None
+            and save_definition is not None
+            and "external_url" in save_definition.properties
+        ):
             arguments["external_url"] = external_url
 
         payload = await self.transport.call_tool("save_document", arguments)

@@ -248,6 +248,63 @@ def test_save_decision_extracts_nested_document_urn() -> None:
 
 
 
+def test_save_decision_sends_supported_external_url() -> None:
+    transport = FakeTransport(
+        responses={
+            "save_document": [
+                {"document": {"urn": "urn:li:document:with-external-url"}}
+            ]
+        }
+    )
+    client = DataHubMcpClient(transport)
+    asyncio.run(client.discover_and_validate(require_mutations=True))
+
+    urn = asyncio.run(
+        client.save_decision(
+            title="ToxicJoin decision",
+            content="verified marker",
+            related_assets=("urn:li:dataset:test",),
+            external_url="https://example.test/evidence",
+        )
+    )
+
+    assert urn == "urn:li:document:with-external-url"
+    assert transport.calls[-1][1]["external_url"] == "https://example.test/evidence"
+
+
+def test_save_decision_omits_unsupported_external_url() -> None:
+    tools = list(_official_contracts())
+    save = tools[-1]
+    schema = dict(save.input_schema)
+    properties = dict(save.properties)
+    properties.pop("external_url")
+    schema["properties"] = properties
+    tools[-1] = McpToolDefinition(name="save_document", input_schema=schema)
+
+    transport = FakeTransport(
+        tools=tuple(tools),
+        responses={
+            "save_document": [
+                {"document": {"urn": "urn:li:document:without-external-url"}}
+            ]
+        },
+    )
+    client = DataHubMcpClient(transport)
+    asyncio.run(client.discover_and_validate(require_mutations=True))
+
+    urn = asyncio.run(
+        client.save_decision(
+            title="ToxicJoin decision",
+            content="verified marker",
+            related_assets=("urn:li:dataset:test",),
+            external_url="https://example.test/evidence",
+        )
+    )
+
+    assert urn == "urn:li:document:without-external-url"
+    assert "external_url" not in transport.calls[-1][1]
+
+
 def _grep_documents_contract() -> McpToolDefinition:
     return McpToolDefinition(
         name="grep_documents",
