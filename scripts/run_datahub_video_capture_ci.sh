@@ -173,6 +173,10 @@ cp .toxicjoin/video-capture-manifest.json artifacts/video-captures/
 
 set_stage "install-browser-client"
 npm install --no-save --no-audit --no-fund playwright-core@1.54.1
+# Recording video with Playwright uses its pinned FFmpeg helper even when the
+# browser executable is supplied by the runner. Install only that small helper;
+# keep using the preinstalled Chrome binary rather than downloading a browser.
+npx playwright-core install ffmpeg
 
 browser_path=""
 for command_name in google-chrome google-chrome-stable chromium chromium-browser; do
