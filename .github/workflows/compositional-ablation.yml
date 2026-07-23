@@ -1,0 +1,42 @@
+name: Compositional Ablation Evidence
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compositional-ablation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compositional-ablation:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ToxicJoin
+        run: python -m pip install --upgrade pip && python -m pip install -e '.[dev]'
+
+      - name: Run compositional interaction ablation
+        run: toxicjoin-ablation --output-dir artifacts/compositional-ablation
+
+      - name: Upload compositional ablation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-compositional-ablation
+          path: artifacts/compositional-ablation/
+          if-no-files-found: error
+          retention-days: 30
