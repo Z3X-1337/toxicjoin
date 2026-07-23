@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "research/external_validation/**"
+      - "research_diagnostics/verify_external_datahub.py"
       - ".github/workflows/research-external-datahub.yml"
   workflow_dispatch:
 
@@ -100,87 +101,18 @@ jobs:
             --asset-map research-artifacts/external-datahub/datahub-external-assets.json \
             --yes 2>&1 | tee research-external-datahub-seed.log
 
-      - name: Verify governed snapshot through official DataHub MCP
+      - name: Observe and verify governed snapshot through official DataHub MCP
         shell: bash
         run: |
-          set -euo pipefail
-          python - <<'PY'
-          import asyncio
-          import hashlib
-          import json
-          from collections import Counter
-          from datetime import datetime, timezone
-          from pathlib import Path
+          set -o pipefail
+          python research_diagnostics/verify_external_datahub.py \
+            --asset-map research-artifacts/external-datahub/datahub-external-assets.json \
+            --warehouse-profile research-artifacts/external-datahub/warehouse-profile.json \
+            --output research-artifacts/external-datahub/observed-datahub-mcp.json \
+            2>&1 | tee research-external-datahub-mcp.log
 
-          from toxicjoin.context.datahub import DataHubAssetMap, DataHubSnapshotLoader
-          from toxicjoin.integrations.datahub_mcp import (
-              DataHubMcpClient,
-              DataHubMcpSettings,
-              StdioDataHubMcpTransport,
-          )
-
-          OUTPUT = Path('research-artifacts/external-datahub/datahub-external-snapshot.json')
-          ASSET_MAP = Path('research-artifacts/external-datahub/datahub-external-assets.json')
-          WAREHOUSE = json.loads(Path('research-artifacts/external-datahub/warehouse-profile.json').read_text())
-
-          async def run():
-              settings = DataHubMcpSettings.from_env()
-              asset_map = DataHubAssetMap.from_path(ASSET_MAP)
-              async with StdioDataHubMcpTransport(settings) as transport:
-                  client = DataHubMcpClient(transport)
-                  snapshot = await DataHubSnapshotLoader(client, asset_map).load(require_mutations=False)
-
-              categories = Counter(
-                  field.category.value
-                  for dataset in snapshot.catalog.datasets.values()
-                  for field in dataset.fields.values()
-              )
-              field_total = sum(snapshot.field_counts.values())
-              lineage_text = json.dumps(snapshot.lineage_sample, sort_keys=True)
-              expected = {
-                  'DIRECT_IDENTIFIER': 5,
-                  'STABLE_PSEUDONYM': 5,
-                  'QUASI_IDENTIFIER': 3,
-                  'SENSITIVE_ATTRIBUTE': 44,
-                  'PUBLIC_OR_LOW_RISK': 2,
-              }
-
-              assert len(snapshot.verified_entities) == 5
-              assert field_total == 59
-              assert dict(categories) == expected, (dict(categories), expected)
-              assert 'UNCLASSIFIED' not in categories
-              relationships = snapshot.lineage_sample.get('relationships', [])
-              assert isinstance(relationships, list) and relationships
-              assert 'raw_diabetic_data' in lineage_text
-
-              payload = {
-                  'schema_version': '1.0',
-                  'created_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
-                  'status': 'verified',
-                  'warehouse_profile_sha256': WAREHOUSE['warehouse_profile_sha256'],
-                  'verified_entities': list(snapshot.verified_entities),
-                  'field_counts': snapshot.field_counts,
-                  'category_counts': dict(sorted(categories.items())),
-                  'lineage_relationship_count': len(relationships),
-                  'raw_upstream_lineage_verified': True,
-                  'discovered_tools': list(snapshot.discovered_tools),
-                  'patient_rows_in_report': False,
-                  'report_sha256': '',
-              }
-              canonical = json.dumps(
-                  {k: v for k, v in payload.items() if k != 'report_sha256'},
-                  sort_keys=True,
-                  separators=(',', ':'),
-                  ensure_ascii=True,
-              ).encode()
-              payload['report_sha256'] = hashlib.sha256(canonical).hexdigest()
-              OUTPUT.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
-              print(json.dumps(payload, indent=2, sort_keys=True))
-
-          asyncio.run(run())
-          PY
-
-      - name: Validate external DataHub seed evidence
+      - name: Validate external DataHub evidence linkage
+        if: success()
         shell: bash
         run: |
           python - <<'PY'
@@ -188,7 +120,7 @@ jobs:
           from pathlib import Path
 
           seed = json.loads(Path('research-artifacts/external-datahub/datahub-external-seed.json').read_text())
-          snapshot = json.loads(Path('research-artifacts/external-datahub/datahub-external-snapshot.json').read_text())
+          observed = json.loads(Path('research-artifacts/external-datahub/observed-datahub-mcp.json').read_text())
           warehouse = json.loads(Path('research-artifacts/external-datahub/warehouse-profile.json').read_text())
 
           assert seed['status'] == 'seeded'
@@ -197,11 +129,11 @@ jobs:
           assert seed['lineage_write_count'] == 5
           assert seed['synthetic_records_added'] == 0
           assert seed['patient_rows_in_report'] is False
-          assert snapshot['status'] == 'verified'
-          assert snapshot['raw_upstream_lineage_verified'] is True
-          assert snapshot['patient_rows_in_report'] is False
+          assert observed['status'] == 'verified'
+          assert observed['contains_patient_rows'] is False
+          assert observed['expectation_failures'] == []
           assert seed['warehouse_profile_sha256'] == warehouse['warehouse_profile_sha256']
-          assert snapshot['warehouse_profile_sha256'] == warehouse['warehouse_profile_sha256']
+          assert observed['warehouse_profile_sha256'] == warehouse['warehouse_profile_sha256']
           PY
 
       - name: Remove external patient data before artifact upload
@@ -227,7 +159,7 @@ jobs:
             research-artifacts/external-datahub/warehouse-profile.json
             research-artifacts/external-datahub/datahub-external-seed.json
             research-artifacts/external-datahub/datahub-external-assets.json
-            research-artifacts/external-datahub/datahub-external-snapshot.json
+            research-artifacts/external-datahub/observed-datahub-mcp.json
             research-datahub-health.txt
           if-no-files-found: error
           retention-days: 30
@@ -238,9 +170,14 @@ jobs:
         with:
           name: toxicjoin-external-datahub-diagnostics
           path: |
+            research-artifacts/external-datahub/warehouse-profile.json
+            research-artifacts/external-datahub/datahub-external-seed.json
+            research-artifacts/external-datahub/datahub-external-assets.json
+            research-artifacts/external-datahub/observed-datahub-mcp.json
             research-datahub-quickstart.log
             research-external-datahub-seed.log
+            research-external-datahub-mcp.log
             research-datahub-docker-ps.txt
             research-datahub-disk.txt
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 30
