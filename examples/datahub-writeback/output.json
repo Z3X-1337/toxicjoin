@@ -1,0 +1,21 @@
+{
+  "integration": "real DataHub OSS quickstart",
+  "mcp_server": "mcp-server-datahub==0.6.0",
+  "seed": {
+    "datasets": 5,
+    "governed_schema_fields": 19,
+    "controlled_tags": 9,
+    "glossary_terms": 7,
+    "column_lineage_writes": 4
+  },
+  "mcp_flow": {
+    "read_governed_entities": true,
+    "read_schema_and_labels": true,
+    "read_upstream_lineage": true,
+    "write_decision_document": true,
+    "close_writer_process": true,
+    "fresh_process_readback": true,
+    "persisted_marker_verified": true
+  },
+  "evidence": "docs/evidence/datahub-live.md"
+}
