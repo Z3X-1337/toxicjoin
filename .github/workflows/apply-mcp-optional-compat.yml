@@ -24,8 +24,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # This workflow is temporary. It exists only to apply and validate the
-          # two-file compatibility patch before the source commit is reviewed.
+          # Temporary one-shot patch runner; source changes are committed only after
+          # the targeted lint and regression tests below succeed.
           python - <<'PY'
           from pathlib import Path
 
