@@ -1,0 +1,62 @@
+name: Diagnose Agent Registry Release
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/diagnose-agent-registry-release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-wheels:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Inspect published wheel contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/wheels wheels
+          : > artifacts/wheels/agent-registry-support.txt
+          for version in 1.6.0.15 1.6.0.16rc1 1.6.0.16rc2 1.6.0.16rc3; do
+            echo "=== $version ===" | tee -a artifacts/wheels/agent-registry-support.txt
+            rm -f wheels/*
+            if python -m pip download --quiet --no-deps --only-binary=:all: \
+              --dest wheels "acryl-datahub==$version"; then
+              wheel=$(find wheels -maxdepth 1 -name '*.whl' -print -quit)
+              python - "$wheel" <<'PY' | tee -a artifacts/wheels/agent-registry-support.txt
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          wheel = Path(sys.argv[1])
+          expected = (
+              'datahub/api/entities/agent/agent.py',
+              'datahub/api/entities/agent/agent_skill.py',
+              'datahub/api/entities/agent/api.py',
+          )
+          with zipfile.ZipFile(wheel) as archive:
+              names = set(archive.namelist())
+          for path in expected:
+              print(f"{path}: {'PRESENT' if path in names else 'ABSENT'}")
+          print(f"AGENT_REGISTRY_COMPLETE: {all(path in names for path in expected)}")
+          PY
+            else
+              echo "DOWNLOAD_FAILED" | tee -a artifacts/wheels/agent-registry-support.txt
+            fi
+          done
+
+      - name: Upload release diagnostic
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-agent-registry-release-diagnostic
+          path: artifacts/wheels/agent-registry-support.txt
+          if-no-files-found: error
+          retention-days: 7
