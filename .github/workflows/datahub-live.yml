@@ -110,6 +110,7 @@ jobs:
 
           assert spike['status'] == 'verified'
           assert spike['independent_readback_verified'] is True
+          assert spike['lineage_relationship_count'] == 3
           assert len(spike['verified_entities']) == 5
           assert 'save_document' in spike['discovered_tools']
           assert spike['decision_document_urn'].startswith('urn:li:document:')
@@ -124,6 +125,7 @@ jobs:
               'seed_report_sha256': seed['report_sha256'],
               'spike_report_sha256': spike['report_sha256'],
               'decision_document_urn': spike['decision_document_urn'],
+              'lineage_relationship_count': spike['lineage_relationship_count'],
               'independent_readback_verified': True,
           }, indent=2))
           PY
