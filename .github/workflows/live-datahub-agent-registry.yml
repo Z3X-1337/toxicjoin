@@ -30,11 +30,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Free runner disk space
-        shell: bash
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc || true
-          df -h
+      - name: Inspect runner disk space
+        run: df -h
 
       - name: Set up Python
         uses: actions/setup-python@v5
