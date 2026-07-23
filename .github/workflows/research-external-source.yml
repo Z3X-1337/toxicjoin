@@ -1,0 +1,83 @@
+name: Research External Source Acquisition
+
+on:
+  pull_request:
+    paths:
+      - "research/external_validation/**"
+      - ".github/workflows/research-external-source.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  acquire-and-fingerprint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ToxicJoin runtime dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -e .
+
+      - name: Download official UCI source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p research-artifacts/source
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output research-artifacts/source/uci-diabetes-296.zip \
+            'https://archive.ics.uci.edu/static/public/296/diabetes%2B130-us%2Bhospitals%2Bfor%2Byears%2B1999-2008.zip'
+          sha256sum research-artifacts/source/uci-diabetes-296.zip
+
+      - name: Fingerprint and build external warehouse
+        run: |
+          python research/external_validation/ingest_uci_diabetes.py \
+            --source research-artifacts/source/uci-diabetes-296.zip \
+            --database research-artifacts/source/external-validation.duckdb \
+            --report research-artifacts/source/source-fingerprint.json
+
+      - name: Assert report contains no patient rows
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('research-artifacts/source/source-fingerprint.json').read_text())
+          assert report['contains_patient_rows'] is False
+          assert report['synthetic_patient_or_encounter_records_added'] is False
+          assert report['raw_values_modified'] is False
+          assert report['row_count'] == 101766
+          assert report['table_row_counts']['raw_diabetic_data'] == 101766
+          print(json.dumps({
+              'source_archive_sha256': report['source_archive_sha256'],
+              'diabetic_data_csv_sha256': report['diabetic_data_csv_sha256'],
+              'row_count': report['row_count'],
+              'column_count': report['column_count'],
+              'distinct_patient_nbr_count': report['distinct_patient_nbr_count'],
+              'report_sha256': report['report_sha256'],
+          }, indent=2))
+          PY
+
+      - name: Remove raw external data before artifact upload
+        if: always()
+        shell: bash
+        run: |
+          rm -f research-artifacts/source/uci-diabetes-296.zip
+          rm -f research-artifacts/source/external-validation.duckdb
+
+      - name: Upload sanitized source provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-external-source-provenance
+          path: research-artifacts/source/source-fingerprint.json
+          if-no-files-found: error
+          retention-days: 30
