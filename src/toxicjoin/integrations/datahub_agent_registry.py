@@ -313,7 +313,7 @@ def _load_sdk_bindings() -> DataHubAgentRegistryBindings:
         from datahub.ingestion.graph.client import get_default_graph
     except ImportError as exc:
         raise DataHubAgentRegistryDependencyError(
-            "install the live integration with: pip install -e '.[datahub]'"
+            "install the Agent Registry preview with: pip install -e '.[agent-registry]'"
         ) from exc
 
     return DataHubAgentRegistryBindings(

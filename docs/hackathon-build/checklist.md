@@ -61,6 +61,8 @@ Wow moment: a query built from individually acceptable datasets becomes unsafe o
   Acceptance: Sanitized evidence proves SDK seed -> MCP entity/schema/lineage reads -> Decision write -> first process closed -> new MCP process -> persisted-content marker read-back; failures exit non-zero.
   Verified: `docs/evidence/datahub-live.md`, `docs/evidence/datahub-live-seed.json`, `docs/evidence/datahub-live-spike.json`, and GitHub Actions run https://github.com/Z3X-1337/toxicjoin/actions/runs/29975433969.
 
+  **Preview Agent Registry extension:** A reusable git-backed `Compositional Risk Review` Agent Skill, five MCP tool API entities, and a ToxicJoin AI Agent were independently read back from DataHub's coordinated development quickstart. This preview is isolated from the stable enforcement path and is documented in `docs/evidence/datahub-agent-registry.md`.
+
 - [x] **10. Expose API and curated scenarios**
   Spec ref: `spec.md > API contracts`
   What was built: Zero-configuration fixture startup, package-owned governed catalog, pipeline orchestration, Health, Analyze, Safe Execute, Receipt Lookup, and curated scenario endpoints; one-command Windows/Linux launchers; strict request/response models; no-cache and browser-hardening headers.

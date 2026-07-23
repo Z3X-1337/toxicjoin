@@ -213,7 +213,7 @@ def _load_bindings() -> DataHubAgentRegistryVerificationBindings:
         )
     except ImportError as exc:
         raise DataHubAgentRegistryVerificationDependencyError(
-            "install the live integration with: pip install -e '.[datahub]'"
+            "install the Agent Registry preview with: pip install -e '.[agent-registry]'"
         ) from exc
 
     return DataHubAgentRegistryVerificationBindings(
