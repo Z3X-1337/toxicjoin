@@ -43,7 +43,7 @@ jobs:
             tests/integration/test_datahub_spike.py \
             -q
 
-      - name: Commit and push verified files
+      - name: Commit and push verified code and tests
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
@@ -53,7 +53,6 @@ jobs:
             src/toxicjoin/context/datahub.py \
             src/toxicjoin/integrations/datahub_spike.py \
             tests/unit/test_datahub_mcp.py \
-            tests/unit/test_datahub_context.py \
-            .github/workflows/datahub-live.yml
+            tests/unit/test_datahub_context.py
           git commit -m "Normalize official DataHub MCP lineage results"
           git push origin HEAD:agent/live-datahub-proof
