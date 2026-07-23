@@ -56,18 +56,19 @@ jobs:
           print('Agent Registry SDK verified:', installed, Agent, AgentSkill, Api)
           PY
 
-      - name: Start DataHub OSS quickstart
+      - name: Start coordinated DataHub development quickstart
         shell: bash
         run: |
           set -euo pipefail
-          datahub docker quickstart
+          mkdir -p .toxicjoin
+          datahub docker quickstart --version quickstart --accept-version-default
           curl --fail --silent --show-error http://localhost:8080/health
+          docker ps --format '{{.Image}}' | sort -u | tee .toxicjoin/datahub-agent-registry-images.txt
 
       - name: Seed governed ToxicJoin datasets
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p .toxicjoin
           toxicjoin-datahub-seed \
             --yes \
             --output .toxicjoin/datahub-seed.json
@@ -176,6 +177,7 @@ jobs:
 
           print(json.dumps({
               'sdk_version': '1.6.0.16rc3',
+              'server_channel': 'quickstart',
               'agent_urn': registration.agent_urn,
               'skill_urn': registration.skill_urn,
               'tool_count': registration.tool_count,
@@ -195,5 +197,6 @@ jobs:
             .toxicjoin/datahub-agent-registry-verified.json
             .toxicjoin/datahub-agent-registry.log
             .toxicjoin/datahub-agent-registry-verify.log
+            .toxicjoin/datahub-agent-registry-images.txt
           if-no-files-found: warn
           retention-days: 30
