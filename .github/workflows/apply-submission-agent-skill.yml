@@ -1,5 +1,6 @@
 name: Apply Submission Agent Skill Update
 
+# Temporary review-only workflow; remove after the packet is updated.
 on:
   push:
     branches: [agent/submission-packet]
