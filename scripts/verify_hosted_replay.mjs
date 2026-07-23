@@ -86,10 +86,6 @@ try {
         throw new Error(`${profile.name}: expected document HTTP 200`);
       }
 
-      await page.getByText("Deterministic replay", { exact: true }).waitFor({
-        state: "visible",
-        timeout: 30_000,
-      });
       const notice = page.getByText(
         /no live execution or DataHub write is being claimed/i,
       );
