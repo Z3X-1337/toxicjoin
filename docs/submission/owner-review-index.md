@@ -12,12 +12,12 @@ Use this page as the entry point for the final owner review. A gate marked **Pen
 | Core CI | Ready; recheck exact final commit | GitHub Actions on `main` |
 | 30-query benchmark | Ready | `docs/evidence/benchmark.md` and `docs/evidence/benchmark.json` |
 | Judge interface | Ready locally and in Docker | `apps/web/` and production container |
-| Hosted replay | Pending public HTTP verification | `[PENDING_VERIFIED_PAGES_URL]` |
-| Live DataHub proof | Pending final green evidence Artifact | `[PENDING_VERIFIED_EVIDENCE_LINK]` |
+| Hosted replay | Pending public HTTP and Chromium verification | `[PENDING_VERIFIED_PAGES_URL]` |
+| Live DataHub proof | Ready | https://github.com/Z3X-1337/toxicjoin/blob/main/docs/evidence/datahub-live.md |
 | Devpost cover | Ready for visual approval | Real ToxicJoin interface-derived 1200×630 image |
 | Microsoft narration | Specification ready; WAV pending | `microsoft-voice-production.md` |
 | Final demo video | Pending Microsoft WAV and final live captures | `demo-video.md` |
-| Devpost text | Draft ready; placeholders remain | `devpost-draft.md` |
+| Devpost text | Draft ready; replay/video placeholders remain | `devpost-draft.md` |
 | Final submission | Locked | Requires explicit owner approval |
 
 ## Review order
@@ -63,17 +63,29 @@ Do not reinterpret these values as universal privacy-detection accuracy.
 
 ### 3. Live DataHub proof
 
-Review the final committed or linked sanitized evidence only after the live workflow is green. Required values:
+Review the committed sanitized evidence:
+
+- `docs/evidence/datahub-live.md`
+- `docs/evidence/datahub-live-seed.json`
+- `docs/evidence/datahub-live-spike.json`
+- GitHub Actions run: https://github.com/Z3X-1337/toxicjoin/actions/runs/29975433969
+
+Verified values:
 
 - five datasets;
 - nineteen governed fields;
+- nine controlled tags;
+- seven glossary terms;
 - four lineage writes from the SDK seed;
 - three upstream relationships read through MCP for the flagship column;
 - official MCP tool discovery and contract validation;
 - DataHub Decision document URN;
 - first MCP process closed;
-- fresh MCP process finds the unique marker inside persisted document content;
-- no token, password, local endpoint, raw row, or unrelated secret in retained evidence.
+- fresh MCP process found the unique marker inside persisted document content through `grep_documents`;
+- no token value, password, local endpoint, raw row, local path, or unrelated secret in retained evidence;
+- both persisted JSON reports have reproducible `report_sha256` values.
+
+The proof used a real ephemeral DataHub OSS deployment inside GitHub Actions. It does not claim that the hosted static Replay is a live DataHub session or that the temporary DataHub environment remains publicly available.
 
 ### 4. Public experience
 
