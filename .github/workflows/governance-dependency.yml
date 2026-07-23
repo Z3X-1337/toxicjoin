@@ -1,0 +1,42 @@
+name: Governance Dependency Evidence
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: governance-dependency-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  governance-dependency:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ToxicJoin
+        run: python -m pip install --upgrade pip && python -m pip install -e '.[dev]'
+
+      - name: Run governance dependency gate
+        run: toxicjoin-governance-proof --output-dir artifacts/governance-dependency
+
+      - name: Upload governance dependency evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-governance-dependency
+          path: artifacts/governance-dependency/
+          if-no-files-found: error
+          retention-days: 30
