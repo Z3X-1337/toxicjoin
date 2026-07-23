@@ -1,6 +1,9 @@
 import { defineConfig } from "vitest/config";
 
+const publicBase = process.env.TOXICJOIN_WEB_BASE?.trim() || "/";
+
 export default defineConfig({
+  base: publicBase,
   server: {
     port: 5173,
     strictPort: true,

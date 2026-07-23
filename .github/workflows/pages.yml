@@ -1,0 +1,79 @@
+name: Hosted Replay
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/pages.yml"
+  pull_request:
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.16.0"
+
+      - name: Install pinned frontend dependencies
+        working-directory: apps/web
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck and test hosted replay
+        working-directory: apps/web
+        run: npm run typecheck && npm run test
+
+      - name: Build hosted replay for repository subpath
+        working-directory: apps/web
+        env:
+          TOXICJOIN_WEB_BASE: /toxicjoin/
+        run: npm run build
+
+      - name: Verify replay disclosure and static asset paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q '/toxicjoin/assets/' apps/web/dist/index.html
+          test -f apps/web/dist/index.html
+          test -n "$(find apps/web/dist/assets -type f -name '*.js' -print -quit)"
+          test -n "$(find apps/web/dist/assets -type f -name '*.css' -print -quit)"
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: apps/web/dist
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Configure and enable GitHub Pages
+        uses: actions/configure-pages@v6
+
+      - name: Deploy hosted replay
+        id: deployment
+        uses: actions/deploy-pages@v4
