@@ -23,8 +23,11 @@ jobs:
       - name: Install package and development tools
         run: python -m pip install --upgrade pip && python -m pip install -e '.[dev]'
 
-      - name: Capture Ruff version
-        run: ruff --version | tee ruff-version.txt
+      - name: Capture Ruff version and settings
+        shell: bash
+        run: |
+          ruff --version | tee ruff-version.txt
+          ruff check --show-settings src/toxicjoin/api/app.py > ruff-settings.txt
 
       - name: Capture Ruff diagnostics
         shell: bash
@@ -40,6 +43,7 @@ jobs:
           name: ruff-diagnostic
           path: |
             ruff-version.txt
+            ruff-settings.txt
             ruff.log
             ruff-exit-code.txt
           if-no-files-found: error
