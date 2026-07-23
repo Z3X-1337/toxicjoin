@@ -163,6 +163,9 @@ async function loginIfNeeded() {
 
 async function findSearchBox() {
   const candidates = [
+    page.locator('input[data-testid="search-input"]'),
+    page.locator('[data-testid="search-bar"] input'),
+    page.locator('input[placeholder^="Find " i]'),
     page.locator('input[placeholder*="Search" i]'),
     page.getByRole("textbox", { name: /search/i }),
     page.locator('input[type="search"]'),
