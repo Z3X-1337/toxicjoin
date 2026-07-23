@@ -12,6 +12,28 @@ Individually acceptable datasets can become sensitive when an agent joins them. 
 
 Every path creates a hashed decision receipt. Receipts contain metadata and verification evidence, but never raw result rows.
 
+## Judge in 90 seconds
+
+Start here if you are evaluating ToxicJoin:
+
+1. **See the product immediately:** [open the verified deterministic Replay](https://toxicjoin-replay.vercel.app/). It is explicitly labeled Replay and is not presented as live DuckDB or live DataHub execution.
+2. **Inspect the three core outcomes:** [judge-facing sample outputs](examples/README.md) cover the flagship `REWRITE → ALLOW`, fail-closed `BLOCK`, low-risk `ALLOW`, and DataHub Decision write-back.
+3. **Run the executable path:** follow the [90-second judge testing guide](docs/judge-testing.md).
+4. **Check measured safety evidence:** [30-case benchmark](docs/evidence/benchmark.md) and [machine-readable summary](docs/evidence/benchmark-summary.json).
+5. **Verify real DataHub use:** inspect the [DataHub OSS SDK/MCP read → write → fresh-process read-back evidence](docs/evidence/datahub-live.md).
+
+The shortest proof chain is:
+
+```text
+proposed SQL
+  -> DataHub-governed context
+  -> deterministic ALLOW / REWRITE / BLOCK
+  -> safe execution only after effective ALLOW
+  -> independent verification
+  -> sanitized content-hashed receipt
+  -> DataHub Decision write-back + fresh-process read-back
+```
+
 ## Public judge replay
 
 Open the verified deterministic Replay:
