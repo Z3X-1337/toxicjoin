@@ -1,17 +1,17 @@
 name: Apply Capture Authorization Verifier
 
 on:
-  push:
-    branches: [agent/video-captures]
+  pull_request:
+    branches: [main]
     paths:
       - ".github/workflows/apply-capture-auth-verifier.yml"
-  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   patch:
+    if: github.head_ref == 'agent/video-captures'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
