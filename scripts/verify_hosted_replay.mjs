@@ -139,18 +139,19 @@ try {
         screenshot,
       });
 
+      const renderedText = bodyText.toUpperCase();
       for (const required of [
-        "ToxicJoin",
-        "Initial policy",
+        "TOXICJOIN",
+        "INITIAL POLICY",
         "REWRITE",
-        "After remediation",
+        "AFTER REMEDIATION",
         "ALLOW",
         "30",
-        "False allows",
+        "FALSE ALLOWS",
         "0",
       ]) {
-        if (!bodyText.includes(required)) {
-          throw new Error(`${profile.name}: missing required text ${required}`);
+        if (!renderedText.includes(required)) {
+          throw new Error(`${profile.name}: missing required rendered text ${required}`);
         }
       }
 
