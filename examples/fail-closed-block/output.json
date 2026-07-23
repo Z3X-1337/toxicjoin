@@ -1,0 +1,13 @@
+{
+  "scenario_id": "block-sensitive-export",
+  "initial_decision": "BLOCK",
+  "effective_decision": "BLOCK",
+  "reason": "COMPOSITIONAL_REIDENTIFICATION_RISK",
+  "verification": null,
+  "database_called": false,
+  "receipt_execution": null,
+  "evidence": [
+    "docs/judge-testing.md",
+    "docs/evidence/benchmark.md"
+  ]
+}
