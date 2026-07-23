@@ -5,7 +5,8 @@ built-in Admin role directly through local GMS. It then replaces only the browse
 authorization function so Chrome becomes read-only: the session proves that the
 role assignment propagated and that DataHub grants both MANAGE_POLICIES and
 VIEW_ENTITY_PAGE before recording any entity page. The same runtime patch also
-normalizes the DataHub tab label used by this pinned UI version (`Columns`).
+normalizes the DataHub tab label used by this pinned UI version (`Columns`) and
+dismisses the first-run Reactour overlay before screenshots are recorded.
 
 This file exists only on the capture-only PR and is not intended to merge into main.
 """
@@ -101,6 +102,18 @@ REPLACEMENT = r'''async function prepareCaptureAuthorization() {
 '''
 
 
+TOUR_DISMISS_HELPER = r'''async function dismissTransientDataHubTour() {
+  const tourClose = page.locator("button.reactour__close").first();
+  if (await tourClose.isVisible({ timeout: 2_000 }).catch(() => false)) {
+    await tourClose.click();
+    await tourClose.waitFor({ state: "hidden", timeout: 5_000 }).catch(() => {});
+    await sleep(500);
+  }
+}
+
+'''
+
+
 def assign_capture_admin_role() -> None:
     """Assign only the local quickstart root user to DataHub's built-in Admin role."""
 
@@ -139,6 +152,23 @@ def patch_browser_verifier() -> None:
 
     patched = text[:start] + REPLACEMENT + text[end:]
 
+    capture_marker = "async function captureCurrent(name, expectedText, routeMode = null) {"
+    capture_wait = (
+        "  const matchedText = await waitForAnyText(expectedText, 45_000);\n"
+        "  await sleep(1_600);"
+    )
+    capture_wait_compat = (
+        "  const matchedText = await waitForAnyText(expectedText, 45_000);\n"
+        "  await dismissTransientDataHubTour();\n"
+        "  await sleep(1_600);"
+    )
+    if capture_marker not in patched:
+        raise RuntimeError("capture script no longer contains captureCurrent")
+    if capture_wait not in patched:
+        raise RuntimeError("capture script no longer contains the expected capture timing block")
+    patched = patched.replace(capture_marker, TOUR_DISMISS_HELPER + capture_marker, 1)
+    patched = patched.replace(capture_wait, capture_wait_compat, 1)
+
     schema_click = 'await clickEntityTab("schema-tab", "Schema");'
     schema_click_compat = 'await clickEntityTab("schema-tab", "Columns");'
     schema_expectation = '["churn_score", "customer_id", "Schema"],'
@@ -156,6 +186,8 @@ def patch_browser_verifier() -> None:
         raise RuntimeError("runtime capture patch did not install the Admin-role verifier")
     if 'role_urn: adminRoleUrn' not in patched:
         raise RuntimeError("runtime capture patch did not retain Admin role evidence")
+    if "dismissTransientDataHubTour" not in patched:
+        raise RuntimeError("runtime capture patch did not install tour dismissal")
     if schema_click_compat not in patched or schema_expectation_compat not in patched:
         raise RuntimeError("runtime capture patch did not install the Columns-tab compatibility fix")
 
