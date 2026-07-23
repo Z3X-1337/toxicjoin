@@ -6,13 +6,17 @@ on:
     paths:
       - ".github/workflows/capture-datahub-video-evidence.yml"
       - "scripts/capture_datahub_video_evidence.mjs"
+  pull_request:
+    paths:
+      - ".github/workflows/capture-datahub-video-evidence.yml"
+      - "scripts/capture_datahub_video_evidence.mjs"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: datahub-video-captures-${{ github.ref }}
+  group: datahub-video-captures-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
