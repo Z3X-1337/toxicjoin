@@ -1,14 +1,13 @@
-"""Prepare DataHub authorization for the ephemeral video-capture environment.
+"""Prepare DataHub authorization and a clean video-capture browser state.
 
 The capture-only branch assigns the local quickstart `datahub` user to DataHub's
-built-in Admin role directly through local GMS. It then replaces only the browser
-authorization function so Chrome becomes read-only: the session proves that the
-role assignment propagated and that DataHub grants both MANAGE_POLICIES and
-VIEW_ENTITY_PAGE before recording any entity page. The same runtime patch also
-normalizes the DataHub tab label used by this pinned UI version (`Columns`) and
-dismisses the first-run Reactour overlay before screenshots are recorded.
+built-in Admin role directly through local GMS. It then patches the browser harness
+so the bootstrap session proves MANAGE_POLICIES and VIEW_ENTITY_PAGE, dismisses
+DataHub onboarding tours, and transfers clean browser state into a second context
+that starts Playwright video recording only after setup is complete.
 
-This file exists only on the capture-only PR and is not intended to merge into main.
+The same runtime patch normalizes the pinned DataHub UI label (`Columns`). This
+file exists only on the capture-only PR and is not intended to merge into main.
 """
 
 from __future__ import annotations
@@ -28,7 +27,7 @@ ACTOR_URN = "urn:li:corpuser:datahub"
 ADMIN_ROLE_URN = "urn:li:dataHubRole:Admin"
 
 
-REPLACEMENT = r'''async function prepareCaptureAuthorization() {
+AUTH_REPLACEMENT = r'''async function prepareCaptureAuthorization() {
   const expectedActorUrn = "urn:li:corpuser:datahub";
   const adminRoleUrn = "urn:li:dataHubRole:Admin";
   let username = null;
@@ -102,15 +101,143 @@ REPLACEMENT = r'''async function prepareCaptureAuthorization() {
 '''
 
 
-TOUR_DISMISS_HELPER = r'''async function dismissTransientDataHubTour() {
-  const tourClose = page.locator("button.reactour__close").first();
-  if (await tourClose.isVisible({ timeout: 2_000 }).catch(() => false)) {
+TOUR_DISMISS_HELPER = r'''async function dismissTransientDataHubTour(maxPasses = 8) {
+  for (let pass = 0; pass < maxPasses; pass += 1) {
+    const tourClose = page.locator("button.reactour__close").first();
+    const visible = await tourClose.isVisible({ timeout: 1_500 }).catch(() => false);
+    if (!visible) return;
     await tourClose.click();
-    await tourClose.waitFor({ state: "hidden", timeout: 5_000 }).catch(() => {});
-    await sleep(500);
+    await sleep(450);
+  }
+
+  const stillVisible = await page
+    .locator("button.reactour__close")
+    .first()
+    .isVisible({ timeout: 750 })
+    .catch(() => false);
+  if (stillVisible) {
+    throw new Error("DataHub onboarding tour remained visible after dismissal passes");
   }
 }
 
+'''
+
+
+CLEAN_RECORDING_HELPERS = r'''async function prepareCleanRecordingState() {
+  const bootstrapContext = await browser.newContext(browserContextOptions);
+  try {
+    page = await bootstrapContext.newPage();
+    await loginAsQuickstartAdmin();
+    await dismissTransientDataHubTour();
+    await prepareCaptureAuthorization();
+
+    await navigateEntity("dataset", datasetUrn);
+    await waitForAnyText(
+      ["retention_scores", "retention scores", "Retention Scores"],
+      45_000,
+    );
+    await dismissTransientDataHubTour();
+    await sleep(800);
+
+    const storageState = await bootstrapContext.storageState();
+    const sessionStorageState = await page.evaluate(() =>
+      Object.fromEntries(
+        Array.from({ length: sessionStorage.length }, (_, index) => {
+          const key = sessionStorage.key(index);
+          return [key, key === null ? null : sessionStorage.getItem(key)];
+        }).filter(([key]) => key !== null),
+      ),
+    );
+    return { storageState, sessionStorageState };
+  } finally {
+    if (page) await page.close().catch(() => {});
+    page = null;
+    await bootstrapContext.close().catch(() => {});
+  }
+}
+
+async function startCleanRecordingContext(cleanState) {
+  context = await browser.newContext({
+    ...browserContextOptions,
+    storageState: cleanState.storageState,
+    recordVideo: {
+      dir: videoDirectory,
+      size: { width: 1920, height: 1080 },
+    },
+  });
+  await context.addInitScript((values) => {
+    for (const [key, value] of Object.entries(values)) {
+      if (value !== null) window.sessionStorage.setItem(key, value);
+    }
+  }, cleanState.sessionStorageState);
+
+  page = await context.newPage();
+  video = page.video();
+  attachRecordingDiagnostics();
+}
+
+'''
+
+
+CONTEXT_REPLACEMENT = r'''const browserContextOptions = {
+  viewport: { width: 1920, height: 1080 },
+  screen: { width: 1920, height: 1080 },
+  deviceScaleFactor: 1,
+  reducedMotion: "reduce",
+};
+
+let context = null;
+let page = null;
+let video = null;
+const pageErrors = [];
+const consoleErrors = [];
+const failedRequests = [];
+const captured = [];
+let authorizationEvidence = null;
+
+function attachRecordingDiagnostics() {
+  page.on("pageerror", (error) => pageErrors.push(String(error)));
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  page.on("requestfailed", (request) => {
+    failedRequests.push({
+      url: request.url(),
+      error: request.failure()?.errorText ?? "unknown",
+    });
+  });
+}
+'''
+
+
+CONTEXT_ORIGINAL = r'''const context = await browser.newContext({
+  viewport: { width: 1920, height: 1080 },
+  screen: { width: 1920, height: 1080 },
+  deviceScaleFactor: 1,
+  reducedMotion: "reduce",
+  recordVideo: {
+    dir: videoDirectory,
+    size: { width: 1920, height: 1080 },
+  },
+});
+
+const page = await context.newPage();
+const video = page.video();
+const pageErrors = [];
+const consoleErrors = [];
+const failedRequests = [];
+const captured = [];
+let authorizationEvidence = null;
+page.on("pageerror", (error) => pageErrors.push(String(error)));
+page.on("console", (message) => {
+  if (message.type() === "error") consoleErrors.push(message.text());
+});
+page.on("requestfailed", (request) => {
+  failedRequests.push({
+    url: request.url(),
+    error: request.failure()?.errorText ?? "unknown",
+  });
+});
 '''
 
 
@@ -150,7 +277,11 @@ def patch_browser_verifier() -> None:
     start = text.index(start_marker)
     end = text.index(end_marker, start)
 
-    patched = text[:start] + REPLACEMENT + text[end:]
+    patched = text[:start] + AUTH_REPLACEMENT + text[end:]
+
+    if CONTEXT_ORIGINAL not in patched:
+        raise RuntimeError("capture script browser context block changed unexpectedly")
+    patched = patched.replace(CONTEXT_ORIGINAL, CONTEXT_REPLACEMENT, 1)
 
     capture_marker = "async function captureCurrent(name, expectedText, routeMode = null) {"
     capture_wait = (
@@ -180,12 +311,51 @@ def patch_browser_verifier() -> None:
     patched = patched.replace(schema_click, schema_click_compat, 1)
     patched = patched.replace(schema_expectation, schema_expectation_compat, 1)
 
+    try_marker = """try {
+  await loginAsQuickstartAdmin();
+  await prepareCaptureAuthorization();
+
+  await captureEntity("""
+    try_replacement = """try {
+  const cleanState = await prepareCleanRecordingState();
+  await startCleanRecordingContext(cleanState);
+
+  await captureEntity("""
+    if try_marker not in patched:
+        raise RuntimeError("capture script startup sequence changed unexpectedly")
+    patched = patched.replace(try_marker, try_replacement, 1)
+
+    finally_original = """} finally {
+  await page.close().catch(() => {});
+  await context.close().catch(() => {});
+  await browser.close().catch(() => {});
+}"""
+    finally_replacement = """} finally {
+  if (page) await page.close().catch(() => {});
+  if (context) await context.close().catch(() => {});
+  await browser.close().catch(() => {});
+}"""
+    if finally_original not in patched:
+        raise RuntimeError("capture script cleanup sequence changed unexpectedly")
+    patched = patched.replace(finally_original, finally_replacement, 1)
+
+    capture_error_marker = "let captureError = null;"
+    if capture_error_marker not in patched:
+        raise RuntimeError("capture script no longer contains capture error marker")
+    patched = patched.replace(
+        capture_error_marker,
+        CLEAN_RECORDING_HELPERS + capture_error_marker,
+        1,
+    )
+
     if "CaptureEnableViewEntity" in patched:
         raise RuntimeError("runtime capture patch left a UI policy mutation behind")
     if 'assignment_source: "direct-gms-admin-role-capture-only"' not in patched:
         raise RuntimeError("runtime capture patch did not install the Admin-role verifier")
     if 'role_urn: adminRoleUrn' not in patched:
         raise RuntimeError("runtime capture patch did not retain Admin role evidence")
+    if "prepareCleanRecordingState" not in patched:
+        raise RuntimeError("runtime capture patch did not isolate bootstrap from recording")
     if "dismissTransientDataHubTour" not in patched:
         raise RuntimeError("runtime capture patch did not install tour dismissal")
     if schema_click_compat not in patched or schema_expectation_compat not in patched:
