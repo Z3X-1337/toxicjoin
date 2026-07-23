@@ -1,0 +1,8 @@
+{
+  "schema_version": "1.0",
+  "experiment": "external-validation-01",
+  "manifest_path": "research/external_validation/blind_tasks.json",
+  "manifest_git_blob_sha": "c2dba7ad2e1ed319bbbd73e1336b6f56a754fecf",
+  "manifest_creation_commit": "1cfbb2a90c1ab0f36dc7a85d1b2461bb73314dd5",
+  "commitment_rule": "The manifest above is frozen before any measured ToxicJoin execution on the selected external dataset. Any later task changes must create a new manifest version and be labeled exploratory or regression-only; they must not replace the preregistered primary set."
+}
