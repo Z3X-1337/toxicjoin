@@ -1,6 +1,10 @@
 name: Diagnose Agent Registry Release
 
 on:
+  push:
+    branches: [agent/datahub-agent-skill]
+    paths:
+      - ".github/workflows/diagnose-agent-registry-release.yml"
   pull_request:
     paths:
       - ".github/workflows/diagnose-agent-registry-release.yml"
