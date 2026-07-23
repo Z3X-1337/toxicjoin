@@ -29,23 +29,23 @@ Task + SQL
   -> FastAPI response and receipt lookup
 ```
 
-The DataHub integration boundary is also implemented and tested:
+The DataHub integration also passed a real DataHub OSS evidence gate:
 
 ```text
 DataHub SDK seed
-  -> five datasets + 19 fields
-  -> tags + glossary terms
-  -> four column-lineage relationships
+  -> five datasets + 19 governed fields
+  -> nine tags + seven glossary terms
+  -> four column-lineage writes
   -> official MCP tool discovery and contract validation
-  -> entity/schema/lineage reads
-  -> Decision document write
+  -> entity/schema reads + three upstream lineage relationships
+  -> DataHub Decision document write
   -> first MCP process closed
   -> fresh MCP process
-  -> Decision read-back marker verification
-  -> sanitized evidence report
+  -> persisted-content marker verification through grep_documents
+  -> sanitized self-verifying evidence reports
 ```
 
-The repository tests this complete protocol with deterministic fake SDK/MCP transports on Python 3.11 and 3.12. A real live report is intentionally not claimed until the final DataHub environment is started and the read/write/read-back command succeeds.
+Evidence from GitHub Actions run `29975433969` is committed in [docs/evidence/datahub-live.md](docs/evidence/datahub-live.md), [datahub-live-seed.json](docs/evidence/datahub-live-seed.json), and [datahub-live-spike.json](docs/evidence/datahub-live-spike.json). Both report hashes are reproducible from their persisted JSON, and the retained evidence contains no token value, password, local endpoint, raw warehouse row, or application secret.
 
 ## Measured benchmark
 
@@ -192,7 +192,7 @@ The synthetic warehouse deliberately contains:
 - DataHub write verification occurs from a new MCP process, not an in-memory write result.
 - CI fails on any benchmark false allow or unsafe effective allow.
 
-See [SECURITY.md](SECURITY.md), [docs/threat-model.md](docs/threat-model.md), [docs/datahub-live-integration.md](docs/datahub-live-integration.md), and [docs/judge-testing.md](docs/judge-testing.md).
+See [SECURITY.md](SECURITY.md), [docs/threat-model.md](docs/threat-model.md), [docs/datahub-live-integration.md](docs/datahub-live-integration.md), [docs/evidence/datahub-live.md](docs/evidence/datahub-live.md), and [docs/judge-testing.md](docs/judge-testing.md).
 
 ## Deterministic scenarios
 
@@ -226,6 +226,7 @@ pytest tests/unit/test_datahub_mcp.py -q
 pytest tests/unit/test_datahub_context.py -q
 pytest tests/unit/test_datahub_settings.py -q
 pytest tests/unit/test_datahub_seed.py -q
+pytest tests/unit/test_datahub_report_hashes.py -q
 pytest tests/integration/test_safe_execution.py -q
 pytest tests/integration/test_pipeline.py -q
 pytest tests/integration/test_api.py -q
@@ -252,7 +253,7 @@ src/toxicjoin/
 
 config/           DataHub asset manifest and policy configuration
 demo/fixtures/    human-readable metadata fixture mirrored by tests
-docs/evidence/    generated benchmark evidence and hashes
+docs/evidence/    generated benchmark and live DataHub evidence with reproducible hashes
 tests/            unit, integration, adversarial, API, MCP, and benchmark coverage
 docs/             scope, PRD, spec, threat model, live guide, judge guide, and evidence
 ```
@@ -261,7 +262,7 @@ docs/             scope, PRD, spec, threat model, live guide, judge guide, and e
 
 The first rewrite supports an already-grouped analytical query that requires a stronger subject-count threshold. ToxicJoin does not yet claim general SQL repair, automatic identifier removal, location coarsening, differential privacy, or individual-to-grouped query synthesis. Unsupported transformations fail closed.
 
-Fixture metadata proves deterministic behavior and judge accessibility. The MCP adapter, seed plan, and two-session verification protocol are tested, but final live evidence must come from the actual demo DataHub environment and must not be fabricated or inferred from mocks.
+Fixture metadata provides deterministic judge accessibility. Separately, the committed live evidence proves the SDK seed and MCP read/write/fresh-process-read-back protocol against an ephemeral DataHub OSS deployment in GitHub Actions. It does not claim that the public static Replay is a live DataHub session or that a permanent public DataHub environment is hosted.
 
 The benchmark measures the declared supported corpus. Real organizations must validate their own schemas, classifications, subject keys, policies, and workloads.
 
