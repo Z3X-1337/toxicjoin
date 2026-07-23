@@ -75,18 +75,26 @@ jobs:
       - name: Register MCP tools, Agent Skill, and AI Agent
         shell: bash
         run: |
-          set -euo pipefail
+          set +e
           toxicjoin-datahub-agent-registry \
             --yes \
-            --output .toxicjoin/datahub-agent-registry.json
+            --output .toxicjoin/datahub-agent-registry.json \
+            > .toxicjoin/datahub-agent-registry.log 2>&1
+          status=$?
+          cat .toxicjoin/datahub-agent-registry.log
+          exit "$status"
 
       - name: Verify persisted Agent Registry from a fresh graph client
         shell: bash
         run: |
-          set -euo pipefail
+          set +e
           toxicjoin-datahub-agent-registry-verify \
             --registry-report .toxicjoin/datahub-agent-registry.json \
-            --output .toxicjoin/datahub-agent-registry-verified.json
+            --output .toxicjoin/datahub-agent-registry-verified.json \
+            > .toxicjoin/datahub-agent-registry-verify.log 2>&1
+          status=$?
+          cat .toxicjoin/datahub-agent-registry-verify.log
+          exit "$status"
 
       - name: Enforce Agent Registry evidence gates
         shell: bash
@@ -155,7 +163,7 @@ jobs:
           }, indent=2))
           PY
 
-      - name: Upload Agent Registry evidence
+      - name: Upload Agent Registry evidence and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -163,5 +171,7 @@ jobs:
           path: |
             .toxicjoin/datahub-agent-registry.json
             .toxicjoin/datahub-agent-registry-verified.json
+            .toxicjoin/datahub-agent-registry.log
+            .toxicjoin/datahub-agent-registry-verify.log
           if-no-files-found: warn
           retention-days: 30
