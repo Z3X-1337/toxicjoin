@@ -1,0 +1,22 @@
+{
+  "agent_urn": "urn:li:aiAgent:toxicjoin-privacy-firewall-agent",
+  "consumed_dataset_count": 5,
+  "created_at": "2026-07-23T13:22:51.268960Z",
+  "dependency_skill_count": 1,
+  "dependency_tool_count": 5,
+  "report_sha256": "cde7e273dd740910dd37e9e0ffd8615fb8b051070db1adf8257e7070d8f0ec93",
+  "required_tool_count": 5,
+  "schema_version": "1.0",
+  "skill_urn": "urn:li:agentSkill:toxicjoin-compositional-risk-review",
+  "source_repository_url": "https://github.com/Z3X-1337/toxicjoin",
+  "source_skill_path": "skills/compositional-risk-review/SKILL.md",
+  "status": "verified",
+  "tool_count": 5,
+  "tool_urns": [
+    "urn:li:api:toxicjoin-datahub-mcp-get-entities",
+    "urn:li:api:toxicjoin-datahub-mcp-get-lineage",
+    "urn:li:api:toxicjoin-datahub-mcp-grep-documents",
+    "urn:li:api:toxicjoin-datahub-mcp-list-schema-fields",
+    "urn:li:api:toxicjoin-datahub-mcp-save-document"
+  ]
+}

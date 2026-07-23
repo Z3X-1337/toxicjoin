@@ -57,6 +57,21 @@ DataHub SDK seed
 
 Evidence from GitHub Actions run `29975433969` is committed in [docs/evidence/datahub-live.md](docs/evidence/datahub-live.md), [datahub-live-seed.json](docs/evidence/datahub-live-seed.json), and [datahub-live-spike.json](docs/evidence/datahub-live-spike.json). Both report hashes are reproducible from their persisted JSON, and the retained evidence contains no token value, password, local endpoint, raw warehouse row, or application secret.
 
+### Reusable DataHub Agent Skill — preview evidence
+
+ToxicJoin also publishes a git-backed [Compositional Risk Review Agent Skill](skills/compositional-risk-review/SKILL.md). In a separate preview-only proof, DataHub's Agent Registry modeled the project as:
+
+```text
+ToxicJoin Privacy Firewall Agent
+  -> Compositional Risk Review Agent Skill
+  -> five DataHub MCP tool API entities
+  -> five governed ToxicJoin datasets
+```
+
+A fresh DataHub graph client independently read back the skill source repository/path, all five required tools, the Agent→Skill and Agent→Tool dependencies, and all five consumed-dataset lineage relationships. Evidence is committed in [docs/evidence/datahub-agent-registry.md](docs/evidence/datahub-agent-registry.md).
+
+This is deliberately isolated from the core enforcement path. The proof uses `acryl-datahub==1.6.0.16rc3` and DataHub's documented `quickstart` development channel because Agent Registry helpers were not present in the stable `1.6.0.15` wheel. ToxicJoin's stable SDK/MCP evidence and deterministic enforcement remain independent of this preview capability.
+
 ## Measured benchmark
 
 GitHub Actions runs a balanced 30-query regression corpus through the real pipeline and uploads the complete JSON and Markdown reports.

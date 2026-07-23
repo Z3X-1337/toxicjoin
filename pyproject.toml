@@ -18,12 +18,17 @@ toxicjoin-api = "toxicjoin.cli:run_api"
 toxicjoin-seed = "toxicjoin.demo.seed:main"
 toxicjoin-datahub-seed = "toxicjoin.integrations.datahub_seed:main"
 toxicjoin-datahub-spike = "toxicjoin.integrations.datahub_spike:main"
+toxicjoin-datahub-agent-registry = "toxicjoin.integrations.datahub_agent_registry:main"
+toxicjoin-datahub-agent-registry-verify = "toxicjoin.integrations.datahub_agent_registry_verify:main"
 toxicjoin-benchmark = "toxicjoin.benchmark.runner:main"
 
 [project.optional-dependencies]
 datahub = [
   "mcp>=1.27,<2",
   "acryl-datahub==1.6.0.15",
+]
+agent-registry = [
+  "acryl-datahub==1.6.0.16rc3",
 ]
 dev = [
   "pytest>=8,<9",

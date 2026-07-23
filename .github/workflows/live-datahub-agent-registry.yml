@@ -1,0 +1,202 @@
+name: Live DataHub Agent Registry
+
+on:
+  pull_request:
+    paths:
+      - "skills/compositional-risk-review/**"
+      - "src/toxicjoin/integrations/datahub_agent_registry.py"
+      - "src/toxicjoin/integrations/datahub_agent_registry_verify.py"
+      - "tests/unit/test_datahub_agent_registry.py"
+      - "tests/unit/test_datahub_agent_registry_verify.py"
+      - "pyproject.toml"
+      - ".github/workflows/live-datahub-agent-registry.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-datahub-agent-registry-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-agent-registry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATAHUB_GMS_URL: http://localhost:8080
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Inspect runner disk space
+        run: df -h
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install isolated Agent Registry SDK dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet --upgrade pip wheel setuptools
+          python -m pip install --quiet -e '.[agent-registry]'
+          python - <<'PY'
+          from importlib.metadata import version
+          from datahub.api.entities.agent.agent import Agent
+          from datahub.api.entities.agent.agent_skill import AgentSkill
+          from datahub.api.entities.agent.api import Api
+
+          installed = version('acryl-datahub')
+          assert installed == '1.6.0.16rc3', installed
+          print('Agent Registry SDK verified:', installed, Agent, AgentSkill, Api)
+          PY
+
+      - name: Start coordinated DataHub development quickstart
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .toxicjoin
+          datahub docker quickstart --version quickstart --accept-version-default
+          curl --fail --silent --show-error http://localhost:8080/health
+          docker ps --format '{{.Image}}' | sort -u | tee .toxicjoin/datahub-agent-registry-images.txt
+
+      - name: Seed governed ToxicJoin datasets
+        shell: bash
+        run: |
+          set -euo pipefail
+          toxicjoin-datahub-seed \
+            --yes \
+            --output .toxicjoin/datahub-seed.json
+
+      - name: Register MCP tools, Agent Skill, and AI Agent
+        shell: bash
+        run: |
+          set +e
+          python - <<'PY' > .toxicjoin/datahub-agent-registry.log 2>&1
+          import traceback
+          from toxicjoin.integrations.datahub_agent_registry import register_datahub_agent_registry
+
+          try:
+              report = register_datahub_agent_registry(
+                  output='.toxicjoin/datahub-agent-registry.json',
+                  skill_path='skills/compositional-risk-review/SKILL.md',
+              )
+          except Exception:
+              traceback.print_exc()
+              raise
+          else:
+              print(report.model_dump_json(indent=2))
+          PY
+          status=$?
+          cat .toxicjoin/datahub-agent-registry.log
+          exit "$status"
+
+      - name: Verify persisted Agent Registry from a fresh graph client
+        shell: bash
+        run: |
+          set +e
+          python - <<'PY' > .toxicjoin/datahub-agent-registry-verify.log 2>&1
+          import traceback
+          from toxicjoin.integrations.datahub_agent_registry_verify import verify_datahub_agent_registry
+
+          try:
+              report = verify_datahub_agent_registry(
+                  registry_report='.toxicjoin/datahub-agent-registry.json',
+                  output='.toxicjoin/datahub-agent-registry-verified.json',
+              )
+          except Exception:
+              traceback.print_exc()
+              raise
+          else:
+              print(report.model_dump_json(indent=2))
+          PY
+          status=$?
+          cat .toxicjoin/datahub-agent-registry-verify.log
+          exit "$status"
+
+      - name: Enforce Agent Registry evidence gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          from toxicjoin.integrations.datahub_agent_registry import (
+              DataHubAgentRegistryReport,
+              _report_hash as registration_hash,
+          )
+          from toxicjoin.integrations.datahub_agent_registry_verify import (
+              DataHubAgentRegistryVerificationReport,
+              _report_hash as verification_hash,
+          )
+
+          registration_path = Path('.toxicjoin/datahub-agent-registry.json')
+          verification_path = Path('.toxicjoin/datahub-agent-registry-verified.json')
+          registration_raw = json.loads(registration_path.read_text(encoding='utf-8'))
+          verification_raw = json.loads(verification_path.read_text(encoding='utf-8'))
+          registration = DataHubAgentRegistryReport.model_validate(registration_raw)
+          verification = DataHubAgentRegistryVerificationReport.model_validate(verification_raw)
+
+          assert registration.status == 'registered'
+          assert registration.tool_count == 5
+          assert registration.skill_count == 1
+          assert registration.agent_count == 1
+          assert len(registration.consumed_dataset_urns) == 5
+          assert registration.source_repository_url == 'https://github.com/Z3X-1337/toxicjoin'
+          assert registration.source_skill_path == 'skills/compositional-risk-review/SKILL.md'
+
+          assert verification.status == 'verified'
+          assert verification.tool_count == 5
+          assert verification.required_tool_count == 5
+          assert verification.dependency_tool_count == 5
+          assert verification.dependency_skill_count == 1
+          assert verification.consumed_dataset_count == 5
+          assert verification.skill_urn == registration.skill_urn
+          assert verification.agent_urn == registration.agent_urn
+          assert verification.tool_urns == registration.tool_urns
+
+          registration_payload = dict(registration_raw)
+          registration_payload['report_sha256'] = '0' * 64
+          verification_payload = dict(verification_raw)
+          verification_payload['report_sha256'] = '0' * 64
+          assert registration.report_sha256 == registration_hash(registration_payload)
+          assert verification.report_sha256 == verification_hash(verification_payload)
+
+          evidence = (
+              registration_path.read_text(encoding='utf-8')
+              + verification_path.read_text(encoding='utf-8')
+          ).lower()
+          for forbidden in ('password', 'localhost', 'datahub_gms_token', 'openai_api_key', 'aws_secret'):
+              assert forbidden not in evidence, forbidden
+
+          print(json.dumps({
+              'sdk_version': '1.6.0.16rc3',
+              'server_channel': 'quickstart',
+              'agent_urn': registration.agent_urn,
+              'skill_urn': registration.skill_urn,
+              'tool_count': registration.tool_count,
+              'consumed_dataset_count': verification.consumed_dataset_count,
+              'registration_hash': registration.report_sha256,
+              'verification_hash': verification.report_sha256,
+          }, indent=2))
+          PY
+
+      - name: Upload Agent Registry evidence and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-live-datahub-agent-registry
+          path: |
+            .toxicjoin/datahub-agent-registry.json
+            .toxicjoin/datahub-agent-registry-verified.json
+            .toxicjoin/datahub-agent-registry.log
+            .toxicjoin/datahub-agent-registry-verify.log
+            .toxicjoin/datahub-agent-registry-images.txt
+          if-no-files-found: warn
+          retention-days: 30

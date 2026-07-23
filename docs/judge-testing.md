@@ -194,7 +194,16 @@ A valid live run must prove:
 5. the first MCP process was closed;
 6. a fresh MCP process read the document back and found the unique marker.
 
-Until that live report exists, the repository intentionally leaves checklist item 9 unchecked.
+That stable live proof is committed in [`docs/evidence/datahub-live.md`](evidence/datahub-live.md).
+
+### Optional preview: DataHub Agent Registry graph
+
+For reviewers interested in the reusable DataHub-native capability, inspect:
+
+- [`skills/compositional-risk-review/SKILL.md`](../skills/compositional-risk-review/SKILL.md);
+- [`docs/evidence/datahub-agent-registry.md`](evidence/datahub-agent-registry.md).
+
+The separate preview proof registers five MCP tools as API entities, one git-backed Agent Skill, and one AI Agent consuming the five governed datasets. A fresh graph client verifies the persisted Agent→Skill→Tools and Agent→Datasets relationships. This proof uses the DataHub `quickstart` development channel and `acryl-datahub==1.6.0.16rc3`; it is not required for ToxicJoin's core enforcement or stable SDK/MCP integration.
 
 ## Security checks reviewers can inspect
 
