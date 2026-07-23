@@ -20,7 +20,7 @@
 - **Hosted judge replay:** [PENDING_VERIFIED_PAGES_URL]
 - **Examples:** https://github.com/Z3X-1337/toxicjoin/tree/main/examples
 - **Demo video:** [PENDING_PUBLIC_YOUTUBE_OR_VIMEO_URL]
-- **Live DataHub evidence:** [PENDING_VERIFIED_EVIDENCE_LINK]
+- **Live DataHub evidence:** https://github.com/Z3X-1337/toxicjoin/blob/main/docs/evidence/datahub-live.md
 
 ## Devpost field answers
 
@@ -116,7 +116,7 @@ ToxicJoin uses the official DataHub Python SDK to seed five synthetic datasets, 
 
 The write is verified independently: ToxicJoin closes the MCP process that performed the write, opens a fresh MCP process, reads the Decision back, and verifies a unique marker. This proves that the result was persisted in DataHub rather than retained only in application memory.
 
-[PENDING_LIVE_EVIDENCE_SUMMARY]
+A real DataHub OSS gate passed in GitHub Actions. The official SDK created five datasets, 19 governed fields, nine tags, seven glossary terms, and four column-lineage writes. The official MCP Server then read the five entities and their schemas, returned three upstream relationships for the flagship churn-score field, wrote a DataHub Decision, closed the writing process, opened a fresh MCP process, and found the unique marker inside the persisted document through `grep_documents`. Sanitized JSON evidence with reproducible content hashes is committed under `docs/evidence/`, and the retained proof contains no token value, password, local endpoint, raw warehouse row, or local filesystem path.
 
 ## Flagship scenario
 
