@@ -5,6 +5,9 @@ on:
     branches: [agent/live-datahub-proof]
     paths:
       - ".github/workflows/apply-fastmcp-compat.yml"
+  pull_request:
+    paths:
+      - ".github/workflows/apply-fastmcp-compat.yml"
 
 permissions:
   contents: write
@@ -25,36 +28,29 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          from textwrap import dedent
 
-          source_path = Path('src/toxicjoin/integrations/datahub_mcp.py')
+          source_path = Path("src/toxicjoin/integrations/datahub_mcp.py")
           source = source_path.read_text()
-          old = '''        payload = await self.transport.call_tool("get_entities", {"urns": list(urns)})
-          if not isinstance(payload, list) or not all(
-              isinstance(item, dict) for item in payload
-          ):
-              raise DataHubMcpError("get_entities returned an unexpected payload")
-          return tuple(payload)
-          '''
-          new = '''        payload = await self.transport.call_tool("get_entities", {"urns": list(urns)})
-          payload = _unwrap_fastmcp_collection_result(payload)
-          if not isinstance(payload, list) or not all(
-              isinstance(item, dict) for item in payload
-          ):
-              raise DataHubMcpError("get_entities returned an unexpected payload")
-          return tuple(payload)
-          '''
-          if old not in source:
-              raise SystemExit('expected get_entities block was not found')
-          source = source.replace(old, new, 1)
+          call_line = (
+              '        payload = await self.transport.call_tool('
+              '"get_entities", {"urns": list(urns)})\n'
+          )
+          replacement = call_line + (
+              '        payload = _unwrap_fastmcp_collection_result(payload)\n'
+          )
+          if "_unwrap_fastmcp_collection_result(payload)" not in source:
+              if source.count(call_line) != 1:
+                  raise SystemExit("expected one get_entities transport call")
+              source = source.replace(call_line, replacement, 1)
 
-          marker = '''def _parse_json_or_text(value: str) -> Any:
-          '''
-          helper = '''def _unwrap_fastmcp_collection_result(value: Any) -> Any:
-              """Unwrap FastMCP's standard envelope for non-object structured output.
+          helper = dedent('''
+          def _unwrap_fastmcp_collection_result(value: Any) -> Any:
+              """Unwrap FastMCP's standard envelope for non-object output.
 
               FastMCP exposes list and primitive return values as ``{"result": value}``
-              because MCP structured content itself must be an object. Only that exact
-              one-key envelope is accepted; additional keys remain a contract failure.
+              because MCP structured content must be an object. Only that exact one-key
+              envelope is accepted; additional keys remain a contract failure.
               """
 
               if isinstance(value, dict) and set(value) == {"result"}:
@@ -62,16 +58,17 @@ jobs:
               return value
 
 
-          def _parse_json_or_text(value: str) -> Any:
-          '''
-          if marker not in source:
-              raise SystemExit('helper insertion marker was not found')
-          source = source.replace(marker, helper, 1)
+          ''')
+          marker = "def _parse_json_or_text(value: str) -> Any:\n"
+          if "def _unwrap_fastmcp_collection_result" not in source:
+              if source.count(marker) != 1:
+                  raise SystemExit("helper insertion marker was not found exactly once")
+              source = source.replace(marker, helper + marker, 1)
           source_path.write_text(source)
 
-          test_path = Path('tests/unit/test_datahub_mcp.py')
+          test_path = Path("tests/unit/test_datahub_mcp.py")
           tests = test_path.read_text()
-          addition = '''
+          addition = dedent('''
 
           def test_get_entities_accepts_fastmcp_collection_result_envelope() -> None:
               urn = "urn:li:dataset:test"
@@ -105,9 +102,9 @@ jobs:
 
               with pytest.raises(DataHubMcpError, match="unexpected payload"):
                   asyncio.run(DataHubMcpClient(transport).get_entities((urn,)))
-          '''
-          if 'test_get_entities_accepts_fastmcp_collection_result_envelope' not in tests:
-              test_path.write_text(tests.rstrip() + addition + '\n')
+          ''')
+          if "test_get_entities_accepts_fastmcp_collection_result_envelope" not in tests:
+              test_path.write_text(tests.rstrip() + addition + "\n")
           PY
 
       - name: Install test dependencies
@@ -119,6 +116,7 @@ jobs:
           pytest tests/unit/test_datahub_mcp.py tests/integration/test_datahub_spike.py -q
 
       - name: Commit verified compatibility patch
+        if: github.event_name == 'push'
         shell: bash
         run: |
           if git diff --quiet; then
