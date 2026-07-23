@@ -4,7 +4,8 @@ The capture-only branch assigns the local quickstart `datahub` user to DataHub's
 built-in Admin role directly through local GMS. It then replaces only the browser
 authorization function so Chrome becomes read-only: the session proves that the
 role assignment propagated and that DataHub grants both MANAGE_POLICIES and
-VIEW_ENTITY_PAGE before recording any entity page.
+VIEW_ENTITY_PAGE before recording any entity page. The same runtime patch also
+normalizes the DataHub tab label used by this pinned UI version (`Columns`).
 
 This file exists only on the capture-only PR and is not intended to merge into main.
 """
@@ -137,12 +138,26 @@ def patch_browser_verifier() -> None:
     end = text.index(end_marker, start)
 
     patched = text[:start] + REPLACEMENT + text[end:]
+
+    schema_click = 'await clickEntityTab("schema-tab", "Schema");'
+    schema_click_compat = 'await clickEntityTab("schema-tab", "Columns");'
+    schema_expectation = '["churn_score", "customer_id", "Schema"],'
+    schema_expectation_compat = '["churn_score", "customer_id", "Columns"],'
+    if schema_click not in patched:
+        raise RuntimeError("capture script no longer contains the expected Schema tab selector")
+    if schema_expectation not in patched:
+        raise RuntimeError("capture script no longer contains the expected Schema capture assertion")
+    patched = patched.replace(schema_click, schema_click_compat, 1)
+    patched = patched.replace(schema_expectation, schema_expectation_compat, 1)
+
     if "CaptureEnableViewEntity" in patched:
         raise RuntimeError("runtime capture patch left a UI policy mutation behind")
     if 'assignment_source: "direct-gms-admin-role-capture-only"' not in patched:
         raise RuntimeError("runtime capture patch did not install the Admin-role verifier")
     if 'role_urn: adminRoleUrn' not in patched:
         raise RuntimeError("runtime capture patch did not retain Admin role evidence")
+    if schema_click_compat not in patched or schema_expectation_compat not in patched:
+        raise RuntimeError("runtime capture patch did not install the Columns-tab compatibility fix")
 
     SCRIPT.write_text(patched, encoding="utf-8")
 
