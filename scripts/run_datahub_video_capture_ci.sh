@@ -262,6 +262,15 @@ export BROWSER_EXECUTABLE="$browser_path"
 export TOXICJOIN_CAPTURE_MANIFEST=".toxicjoin/video-capture-manifest.json"
 export TOXICJOIN_CAPTURE_DIR="artifacts/video-captures"
 
+set_stage "prepare-capture-authorization-verifier"
+python scripts/prepare_capture_authorization_runtime.py
+node --check scripts/capture_datahub_video_evidence.mjs
+grep -q 'policy_source: "direct-gms-capture-only"' scripts/capture_datahub_video_evidence.mjs
+if grep -q 'CaptureEnableViewEntity' scripts/capture_datahub_video_evidence.mjs; then
+  echo "Capture script still contains a UI policy mutation." >&2
+  exit 1
+fi
+
 set_stage "capture-datahub-ui"
 node scripts/capture_datahub_video_evidence.mjs
 
