@@ -1,0 +1,147 @@
+name: Capture ToxicJoin Runtime Video Evidence
+
+on:
+  push:
+    branches: [agent/runtime-video-captures]
+    paths:
+      - ".github/workflows/capture-runtime-video-evidence.yml"
+      - "scripts/capture_runtime_video_evidence.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: toxicjoin-runtime-video-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out frozen product
+        uses: actions/checkout@v4
+
+      - name: Build production image
+        run: docker build --tag toxicjoin:runtime-capture .
+
+      - name: Run hardened production container
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker volume create toxicjoin-runtime-capture
+          docker run --detach \
+            --name toxicjoin-runtime-capture \
+            --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --mount type=volume,src=toxicjoin-runtime-capture,dst=/var/lib/toxicjoin \
+            --publish 18000:8000 \
+            toxicjoin:runtime-capture
+
+      - name: Verify hardened runtime and health
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(docker inspect --format '{{.Config.User}}' toxicjoin-runtime-capture)" = "10001:10001"
+          test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' toxicjoin-runtime-capture)" = "true"
+          ready=false
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent --show-error http://127.0.0.1:18000/api/health > runtime-health.json; then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          test "$ready" = "true"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          health = json.loads(Path("runtime-health.json").read_text(encoding="utf-8"))
+          assert health["status"] == "ok"
+          assert health["mode"] == "fixture"
+          print(json.dumps(health, indent=2, sort_keys=True))
+          PY
+
+      - name: Install pinned browser capture client
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-save --no-audit --no-fund playwright-core@1.54.1
+          npx playwright-core install ffmpeg
+          node --check scripts/capture_runtime_video_evidence.mjs
+
+      - name: Discover runner Chrome
+        id: browser
+        shell: bash
+        run: |
+          set -euo pipefail
+          browser_path=""
+          for command_name in google-chrome google-chrome-stable chromium chromium-browser; do
+            candidate=$(command -v "$command_name" || true)
+            if [[ -n "$candidate" && -x "$candidate" ]]; then
+              browser_path="$candidate"
+              break
+            fi
+          done
+          if [[ -z "$browser_path" ]]; then
+            echo "No Chrome/Chromium executable found." >&2
+            exit 1
+          fi
+          echo "path=$browser_path" >> "$GITHUB_OUTPUT"
+          "$browser_path" --version
+
+      - name: Capture real ToxicJoin runtime at 1920x1080
+        env:
+          BROWSER_EXECUTABLE: ${{ steps.browser.outputs.path }}
+          TOXICJOIN_UI_URL: http://127.0.0.1:18000
+          TOXICJOIN_RUNTIME_CAPTURE_DIR: artifacts/runtime-video-captures
+        run: node scripts/capture_runtime_video_evidence.mjs
+
+      - name: Inspect and hash capture package
+        shell: bash
+        run: |
+          set -euo pipefail
+          ffprobe -v error \
+            -show_entries format=duration,size:stream=codec_name,width,height,pix_fmt \
+            -of default=noprint_wrappers=1 \
+            artifacts/runtime-video-captures/toxicjoin-runtime-capture.webm
+          find artifacts/runtime-video-captures -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > artifacts/runtime-video-captures/SHA256SUMS
+          cat artifacts/runtime-video-captures/capture-report.json
+          cat artifacts/runtime-video-captures/SHA256SUMS
+
+      - name: Upload real runtime capture package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-real-runtime-video-captures
+          path: artifacts/runtime-video-captures
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Capture container logs
+        if: always()
+        shell: bash
+        run: docker logs toxicjoin-runtime-capture > toxicjoin-runtime-container.log 2>&1 || true
+
+      - name: Upload runtime container diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-runtime-container-log
+          path: toxicjoin-runtime-container.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Clean up runtime container
+        if: always()
+        shell: bash
+        run: |
+          docker rm --force toxicjoin-runtime-capture || true
+          docker volume rm toxicjoin-runtime-capture || true
