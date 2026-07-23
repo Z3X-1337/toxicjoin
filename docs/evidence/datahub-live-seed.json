@@ -1,0 +1,18 @@
+{
+  "created_at": "2026-07-23T02:54:56.823351Z",
+  "dataset_count": 5,
+  "dataset_urns": [
+    "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.customers,PROD)",
+    "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.location_activity,PROD)",
+    "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.orders,PROD)",
+    "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.retention_scores,PROD)",
+    "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.support_cases,PROD)"
+  ],
+  "field_count": 19,
+  "lineage_count": 4,
+  "report_sha256": "b0141731ffd72f8e33b7e447e80f1f359b6bf795fac9f059dca1e769ec4546d8",
+  "schema_version": "1.0",
+  "status": "seeded",
+  "tag_count": 9,
+  "term_count": 7
+}
