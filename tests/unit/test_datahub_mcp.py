@@ -247,42 +247,96 @@ def test_save_decision_extracts_nested_document_urn() -> None:
     assert arguments["related_assets"] == ["urn:li:dataset:test"]
 
 
-def test_independent_marker_readback_rejects_missing_marker() -> None:
-    urn = "urn:li:document:toxicjoin-decision-123"
-    transport = FakeTransport(
-        responses={"get_entities": [[{"urn": urn, "content": "other"}]]}
+
+def _grep_documents_contract() -> McpToolDefinition:
+    return McpToolDefinition(
+        name="grep_documents",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "urns": {"type": "array"},
+                "pattern": {"type": "string"},
+                "context_chars": {"type": "integer"},
+                "max_matches_per_doc": {"type": "integer"},
+                "start_offset": {"type": "integer"},
+            },
+        },
     )
 
-    with pytest.raises(DataHubMcpError, match="verification marker"):
+
+def test_independent_marker_readback_requires_document_content_tool() -> None:
+    urn = "urn:li:document:toxicjoin-decision-123"
+    client = DataHubMcpClient(FakeTransport())
+    asyncio.run(client.discover_and_validate(require_mutations=False))
+
+    with pytest.raises(DataHubMcpContractError, match="grep_documents"):
         asyncio.run(
-            DataHubMcpClient(transport).verify_document_marker(
+            client.verify_document_marker(
                 urn,
                 "TOXICJOIN_MARKER_ABC",
             )
         )
 
 
-def test_independent_marker_readback_accepts_nested_content() -> None:
+def test_independent_marker_readback_rejects_missing_marker() -> None:
+    urn = "urn:li:document:toxicjoin-decision-123"
+    transport = FakeTransport(
+        tools=_official_contracts() + (_grep_documents_contract(),),
+        responses={
+            "grep_documents": [
+                {
+                    "results": [],
+                    "total_matches": 0,
+                    "documents_with_matches": 0,
+                }
+            ]
+        },
+    )
+    client = DataHubMcpClient(transport)
+    asyncio.run(client.discover_and_validate(require_mutations=False))
+
+    with pytest.raises(DataHubMcpError, match="verification marker"):
+        asyncio.run(
+            client.verify_document_marker(
+                urn,
+                "TOXICJOIN_MARKER_ABC",
+            )
+        )
+
+
+def test_independent_marker_readback_accepts_grep_evidence() -> None:
     urn = "urn:li:document:toxicjoin-decision-123"
     marker = "TOXICJOIN_MARKER_ABC"
     transport = FakeTransport(
+        tools=_official_contracts() + (_grep_documents_contract(),),
         responses={
-            "get_entities": [
-                [
-                    {
-                        "urn": urn,
-                        "document": {"properties": {"contents": marker}},
-                    }
-                ]
+            "grep_documents": [
+                {
+                    "results": [
+                        {
+                            "urn": urn,
+                            "title": "ToxicJoin decision",
+                            "matches": [
+                                {
+                                    "excerpt": f"marker: {marker}",
+                                    "position": 12,
+                                }
+                            ],
+                            "total_matches": 1,
+                        }
+                    ],
+                    "total_matches": 1,
+                    "documents_with_matches": 1,
+                }
             ]
-        }
+        },
     )
+    client = DataHubMcpClient(transport)
+    asyncio.run(client.discover_and_validate(require_mutations=False))
 
-    entity = asyncio.run(
-        DataHubMcpClient(transport).verify_document_marker(urn, marker)
-    )
+    evidence = asyncio.run(client.verify_document_marker(urn, marker))
 
-    assert entity["urn"] == urn
+    assert evidence["urn"] == urn
 
 def test_get_entities_accepts_fastmcp_collection_result_envelope() -> None:
     urn = "urn:li:dataset:test"

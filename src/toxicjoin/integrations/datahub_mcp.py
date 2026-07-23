@@ -458,14 +458,72 @@ class DataHubMcpClient:
         return entities[0]
 
     async def verify_document_marker(self, urn: str, marker: str) -> dict[str, Any]:
-        entity = await self.read_entity(urn)
-        serialized = json.dumps(entity, sort_keys=True, ensure_ascii=True)
-        if marker not in serialized:
+        definition = self._tools.get("grep_documents")
+        if definition is None:
+            raise DataHubMcpContractError(
+                "missing tool grep_documents for independent document verification"
+            )
+        required = {
+            "urns",
+            "pattern",
+            "context_chars",
+            "max_matches_per_doc",
+            "start_offset",
+        }
+        missing = sorted(required - set(definition.properties))
+        if missing:
+            raise DataHubMcpContractError(
+                "tool grep_documents missing input properties: "
+                + ", ".join(missing)
+            )
+
+        payload = await self.transport.call_tool(
+            "grep_documents",
+            {
+                "urns": [urn],
+                "pattern": marker,
+                "context_chars": 160,
+                "max_matches_per_doc": 3,
+                "start_offset": 0,
+            },
+        )
+        if not isinstance(payload, dict):
+            raise DataHubMcpError(
+                "grep_documents returned an unexpected payload"
+            )
+        results = payload.get("results")
+        total_matches = payload.get("total_matches")
+        if not isinstance(results, list) or not all(
+            isinstance(item, dict) for item in results
+        ):
+            raise DataHubMcpError(
+                "grep_documents payload has invalid results"
+            )
+        if not isinstance(total_matches, int):
+            raise DataHubMcpError(
+                "grep_documents payload has invalid total_matches"
+            )
+
+        for result in results:
+            if result.get("urn") != urn:
+                continue
+            matches = result.get("matches")
+            if not isinstance(matches, list):
+                continue
+            for match in matches:
+                if (
+                    isinstance(match, dict)
+                    and marker in str(match.get("excerpt", ""))
+                ):
+                    return result
+
+        if total_matches <= 0:
             raise DataHubMcpError(
                 "independent document read-back did not contain the verification marker"
             )
-        return entity
-
+        raise DataHubMcpError(
+            "grep_documents reported matches without verifiable marker evidence"
+        )
 
 
 def _unwrap_fastmcp_collection_result(value: Any) -> Any:
