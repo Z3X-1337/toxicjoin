@@ -1,0 +1,74 @@
+name: Refresh Submission Replay Link
+
+on:
+  push:
+    branches: [agent/submission-packet]
+    paths:
+      - ".github/workflows/refresh-submission-replay-link.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out submission packet branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/submission-packet
+
+      - name: Replace verified replay placeholders only
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          replay = 'https://toxicjoin-replay.vercel.app/'
+          evidence = 'https://github.com/Z3X-1337/toxicjoin/blob/main/docs/evidence/hosted-replay.md'
+
+          draft = Path('docs/submission/devpost-draft.md')
+          text = draft.read_text(encoding='utf-8')
+          count = text.count('[PENDING_VERIFIED_PAGES_URL]')
+          if count != 2:
+              raise SystemExit(f'expected exactly 2 replay placeholders in devpost draft, found {count}')
+          text = text.replace('[PENDING_VERIFIED_PAGES_URL]', replay)
+          if evidence not in text:
+              marker = f'- **Live DataHub evidence:** https://github.com/Z3X-1337/toxicjoin/blob/main/docs/evidence/datahub-live.md\n'
+              replacement = marker + f'- **Hosted replay evidence:** {evidence}\n'
+              if text.count(marker) != 1:
+                  raise SystemExit('live evidence link marker not found exactly once')
+              text = text.replace(marker, replacement, 1)
+          draft.write_text(text, encoding='utf-8')
+
+          index = Path('docs/submission/owner-review-index.md')
+          text = index.read_text(encoding='utf-8')
+          old = '| Hosted replay | Pending public HTTP and Chromium verification | `[PENDING_VERIFIED_PAGES_URL]` |'
+          new = f'| Hosted replay | Ready | {replay} — evidence: {evidence} |'
+          if text.count(old) != 1:
+              raise SystemExit('owner review hosted replay row not found exactly once')
+          index.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Validate remaining placeholders
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -R '\[PENDING_VERIFIED_PAGES_URL\]' docs/submission
+          grep -R '\[PENDING_PUBLIC_YOUTUBE_OR_VIMEO_URL\]' docs/submission/devpost-draft.md
+          grep -q 'https://toxicjoin-replay.vercel.app/' docs/submission/devpost-draft.md
+          grep -q 'docs/evidence/hosted-replay.md' docs/submission/devpost-draft.md
+
+      - name: Commit review packet link update
+        shell: bash
+        run: |
+          git config user.name 'toxicjoin-ci'
+          git config user.email 'actions@users.noreply.github.com'
+          git add docs/submission/devpost-draft.md docs/submission/owner-review-index.md
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'Link verified hosted replay in submission packet'
+          git push origin HEAD:agent/submission-packet
