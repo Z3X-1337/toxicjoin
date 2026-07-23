@@ -6,6 +6,7 @@ on:
       - ".github/workflows/verify-hosted-replay.yml"
       - ".github/workflows/pages.yml"
       - "apps/web/**"
+      - "scripts/verify_hosted_replay.mjs"
   workflow_dispatch:
 
 permissions:
@@ -32,25 +33,41 @@ jobs:
           node-version: "22.16.0"
 
       - name: Install pinned browser automation client
+        run: npm install --no-save --no-audit --no-fund playwright-core@1.54.1
+
+      - name: Discover preinstalled Chrome or Edge
+        id: browser
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p .replay-verifier
-          cd .replay-verifier
-          npm init -y >/dev/null
-          npm install --no-audit --no-fund playwright-core@1.54.1
-          for candidate in \
-            /usr/bin/google-chrome \
-            /usr/bin/google-chrome-stable \
-            /usr/bin/chromium \
-            /usr/bin/chromium-browser; do
-            if [[ -x "$candidate" ]]; then
-              echo "$candidate" > chrome-path.txt
+          browser_path=""
+          for command_name in \
+            google-chrome \
+            google-chrome-stable \
+            chromium \
+            chromium-browser \
+            microsoft-edge \
+            microsoft-edge-stable; do
+            candidate=$(command -v "$command_name" || true)
+            if [[ -n "$candidate" && -x "$candidate" ]]; then
+              browser_path="$candidate"
               break
             fi
           done
-          test -s chrome-path.txt
-          "$(cat chrome-path.txt)" --version
+
+          if [[ -z "$browser_path" ]]; then
+            browser_path=$(find /usr/bin /opt -maxdepth 4 -type f \
+              \( -name 'google-chrome*' -o -name 'chromium*' -o -name 'microsoft-edge*' \) \
+              -perm -111 2>/dev/null | head -n 1 || true)
+          fi
+
+          if [[ -z "$browser_path" ]]; then
+            echo "No supported preinstalled browser was found." >&2
+            exit 1
+          fi
+
+          echo "path=$browser_path" >> "$GITHUB_OUTPUT"
+          "$browser_path" --version
 
       - name: Wait for public GitHub Pages response
         shell: bash
@@ -70,188 +87,9 @@ jobs:
           grep -q '/toxicjoin/assets/' hosted-replay.html
 
       - name: Verify desktop and mobile replay in Chromium
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/hosted-replay
-          node <<'NODE'
-          const fs = require('fs');
-          const path = require('path');
-          const { chromium } = require('./.replay-verifier/node_modules/playwright-core');
-
-          const replayUrl = process.env.REPLAY_URL;
-          const executablePath = fs
-            .readFileSync('.replay-verifier/chrome-path.txt', 'utf8')
-            .trim();
-          const profiles = [
-            { name: 'desktop', width: 1440, height: 1000 },
-            { name: 'mobile', width: 390, height: 844 },
-          ];
-
-          (async () => {
-            const browser = await chromium.launch({
-              headless: true,
-              executablePath,
-              args: ['--no-sandbox', '--disable-dev-shm-usage'],
-            });
-            const report = {
-              schema_version: '1.0',
-              replay_url: replayUrl,
-              verified_at: new Date().toISOString(),
-              browser_executable: executablePath,
-              disclosure: null,
-              profiles: [],
-            };
-
-            try {
-              for (const profile of profiles) {
-                const context = await browser.newContext({
-                  viewport: { width: profile.width, height: profile.height },
-                  deviceScaleFactor: 1,
-                  reducedMotion: 'reduce',
-                });
-                const page = await context.newPage();
-                const consoleErrors = [];
-                const pageErrors = [];
-                const failedRequests = [];
-                const assetResponses = [];
-
-                page.on('console', (message) => {
-                  if (message.type() === 'error') consoleErrors.push(message.text());
-                });
-                page.on('pageerror', (error) => pageErrors.push(String(error)));
-                page.on('requestfailed', (request) => {
-                  failedRequests.push({
-                    url: request.url(),
-                    failure: request.failure()?.errorText ?? 'unknown',
-                  });
-                });
-                page.on('response', (response) => {
-                  if (response.url().includes('/toxicjoin/assets/')) {
-                    assetResponses.push({ url: response.url(), status: response.status() });
-                  }
-                });
-
-                const response = await page.goto(replayUrl, {
-                  waitUntil: 'networkidle',
-                  timeout: 60_000,
-                });
-                if (!response || response.status() !== 200) {
-                  throw new Error(`${profile.name}: expected document HTTP 200`);
-                }
-
-                await page.getByText('Deterministic replay', { exact: true }).waitFor({
-                  state: 'visible',
-                  timeout: 30_000,
-                });
-                const notice = page.getByText(
-                  /no live execution or DataHub write is being claimed/i,
-                );
-                await notice.waitFor({ state: 'visible', timeout: 30_000 });
-                await page.getByRole('heading', { name: 'Measured, not narrated' }).waitFor({
-                  state: 'visible',
-                  timeout: 30_000,
-                });
-                await page.getByText('False allows', { exact: true }).waitFor({
-                  state: 'visible',
-                  timeout: 30_000,
-                });
-                await page.getByText('After remediation', { exact: true }).waitFor({
-                  state: 'visible',
-                  timeout: 30_000,
-                });
-
-                const bodyText = await page.locator('body').innerText();
-                for (const required of [
-                  'ToxicJoin',
-                  'Initial policy',
-                  'REWRITE',
-                  'After remediation',
-                  'ALLOW',
-                  '30',
-                  'False allows',
-                  '0',
-                ]) {
-                  if (!bodyText.includes(required)) {
-                    throw new Error(`${profile.name}: missing required text ${required}`);
-                  }
-                }
-
-                const layout = await page.evaluate(() => ({
-                  innerWidth: window.innerWidth,
-                  scrollWidth: document.documentElement.scrollWidth,
-                  bodyScrollWidth: document.body.scrollWidth,
-                }));
-                if (
-                  layout.scrollWidth > layout.innerWidth + 1 ||
-                  layout.bodyScrollWidth > layout.innerWidth + 1
-                ) {
-                  throw new Error(
-                    `${profile.name}: horizontal overflow ${JSON.stringify(layout)}`,
-                  );
-                }
-
-                if (consoleErrors.length) {
-                  throw new Error(`${profile.name}: console errors: ${consoleErrors.join(' | ')}`);
-                }
-                if (pageErrors.length) {
-                  throw new Error(`${profile.name}: page errors: ${pageErrors.join(' | ')}`);
-                }
-                if (failedRequests.length) {
-                  throw new Error(
-                    `${profile.name}: failed requests: ${JSON.stringify(failedRequests)}`,
-                  );
-                }
-                if (assetResponses.length < 2) {
-                  throw new Error(`${profile.name}: expected JavaScript and CSS assets`);
-                }
-                const badAssets = assetResponses.filter((asset) => asset.status >= 400);
-                if (badAssets.length) {
-                  throw new Error(
-                    `${profile.name}: failed static assets: ${JSON.stringify(badAssets)}`,
-                  );
-                }
-
-                const screenshot = path.join(
-                  'artifacts',
-                  'hosted-replay',
-                  `${profile.name}.png`,
-                );
-                await page.screenshot({ path: screenshot, fullPage: true });
-
-                const disclosure = await notice.innerText();
-                report.disclosure = disclosure;
-                report.profiles.push({
-                  name: profile.name,
-                  viewport: { width: profile.width, height: profile.height },
-                  document_status: response.status(),
-                  asset_count: assetResponses.length,
-                  horizontal_overflow: false,
-                  console_error_count: 0,
-                  page_error_count: 0,
-                  failed_request_count: 0,
-                  screenshot,
-                });
-                await context.close();
-              }
-            } finally {
-              await browser.close();
-            }
-
-            if (!report.disclosure?.includes('no live execution or DataHub write is being claimed')) {
-              throw new Error('Replay disclosure was not captured exactly.');
-            }
-            fs.writeFileSync(
-              'artifacts/hosted-replay/verification.json',
-              `${JSON.stringify(report, null, 2)}\n`,
-              'utf8',
-            );
-            console.log(JSON.stringify(report, null, 2));
-          })().catch((error) => {
-            console.error(error);
-            process.exit(1);
-          });
-          NODE
+        env:
+          BROWSER_EXECUTABLE: ${{ steps.browser.outputs.path }}
+        run: node scripts/verify_hosted_replay.mjs
 
       - name: Upload hosted replay verification evidence
         if: always()
