@@ -138,8 +138,17 @@ class DataHubSnapshotLoader:
             max_hops=2,
             max_results=100,
         )
-        if not isinstance(lineage.get("relationships", []), list):
-            raise DataHubMetadataError("DataHub lineage payload has invalid relationships")
+        relationships = lineage.get("relationships")
+        if not isinstance(relationships, list) or not all(
+            isinstance(item, dict) for item in relationships
+        ):
+            raise DataHubMetadataError(
+                "DataHub lineage payload has invalid relationships"
+            )
+        if not relationships:
+            raise DataHubMetadataError(
+                "DataHub returned no upstream lineage for the configured flagship column"
+            )
 
         return DataHubSnapshot(
             catalog=FixtureCatalog(

@@ -344,6 +344,7 @@ class DataHubMcpClient:
         if not urns:
             return ()
         payload = await self.transport.call_tool("get_entities", {"urns": list(urns)})
+        payload = _unwrap_fastmcp_collection_result(payload)
         if not isinstance(payload, list) or not all(
             isinstance(item, dict) for item in payload
         ):
@@ -422,8 +423,41 @@ class DataHubMcpClient:
             },
         )
         if not isinstance(payload, dict):
-            raise DataHubMcpError("get_lineage returned an unexpected payload")
-        return payload
+            raise DataHubMcpError(
+                "get_lineage returned an unexpected payload"
+            )
+
+        relationships = payload.get("relationships")
+        if relationships is not None:
+            if not isinstance(relationships, list) or not all(
+                isinstance(item, dict) for item in relationships
+            ):
+                raise DataHubMcpError(
+                    "get_lineage payload has invalid relationships"
+                )
+        else:
+            direction_key = "upstreams" if upstream else "downstreams"
+            direction = payload.get(direction_key)
+            if direction is None:
+                relationships = []
+            else:
+                if not isinstance(direction, dict):
+                    raise DataHubMcpError(
+                        f"get_lineage payload has invalid {direction_key}"
+                    )
+                search_results = direction.get("searchResults", [])
+                if not isinstance(search_results, list) or not all(
+                    isinstance(item, dict) for item in search_results
+                ):
+                    raise DataHubMcpError(
+                        "get_lineage payload has invalid searchResults"
+                    )
+                relationships = search_results
+
+        normalized = dict(payload)
+        normalized["relationships"] = relationships
+        normalized["count"] = len(relationships)
+        return normalized
 
     async def save_decision(
         self,
@@ -457,13 +491,85 @@ class DataHubMcpClient:
         return entities[0]
 
     async def verify_document_marker(self, urn: str, marker: str) -> dict[str, Any]:
-        entity = await self.read_entity(urn)
-        serialized = json.dumps(entity, sort_keys=True, ensure_ascii=True)
-        if marker not in serialized:
+        definition = self._tools.get("grep_documents")
+        if definition is None:
+            raise DataHubMcpContractError(
+                "missing tool grep_documents for independent document verification"
+            )
+        required = {
+            "urns",
+            "pattern",
+            "context_chars",
+            "max_matches_per_doc",
+            "start_offset",
+        }
+        missing = sorted(required - set(definition.properties))
+        if missing:
+            raise DataHubMcpContractError(
+                "tool grep_documents missing input properties: "
+                + ", ".join(missing)
+            )
+
+        payload = await self.transport.call_tool(
+            "grep_documents",
+            {
+                "urns": [urn],
+                "pattern": marker,
+                "context_chars": 160,
+                "max_matches_per_doc": 3,
+                "start_offset": 0,
+            },
+        )
+        if not isinstance(payload, dict):
+            raise DataHubMcpError(
+                "grep_documents returned an unexpected payload"
+            )
+        results = payload.get("results")
+        total_matches = payload.get("total_matches")
+        if not isinstance(results, list) or not all(
+            isinstance(item, dict) for item in results
+        ):
+            raise DataHubMcpError(
+                "grep_documents payload has invalid results"
+            )
+        if not isinstance(total_matches, int):
+            raise DataHubMcpError(
+                "grep_documents payload has invalid total_matches"
+            )
+
+        for result in results:
+            if result.get("urn") != urn:
+                continue
+            matches = result.get("matches")
+            if not isinstance(matches, list):
+                continue
+            for match in matches:
+                if (
+                    isinstance(match, dict)
+                    and marker in str(match.get("excerpt", ""))
+                ):
+                    return result
+
+        if total_matches <= 0:
             raise DataHubMcpError(
                 "independent document read-back did not contain the verification marker"
             )
-        return entity
+        raise DataHubMcpError(
+            "grep_documents reported matches without verifiable marker evidence"
+        )
+
+
+def _unwrap_fastmcp_collection_result(value: Any) -> Any:
+    """Unwrap FastMCP's standard envelope for non-object output.
+
+    FastMCP exposes list and primitive return values as ``{"result": value}``
+    because MCP structured content must be an object. Only that exact one-key
+    envelope is accepted; additional keys remain a contract failure.
+    """
+
+    if isinstance(value, dict) and set(value) == {"result"}:
+        return value["result"]
+    return value
 
 
 def _parse_json_or_text(value: str) -> Any:

@@ -52,7 +52,10 @@ class FakeTransport:
         return None
 
     async def list_tools(self) -> tuple[McpToolDefinition, ...]:
-        return _contracts()
+        contracts = _contracts()
+        if self.role == "read":
+            return contracts + (_grep_documents_contract(),)
+        return contracts
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         if self.role == "write":
@@ -110,19 +113,37 @@ class FakeTransport:
         raise AssertionError(f"unexpected write-session tool {name}")
 
     def _read_call(self, name: str, arguments: dict[str, Any]) -> Any:
-        if name != "get_entities":
+        if name != "grep_documents":
             raise AssertionError(f"unexpected read-session tool {name}")
         assert arguments["urns"] == [DOCUMENT_URN]
+        marker = str(arguments["pattern"])
         saved = self.factory.saved_arguments or {}
         content = str(saved.get("content", ""))
         if not self.factory.preserve_marker:
-            content = "read-back content without the marker"
-        return [
-            {
-                "urn": DOCUMENT_URN,
-                "document": {"properties": {"contents": content}},
+            content = "read-back content without the expected token"
+        if marker not in content:
+            return {
+                "results": [],
+                "total_matches": 0,
+                "documents_with_matches": 0,
             }
-        ]
+        return {
+            "results": [
+                {
+                    "urn": DOCUMENT_URN,
+                    "title": "ToxicJoin decision",
+                    "matches": [
+                        {
+                            "excerpt": f"marker: {marker}",
+                            "position": content.index(marker),
+                        }
+                    ],
+                    "total_matches": 1,
+                }
+            ],
+            "total_matches": 1,
+            "documents_with_matches": 1,
+        }
 
 
 def _contracts() -> tuple[McpToolDefinition, ...]:
@@ -166,6 +187,21 @@ def _contracts() -> tuple[McpToolDefinition, ...]:
         ),
     )
 
+
+
+def _grep_documents_contract() -> McpToolDefinition:
+    return McpToolDefinition(
+        name="grep_documents",
+        input_schema={
+            "properties": {
+                "urns": {},
+                "pattern": {},
+                "context_chars": {},
+                "max_matches_per_doc": {},
+                "start_offset": {},
+            }
+        },
+    )
 
 def _field(path: str, tag: str) -> dict[str, Any]:
     return {

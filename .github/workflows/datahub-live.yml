@@ -1,0 +1,233 @@
+name: Live DataHub Evidence
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/datahub-live.yml"
+      - "src/toxicjoin/integrations/**"
+      - "config/datahub-assets.json"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: datahub-live-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-datahub:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      DATAHUB_GMS_URL: http://127.0.0.1:8080
+      DATAHUB_GMS_TOKEN: local-quickstart-auth-disabled
+      DATAHUB_MCP_COMMAND: uvx
+      DATAHUB_MCP_ARGS: --from mcp-server-datahub==0.6.0 mcp-server-datahub
+      DATAHUB_MCP_TIMEOUT_SECONDS: "90"
+      TOOLS_IS_MUTATION_ENABLED: "true"
+      DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED: "false"
+      SAVE_DOCUMENT_TOOL_ENABLED: "true"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc || true
+          docker system prune --all --force || true
+          df -h
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ToxicJoin and live DataHub dependencies
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pip install --upgrade pip wheel setuptools uv
+          python -m pip install -e '.[datahub]'
+          datahub version
+          uvx --from mcp-server-datahub==0.6.0 mcp-server-datahub --help >/dev/null 2>&1 || true
+
+      - name: Start DataHub OSS quickstart
+        shell: bash
+        run: |
+          set -o pipefail
+          datahub docker quickstart 2>&1 | tee datahub-quickstart.log
+
+      - name: Verify DataHub services
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent --show-error http://127.0.0.1:8080/health > datahub-gms-health.txt; then
+              break
+            fi
+            sleep 5
+          done
+          curl --fail --silent --show-error http://127.0.0.1:8080/health
+          curl --fail --silent --show-error http://127.0.0.1:9002/ > datahub-ui.html
+          docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+
+      - name: Create deterministic warehouse
+        run: toxicjoin-seed
+
+      - name: Seed governed DataHub metadata
+        shell: bash
+        run: |
+          set -o pipefail
+          toxicjoin-datahub-seed --yes 2>&1 | tee datahub-seed.log
+
+      - name: Bootstrap and index DataHub document tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import time
+
+          import httpx
+          from datahub.sdk import DataHubClient, Document
+
+          document_id = "toxicjoin-mcp-document-bootstrap"
+          title = "ToxicJoin MCP document bootstrap"
+          client = DataHubClient.from_env()
+          document = Document.create_document(
+              id=document_id,
+              title=title,
+              text=(
+                  "Bootstrap document used only to ensure that DataHub's official "
+                  "MCP document-content tools are registered before the independent "
+                  "ToxicJoin verification process starts."
+              ),
+              subtype="Context",
+              show_in_global_context=True,
+          )
+          client.entities.upsert(document)
+
+          endpoint = "http://127.0.0.1:8080/api/graphql"
+          query = """
+          query BootstrapDocumentSearch($query: String!) {
+            searchAcrossEntities(
+              input: {
+                query: $query
+                count: 1
+                start: 0
+                types: [DOCUMENT]
+              }
+            ) {
+              total
+            }
+          }
+          """
+
+          for attempt in range(1, 61):
+              response = httpx.post(
+                  endpoint,
+                  json={"query": query, "variables": {"query": title}},
+                  timeout=10.0,
+              )
+              response.raise_for_status()
+              payload = response.json()
+              if payload.get("errors"):
+                  raise RuntimeError(payload["errors"])
+              total = payload["data"]["searchAcrossEntities"]["total"]
+              if total >= 1:
+                  print(
+                      f"Bootstrap document indexed after {attempt} attempt(s): "
+                      f"urn:li:document:{document_id}"
+                  )
+                  break
+              time.sleep(2)
+          else:
+              raise RuntimeError(
+                  "DataHub bootstrap document was not indexed within 120 seconds"
+              )
+          PY
+
+      - name: Verify MCP read-write-readback protocol
+        shell: bash
+        run: |
+          set -o pipefail
+          toxicjoin-datahub-spike --verify 2>&1 | tee datahub-spike.log
+
+      - name: Validate sanitized evidence gates
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          seed = json.loads(Path('.toxicjoin/datahub-seed.json').read_text())
+          spike = json.loads(Path('.toxicjoin/datahub-spike.json').read_text())
+
+          assert seed['status'] == 'seeded'
+          assert seed['dataset_count'] == 5
+          assert seed['field_count'] == 19
+          assert seed['lineage_count'] == 4
+          assert len(seed['dataset_urns']) == 5
+          assert len(seed['report_sha256']) == 64
+
+          assert spike['status'] == 'verified'
+          assert spike['independent_readback_verified'] is True
+          assert spike['lineage_relationship_count'] == 3
+          assert len(spike['verified_entities']) == 5
+          assert 'save_document' in spike['discovered_tools']
+          assert spike['decision_document_urn'].startswith('urn:li:document:')
+          assert len(spike['report_sha256']) == 64
+
+          forbidden = ('password', 'secret', 'http://127.0.0.1:8080')
+          raw = Path('.toxicjoin/datahub-spike.json').read_text().lower()
+          for value in forbidden:
+              assert value not in raw, value
+
+          print(json.dumps({
+            'seed_report_sha256': seed['report_sha256'],
+            'spike_report_sha256': spike['report_sha256'],
+            'decision_document_urn': spike['decision_document_urn'],
+            'lineage_relationship_count': spike['lineage_relationship_count'],
+            'independent_readback_verified': True,
+          }, indent=2))
+          PY
+
+      - name: Capture DataHub diagnostics
+        if: always()
+        shell: bash
+        run: |
+          docker ps -a > datahub-docker-ps.txt 2>&1 || true
+          docker compose ls > datahub-compose-ls.txt 2>&1 || true
+          df -h > disk-usage.txt 2>&1 || true
+
+      - name: Upload verified live evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-live-datahub-evidence
+          path: |
+            .toxicjoin/datahub-seed.json
+            .toxicjoin/datahub-spike.json
+            datahub-gms-health.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload live integration diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-live-datahub-diagnostics
+          path: |
+            .toxicjoin/datahub-seed.json
+            datahub-seed.log
+            datahub-spike.log
+            datahub-quickstart.log
+            datahub-docker-ps.txt
+            datahub-compose-ls.txt
+            disk-usage.txt
+          if-no-files-found: warn
+          retention-days: 14

@@ -247,39 +247,199 @@ def test_save_decision_extracts_nested_document_urn() -> None:
     assert arguments["related_assets"] == ["urn:li:dataset:test"]
 
 
-def test_independent_marker_readback_rejects_missing_marker() -> None:
-    urn = "urn:li:document:toxicjoin-decision-123"
-    transport = FakeTransport(
-        responses={"get_entities": [[{"urn": urn, "content": "other"}]]}
+
+def _grep_documents_contract() -> McpToolDefinition:
+    return McpToolDefinition(
+        name="grep_documents",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "urns": {"type": "array"},
+                "pattern": {"type": "string"},
+                "context_chars": {"type": "integer"},
+                "max_matches_per_doc": {"type": "integer"},
+                "start_offset": {"type": "integer"},
+            },
+        },
     )
 
-    with pytest.raises(DataHubMcpError, match="verification marker"):
+
+def test_independent_marker_readback_requires_document_content_tool() -> None:
+    urn = "urn:li:document:toxicjoin-decision-123"
+    client = DataHubMcpClient(FakeTransport())
+    asyncio.run(client.discover_and_validate(require_mutations=False))
+
+    with pytest.raises(DataHubMcpContractError, match="grep_documents"):
         asyncio.run(
-            DataHubMcpClient(transport).verify_document_marker(
+            client.verify_document_marker(
                 urn,
                 "TOXICJOIN_MARKER_ABC",
             )
         )
 
 
-def test_independent_marker_readback_accepts_nested_content() -> None:
+def test_independent_marker_readback_rejects_missing_marker() -> None:
+    urn = "urn:li:document:toxicjoin-decision-123"
+    transport = FakeTransport(
+        tools=_official_contracts() + (_grep_documents_contract(),),
+        responses={
+            "grep_documents": [
+                {
+                    "results": [],
+                    "total_matches": 0,
+                    "documents_with_matches": 0,
+                }
+            ]
+        },
+    )
+    client = DataHubMcpClient(transport)
+    asyncio.run(client.discover_and_validate(require_mutations=False))
+
+    with pytest.raises(DataHubMcpError, match="verification marker"):
+        asyncio.run(
+            client.verify_document_marker(
+                urn,
+                "TOXICJOIN_MARKER_ABC",
+            )
+        )
+
+
+def test_independent_marker_readback_accepts_grep_evidence() -> None:
     urn = "urn:li:document:toxicjoin-decision-123"
     marker = "TOXICJOIN_MARKER_ABC"
     transport = FakeTransport(
+        tools=_official_contracts() + (_grep_documents_contract(),),
+        responses={
+            "grep_documents": [
+                {
+                    "results": [
+                        {
+                            "urn": urn,
+                            "title": "ToxicJoin decision",
+                            "matches": [
+                                {
+                                    "excerpt": f"marker: {marker}",
+                                    "position": 12,
+                                }
+                            ],
+                            "total_matches": 1,
+                        }
+                    ],
+                    "total_matches": 1,
+                    "documents_with_matches": 1,
+                }
+            ]
+        },
+    )
+    client = DataHubMcpClient(transport)
+    asyncio.run(client.discover_and_validate(require_mutations=False))
+
+    evidence = asyncio.run(client.verify_document_marker(urn, marker))
+
+    assert evidence["urn"] == urn
+
+def test_get_entities_accepts_fastmcp_collection_result_envelope() -> None:
+    urn = "urn:li:dataset:test"
+    transport = FakeTransport(
+        responses={"get_entities": [{"result": [{"urn": urn}]}]}
+    )
+
+    entities = asyncio.run(DataHubMcpClient(transport).get_entities((urn,)))
+
+    assert entities == ({"urn": urn},)
+
+
+def test_get_entities_still_accepts_bare_list() -> None:
+    urn = "urn:li:dataset:test"
+    transport = FakeTransport(responses={"get_entities": [[{"urn": urn}]]})
+
+    entities = asyncio.run(DataHubMcpClient(transport).get_entities((urn,)))
+
+    assert entities == ({"urn": urn},)
+
+
+def test_get_entities_rejects_nonstandard_result_envelope() -> None:
+    urn = "urn:li:dataset:test"
+    transport = FakeTransport(
         responses={
             "get_entities": [
-                [
-                    {
-                        "urn": urn,
-                        "document": {"properties": {"contents": marker}},
-                    }
-                ]
+                {"result": [{"urn": urn}], "metadata": {"unsafe": True}}
             ]
         }
     )
 
-    entity = asyncio.run(
-        DataHubMcpClient(transport).verify_document_marker(urn, marker)
+    with pytest.raises(DataHubMcpError, match="unexpected payload"):
+        asyncio.run(DataHubMcpClient(transport).get_entities((urn,)))
+
+def test_lineage_normalizes_official_upstream_search_results() -> None:
+    relationship = {
+        "entity": {"urn": "urn:li:dataset:upstream"},
+        "degree": 1,
+        "lineageColumns": ["purchase_amount"],
+    }
+    transport = FakeTransport(
+        responses={
+            "get_lineage": [
+                {
+                    "upstreams": {
+                        "searchResults": [relationship],
+                        "returned": 1,
+                        "hasMore": False,
+                    },
+                    "metadata": {
+                        "queryType": "column-level-lineage"
+                    },
+                }
+            ]
+        }
     )
 
-    assert entity["urn"] == urn
+    lineage = asyncio.run(
+        DataHubMcpClient(transport).get_lineage(
+            "urn:li:dataset:test",
+            column="churn_score",
+            upstream=True,
+        )
+    )
+
+    assert lineage["relationships"] == [relationship]
+    assert lineage["count"] == 1
+
+
+def test_lineage_preserves_valid_legacy_relationships() -> None:
+    relationship = {"source": "a", "target": "b", "degree": 1}
+    transport = FakeTransport(
+        responses={
+            "get_lineage": [
+                {"relationships": [relationship], "count": 1}
+            ]
+        }
+    )
+
+    lineage = asyncio.run(
+        DataHubMcpClient(transport).get_lineage(
+            "urn:li:dataset:test"
+        )
+    )
+
+    assert lineage["relationships"] == [relationship]
+    assert lineage["count"] == 1
+
+
+def test_lineage_rejects_malformed_official_search_results() -> None:
+    transport = FakeTransport(
+        responses={
+            "get_lineage": [
+                {"upstreams": {"searchResults": "not-a-list"}}
+            ]
+        }
+    )
+
+    with pytest.raises(DataHubMcpError, match="searchResults"):
+        asyncio.run(
+            DataHubMcpClient(transport).get_lineage(
+                "urn:li:dataset:test",
+                column="churn_score",
+            )
+        )
+
