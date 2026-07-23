@@ -1,0 +1,17 @@
+{
+  "scenario_id": "rewrite-churn-regions",
+  "initial_decision": "REWRITE",
+  "reason": "SMALL_GROUP_RISK",
+  "safe_sql_fragment": "HAVING COUNT(DISTINCT c.customer_id) >= 20",
+  "effective_decision": "ALLOW",
+  "verification": {
+    "status": "passed",
+    "result_groups": 3,
+    "distinct_subjects_per_group": 40
+  },
+  "receipt_contains_result_rows": false,
+  "evidence": [
+    "docs/judge-testing.md",
+    "docs/evidence/benchmark.md"
+  ]
+}
