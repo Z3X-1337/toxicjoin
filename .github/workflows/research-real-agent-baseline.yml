@@ -1,0 +1,215 @@
+name: Research Real Agent Blind Baseline
+
+on:
+  pull_request:
+    paths:
+      - "research/agent_baseline/**"
+      - ".github/workflows/research-real-agent-baseline.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  models: read
+
+concurrency:
+  group: research-real-agent-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-agent-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DATAHUB_GMS_URL: http://127.0.0.1:8080
+      DATAHUB_GMS_TOKEN: local-quickstart-auth-disabled
+      DATAHUB_MCP_COMMAND: uvx
+      DATAHUB_MCP_ARGS: --from mcp-server-datahub==0.6.0 mcp-server-datahub
+      DATAHUB_MCP_TIMEOUT_SECONDS: "90"
+      TOOLS_IS_MUTATION_ENABLED: "true"
+      DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED: "false"
+      SAVE_DOCUMENT_TOOL_ENABLED: "true"
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc || true
+          docker system prune --all --force || true
+          df -h
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ToxicJoin and DataHub dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip wheel setuptools uv
+          python -m pip install -e '.[datahub]'
+          python -m py_compile research/agent_baseline/run_real_agent.py
+          datahub version
+          uvx --from mcp-server-datahub==0.6.0 mcp-server-datahub --help >/dev/null 2>&1 || true
+
+      - name: Start DataHub OSS quickstart
+        shell: bash
+        run: |
+          set -o pipefail
+          datahub docker quickstart 2>&1 | tee research-real-agent-datahub-quickstart.log
+
+      - name: Verify DataHub services
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent --show-error http://127.0.0.1:8080/health > research-real-agent-datahub-health.txt; then
+              break
+            fi
+            sleep 5
+          done
+          curl --fail --silent --show-error http://127.0.0.1:8080/health
+          curl --fail --silent --show-error http://127.0.0.1:9002/ >/dev/null
+
+      - name: Download unchanged official UCI source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p research-artifacts/real-agent
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output research-artifacts/real-agent/uci-diabetes-296.zip \
+            'https://archive.ics.uci.edu/static/public/296/diabetes%2B130-us%2Bhospitals%2Bfor%2Byears%2B1999-2008.zip'
+          echo 'f82ac129da2ddd2299391ff6fbae3a6a58b3edcf59ac9d7bd480c00fe453112a  research-artifacts/real-agent/uci-diabetes-296.zip' | sha256sum --check --strict
+
+      - name: Build unchanged typed external warehouse
+        run: |
+          python research/external_validation/build_external_warehouse.py \
+            --source research-artifacts/real-agent/uci-diabetes-296.zip \
+            --database research-artifacts/real-agent/external-typed.duckdb \
+            --report research-artifacts/real-agent/warehouse-profile.json
+
+      - name: Assert preregistered warehouse fingerprint
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          profile = json.loads(Path('research-artifacts/real-agent/warehouse-profile.json').read_text())
+          assert profile['warehouse_profile_sha256'] == 'd56cb3525915265d148c29ed299000ec2226e6c400a0eb9fcc31a1fe9ab76868'
+          assert profile['rows_filtered'] == 0
+          assert profile['rows_synthesized'] == 0
+          assert all(v == 0 for v in profile['cast_failure_counts'].values())
+          PY
+
+      - name: Seed unchanged frozen stewardship metadata into live DataHub
+        shell: bash
+        run: |
+          set -euo pipefail
+          python research/external_validation/seed_external_datahub.py \
+            --database research-artifacts/real-agent/external-typed.duckdb \
+            --stewardship research/external_validation/stewardship-map.json \
+            --warehouse-profile research-artifacts/real-agent/warehouse-profile.json \
+            --report research-artifacts/real-agent/datahub-external-seed.json \
+            --asset-map research-artifacts/real-agent/datahub-external-assets.json \
+            --yes 2>&1 | tee research-real-agent-datahub-seed.log
+
+      - name: Re-verify live DataHub snapshot before model inference
+        shell: bash
+        run: |
+          set -o pipefail
+          python research_diagnostics/verify_external_datahub.py \
+            --asset-map research-artifacts/real-agent/datahub-external-assets.json \
+            --warehouse-profile research-artifacts/real-agent/warehouse-profile.json \
+            --output research-artifacts/real-agent/observed-datahub-mcp.json \
+            2>&1 | tee research-real-agent-datahub-mcp.log
+
+      - name: Run preregistered real-model blind baseline
+        shell: bash
+        run: |
+          set -o pipefail
+          python research/agent_baseline/run_real_agent.py \
+            --preregistration research/agent_baseline/preregistration.json \
+            --tasks research/external_validation/blind_tasks.json \
+            --asset-map research-artifacts/real-agent/datahub-external-assets.json \
+            --database research-artifacts/real-agent/external-typed.duckdb \
+            --receipts research-artifacts/real-agent/receipts \
+            --output research-artifacts/real-agent/real-agent-baseline.json \
+            2>&1 | tee research-real-agent-baseline.log
+
+      - name: Validate experiment completeness without censoring research failures
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path('research-artifacts/real-agent/real-agent-baseline.json').read_text())
+          assert report['model_id'] == 'openai/gpt-4.1'
+          assert report['task_count'] == 24
+          assert report['datahub_verified_entity_count'] == 5
+          assert report['datahub_field_count'] == 59
+          assert report['patient_rows_in_report'] is False
+          assert len(report['records']) == 24
+
+          status = report['generation_status_counts']
+          provider_failures = int(status.get('transport_or_provider_failure', 0))
+          assert provider_failures == 0, (
+              'primary baseline is incomplete because one or more model/provider '
+              f'requests never produced a response: {provider_failures}'
+          )
+
+          expected_ids = {f'E{i:02d}' for i in range(1, 25)}
+          observed_ids = {record['task_id'] for record in report['records']}
+          assert observed_ids == expected_ids
+
+          # Security/utility failures are deliberately NOT asserted to zero here.
+          # They are empirical results that must remain in the baseline report.
+          print(json.dumps({
+              'generation_status_counts': report['generation_status_counts'],
+              'structural_task_match_count': report['structural_task_match_count'],
+              'initial_decision_counts': report['initial_decision_counts'],
+              'effective_decision_counts': report['effective_decision_counts'],
+              'executed_count': report['executed_count'],
+              'unsafe_effective_allow_count': report['unsafe_effective_allow_count'],
+              'unsafe_original_group_execution_count': report['unsafe_original_group_execution_count'],
+              'false_block_count': report['false_block_count'],
+              'report_sha256': report['report_sha256'],
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: Remove patient data and local receipts before artifact upload
+        if: always()
+        shell: bash
+        run: |
+          rm -f research-artifacts/real-agent/uci-diabetes-296.zip
+          rm -f research-artifacts/real-agent/external-typed.duckdb
+          rm -rf research-artifacts/real-agent/receipts
+
+      - name: Capture diagnostics
+        if: always()
+        shell: bash
+        run: |
+          docker ps -a > research-real-agent-docker-ps.txt 2>&1 || true
+          df -h > research-real-agent-disk.txt 2>&1 || true
+
+      - name: Upload real-agent research evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-real-agent-baseline
+          path: |
+            research-artifacts/real-agent/warehouse-profile.json
+            research-artifacts/real-agent/datahub-external-seed.json
+            research-artifacts/real-agent/datahub-external-assets.json
+            research-artifacts/real-agent/observed-datahub-mcp.json
+            research-artifacts/real-agent/real-agent-baseline.json
+            research-real-agent-baseline.log
+            research-real-agent-datahub-mcp.log
+            research-real-agent-docker-ps.txt
+            research-real-agent-disk.txt
+          if-no-files-found: warn
+          retention-days: 30
