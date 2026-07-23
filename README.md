@@ -12,6 +12,16 @@ Individually acceptable datasets can become sensitive when an agent joins them. 
 
 Every path creates a hashed decision receipt. Receipts contain metadata and verification evidence, but never raw result rows.
 
+## Public judge replay
+
+Open the verified deterministic Replay:
+
+https://toxicjoin-replay.vercel.app/
+
+The public site is explicitly labeled as a Replay. It demonstrates the exact judge-interface artifact that passed CI, but it does not claim live DuckDB execution or a live DataHub write. The Docker/FastAPI package is the executable product path, and the separate live DataHub evidence proves the real SDK/MCP integration.
+
+Browser evidence: [docs/evidence/hosted-replay.md](docs/evidence/hosted-replay.md).
+
 ## Current status
 
 The deterministic fixture-mode vertical slice works end to end:
@@ -192,7 +202,7 @@ The synthetic warehouse deliberately contains:
 - DataHub write verification occurs from a new MCP process, not an in-memory write result.
 - CI fails on any benchmark false allow or unsafe effective allow.
 
-See [SECURITY.md](SECURITY.md), [docs/threat-model.md](docs/threat-model.md), [docs/datahub-live-integration.md](docs/datahub-live-integration.md), [docs/evidence/datahub-live.md](docs/evidence/datahub-live.md), and [docs/judge-testing.md](docs/judge-testing.md).
+See [SECURITY.md](SECURITY.md), [docs/threat-model.md](docs/threat-model.md), [docs/datahub-live-integration.md](docs/datahub-live-integration.md), [docs/evidence/datahub-live.md](docs/evidence/datahub-live.md), [docs/evidence/hosted-replay.md](docs/evidence/hosted-replay.md), and [docs/judge-testing.md](docs/judge-testing.md).
 
 ## Deterministic scenarios
 
@@ -253,7 +263,8 @@ src/toxicjoin/
 
 config/           DataHub asset manifest and policy configuration
 demo/fixtures/    human-readable metadata fixture mirrored by tests
-docs/evidence/    generated benchmark and live DataHub evidence with reproducible hashes
+docs/evidence/    benchmark, live DataHub, and hosted Replay evidence
+public/replay/    exact CI-produced static judge-interface bundle and provenance
 tests/            unit, integration, adversarial, API, MCP, and benchmark coverage
 docs/             scope, PRD, spec, threat model, live guide, judge guide, and evidence
 ```
