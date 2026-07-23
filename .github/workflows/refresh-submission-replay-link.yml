@@ -1,5 +1,6 @@
 name: Refresh Submission Replay Link
 
+# Temporary review-only workflow; remove after the verified link is committed.
 on:
   push:
     branches: [agent/submission-packet]
