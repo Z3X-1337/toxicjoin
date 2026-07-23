@@ -6,7 +6,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -76,22 +76,9 @@ jobs:
         with:
           node-version: "22.16.0"
 
-      - name: Install exact frontend dependencies
+      - name: Install pinned frontend dependencies
         working-directory: apps/web
         run: npm install --no-audit --no-fund
-
-      - name: Persist generated frontend lockfile on this branch
-        if: github.event_name == 'pull_request' && github.actor != 'github-actions[bot]'
-        shell: bash
-        run: |
-          git add apps/web/package-lock.json
-          if git diff --cached --quiet; then
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Lock judge interface dependencies"
-          git push origin HEAD:${{ github.head_ref }}
 
       - name: Typecheck, test, and build judge interface
         working-directory: apps/web
@@ -106,7 +93,7 @@ jobs:
           name: toxicjoin-web-lock
           path: apps/web/package-lock.json
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
 
       - name: Upload judge interface build
         if: success()
