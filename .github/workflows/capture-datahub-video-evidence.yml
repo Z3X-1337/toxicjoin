@@ -1,6 +1,7 @@
 name: Capture Real DataHub Video Evidence
 
 on:
+  workflow_call:
   push:
     branches: [agent/video-captures]
     paths:
