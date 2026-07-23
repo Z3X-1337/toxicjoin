@@ -24,11 +24,12 @@ jobs:
     env:
       DATAHUB_GMS_URL: http://127.0.0.1:8080
       DATAHUB_GMS_TOKEN: local-quickstart-auth-disabled
-      DATAHUB_MCP_COMMAND: npx
-      DATAHUB_MCP_ARGS: -y @acryldata/mcp-server-datahub@0.6.0
+      DATAHUB_MCP_COMMAND: uvx
+      DATAHUB_MCP_ARGS: --from mcp-server-datahub==0.6.0 mcp-server-datahub
       DATAHUB_MCP_TIMEOUT_SECONDS: "90"
       TOOLS_IS_MUTATION_ENABLED: "true"
       DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED: "false"
+      SAVE_DOCUMENT_TOOL_ENABLED: "true"
 
     steps:
       - name: Check out repository
@@ -46,20 +47,14 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22.16.0"
-
       - name: Install ToxicJoin and live DataHub dependencies
         shell: bash
         run: |
           set -o pipefail
-          python -m pip install --upgrade pip wheel setuptools
+          python -m pip install --upgrade pip wheel setuptools uv
           python -m pip install -e '.[datahub]'
           datahub version
-          node --version
-          npx --yes @acryldata/mcp-server-datahub@0.6.0 --help >/dev/null 2>&1 || true
+          uvx --from mcp-server-datahub==0.6.0 mcp-server-datahub --help >/dev/null 2>&1 || true
 
       - name: Start DataHub OSS quickstart
         shell: bash
