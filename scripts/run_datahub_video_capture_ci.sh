@@ -151,7 +151,6 @@ A rewrite is never trusted merely because ToxicJoin produced it. Unsupported or 
             title='ToxicJoin Decision — Flagship Rewrite Verified',
             content=content,
             related_assets=dataset_urns,
-            external_url='https://github.com/Z3X-1337/toxicjoin',
         )
 
     manifest = {
