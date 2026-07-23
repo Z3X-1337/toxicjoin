@@ -76,24 +76,33 @@ jobs:
         run: |
           set -euo pipefail
           api="https://api.github.com/repos/${REPOSITORY}/pages"
+          configured=false
+
           for attempt in $(seq 1 60); do
             status=$(curl --silent --output pages-status.json --write-out '%{http_code}' \
               -H "Accept: application/vnd.github+json" \
               -H "Authorization: Bearer ${GH_TOKEN}" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "$api" || true)
-            if [[ "$status" == "200" ]]; then
-              break
-            fi
-            echo "Pages API attempt $attempt returned HTTP ${status:-unavailable}."
-            sleep 5
+
+            case "$status" in
+              200)
+                configured=true
+                break
+                ;;
+              404|202|000)
+                echo "Pages API attempt $attempt returned HTTP ${status:-unavailable}; retrying."
+                sleep 5
+                ;;
+              *)
+                echo "Permanent Pages API error: HTTP $status" >&2
+                cat pages-status.json >&2 || true
+                exit 1
+                ;;
+            esac
           done
 
-          test "$(curl --silent --output pages-status.json --write-out '%{http_code}' \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "$api")" = "200"
+          test "$configured" = "true"
 
           python - <<'PY'
           import json
@@ -120,16 +129,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          reachable=false
           for attempt in $(seq 1 60); do
             status=$(curl --location --silent --output hosted-replay.html --write-out '%{http_code}' "$REPLAY_URL" || true)
             if [[ "$status" == "200" ]]; then
               echo "Hosted replay returned HTTP 200 after $attempt attempt(s)."
+              reachable=true
               break
+            fi
+            if [[ "$status" != "404" && "$status" != "202" && "$status" != "000" ]]; then
+              echo "Permanent hosted replay HTTP error: $status" >&2
+              exit 1
             fi
             echo "Attempt $attempt returned HTTP ${status:-unavailable}; retrying."
             sleep 5
           done
-          test "$(curl --location --silent --output hosted-replay.html --write-out '%{http_code}' "$REPLAY_URL")" = "200"
+          test "$reachable" = "true"
           grep -q '<div id="root"></div>' hosted-replay.html
           grep -q '/toxicjoin/assets/' hosted-replay.html
 
