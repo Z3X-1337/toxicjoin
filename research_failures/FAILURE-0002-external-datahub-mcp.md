@@ -1,31 +1,46 @@
 # External DataHub Failure 0002 — MCP snapshot verification
 
-Status: **FAILED_UNDIAGNOSED**
+Status: **DIAGNOSED — `TOXICJOIN_ADAPTER / CLASSIFICATION_VISIBILITY`**
 
 The first fully progressed external DataHub run reached a real DataHub OSS instance, successfully seeded the frozen UCI stewardship metadata through the DataHub Python SDK, and then failed while verifying the same governed snapshot through the official DataHub MCP server.
 
 Baseline:
 
 - Workflow: `Research External DataHub Validation`
-- Run: `30051723182`
-- Job: `89355084740`
-- Tested research head: `14ec5fedb3e858c04afcc7a8b3423f764952e27b`
-- Failed step: `Verify governed snapshot through official DataHub MCP`
+- First failing run: `30051723182`
+- First diagnostic run with observed metadata: `30052481732`
+- Diagnostic job: `89357297982`
+- Diagnostic artifact: `8581696049`
+- Artifact digest: `sha256:8026010b0c6bc068548424ab6104ceeac8321230d994aeb4c0ce940433e54ff4`
+- Original tested research head: `14ec5fedb3e858c04afcc7a8b3423f764952e27b`
 
-Stages that passed before the failure:
+## What the observed MCP run proved
 
-1. DataHub OSS quickstart started successfully.
-2. DataHub GMS and frontend health checks passed.
-3. The official UCI Diabetes archive was downloaded.
-4. The typed external DuckDB profile was rebuilt from the official source.
-5. The frozen stewardship map was seeded into the live DataHub instance through the DataHub SDK.
-6. The failure occurred only when the official MCP verification attempted to read/normalize the governed snapshot.
+The failure was narrower than the original error suggested:
 
-All stable ToxicJoin gates on the same research head remained green, including normal CI, adversarial mutation evidence, compositional ablation, governance-dependency evidence, external source acquisition, and the proof-carrying authorization gate.
+- configured entities returned: **5/5**;
+- schema fields returned: **59/59**;
+- production `DataHubSnapshotLoader` completed entity/schema/lineage loading;
+- flagship upstream lineage relationship count: **1**;
+- raw external source lineage was observed;
+- normalized categories: **59 `UNCLASSIFIED`**;
+- every frozen expected classification count therefore remained unmet.
 
-## Original expectations — frozen
+No stewardship category or expected count was changed after observing this result.
 
-The diagnostic rerun must not weaken these expectations based on observed output:
+## Root cause
+
+DataHub MCP v0.6.0 distinguishes system schema metadata from user-edited field metadata. Its response cleaner can expose curated field tags and glossary terms as `editedTags` and `editedGlossaryTerms` when they differ from system metadata.
+
+DataHub's Python SDK `SchemaField.add_tag()` uses editable schema metadata outside ingestion attribution. ToxicJoin's live DataHub adapter, however, only parsed the `tags` and `glossaryTerms` response keys. It did not parse or merge the MCP `editedTags` / `editedGlossaryTerms` forms.
+
+This means a legitimate governance annotation written through the SDK/UI-style editable metadata path could become invisible to ToxicJoin's classifier even though DataHub returned the dataset, schema, and lineage correctly.
+
+Classification: `TOXICJOIN_ADAPTER / CLASSIFICATION_VISIBILITY`.
+
+## Original expectations — still frozen
+
+The fix is not allowed to weaken these expectations:
 
 - 5 governed DataHub entities are returned by MCP;
 - 59 governed schema fields are visible;
@@ -39,19 +54,11 @@ The diagnostic rerun must not weaken these expectations based on observed output
 - upstream lineage for flagship `outcomes.readmitted` is non-empty and reaches the raw external source lineage;
 - no patient rows are retained in diagnostic evidence.
 
-## Scientific handling
+## Corrective action
 
-No stewardship category, expected count, or lineage expectation will be changed before the observed MCP payload is captured.
+1. Add regression coverage for the official MCP cleaned response forms `editedTags` and `editedGlossaryTerms`.
+2. Merge system and edited classification metadata in the ToxicJoin adapter.
+3. Preserve fail-closed behavior when merged metadata implies conflicting sensitivity categories.
+4. Re-run the same live DataHub OSS + official MCP experiment against the unchanged UCI source, unchanged stewardship map, and unchanged 59-field expectations.
 
-The next run is diagnostic only. It will persist safe metadata observed from the official MCP before evaluating the frozen expectations: entity URNs, field paths, field tags/glossary terms, normalized categories, discovered tool names, lineage relationship metadata, and any adapter error type/message. Raw patient rows are never included.
-
-After the diagnostic artifact is inspected, the failure will be classified as one of:
-
-- `MCP_CONTRACT_OR_PAYLOAD`
-- `CLASSIFICATION_VISIBILITY`
-- `LINEAGE_SEMANTICS`
-- `TOXICJOIN_ADAPTER`
-- `DATAHUB_SDK_SEED`
-- `INFRASTRUCTURE`
-
-Any fix must retain this baseline and report before/after behavior.
+The corrective change is considered confirmed only if the real external DataHub run passes without changing the frozen governance map or expected category counts.
