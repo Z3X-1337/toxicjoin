@@ -36,9 +36,28 @@ page.on("pageerror", (error) => pageErrors.push(String(error)));
 
 const captures = [];
 
+async function dismissProductTours() {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const closeButton = page
+      .locator('#___reactour button.reactour__close, #___reactour button[aria-label="Close"]')
+      .first();
+    if ((await closeButton.count()) === 0 || !(await closeButton.isVisible())) {
+      return;
+    }
+    await closeButton.click();
+    await page.waitForTimeout(300);
+  }
+
+  const remaining = page.locator('#___reactour .reactour__helper--is-open').first();
+  if ((await remaining.count()) > 0 && (await remaining.isVisible())) {
+    throw new Error("DataHub product tour remained open after explicit close attempts");
+  }
+}
+
 async function settle() {
   await page.waitForLoadState("domcontentloaded");
   await page.waitForTimeout(1200);
+  await dismissProductTours();
 }
 
 async function screenshot(name, evidence = []) {
@@ -195,6 +214,7 @@ async function searchAndOpen(query, visibleLabel) {
     throw new Error(`Search result not found for ${query}: expected visible label ${visibleLabel}`);
   }
 
+  await dismissProductTours();
   await result.click();
   await settle();
 }
@@ -212,6 +232,7 @@ try {
   }
   await lineageControl.click();
   await page.waitForTimeout(1600);
+  await dismissProductTours();
   await screenshot("03-retention-scores-lineage", ["retention_scores", "Lineage"]);
 
   await searchAndOpen("Compositional Risk Review", "Compositional Risk Review");
