@@ -66,10 +66,8 @@ page.on("requestfailed", (request) => {
 const sleep = (milliseconds) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-const entityUrl = (entityType, urn, tab = "") => {
-  const suffix = tab ? `/${tab}` : "/";
-  return `${baseUrl}/${entityType}/${encodeURIComponent(urn)}${suffix}`;
-};
+const entityUrl = (entityType, urn) =>
+  `${baseUrl}/${entityType}/${encodeURIComponent(urn)}/`;
 
 async function waitForAnyText(candidates, timeout = 30_000) {
   const deadline = Date.now() + timeout;
@@ -127,14 +125,7 @@ async function writePageDiagnostics(prefix, error = null) {
     .catch(() => {});
 }
 
-async function capture(name, url, expectedText) {
-  const response = await page.goto(url, {
-    waitUntil: "domcontentloaded",
-    timeout: 60_000,
-  });
-  if (response && response.status() >= 400) {
-    throw new Error(`${name}: HTTP ${response.status()} for ${url}`);
-  }
+async function captureCurrent(name, expectedText) {
   const matchedText = await waitForAnyText(expectedText, 45_000);
   await sleep(1_600);
   await page.screenshot({
@@ -149,48 +140,56 @@ async function capture(name, url, expectedText) {
   await sleep(1_600);
 }
 
-let captureError = null;
-try {
-  await page.goto(baseUrl, {
+async function capture(name, url, expectedText) {
+  const response = await page.goto(url, {
+    waitUntil: "domcontentloaded",
+    timeout: 60_000,
+  });
+  if (response && response.status() >= 400) {
+    throw new Error(`${name}: HTTP ${response.status()} for ${url}`);
+  }
+  await captureCurrent(name, expectedText);
+}
+
+async function loginAsQuickstartAdmin() {
+  const loginUrl = `${baseUrl}/login`;
+  await page.goto(loginUrl, {
     waitUntil: "domcontentloaded",
     timeout: 60_000,
   });
 
-  const usernameCandidates = [
-    page.getByTestId("username"),
-    page.locator('input[name="username"]'),
-    page.locator('input[placeholder*="username" i]'),
-  ];
-  let username = null;
-  for (const candidate of usernameCandidates) {
-    if (await candidate.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      username = candidate;
-      break;
-    }
-  }
+  const username = page.getByTestId("username");
+  const password = page.getByTestId("password");
+  const signIn = page.getByTestId("sign-in");
+  await username.waitFor({ state: "visible", timeout: 30_000 });
+  await password.waitFor({ state: "visible", timeout: 30_000 });
+  await signIn.waitFor({ state: "visible", timeout: 30_000 });
 
-  if (username) {
-    await username.fill("datahub");
-    const passwordCandidates = [
-      page.getByTestId("password"),
-      page.locator('input[name="password"]'),
-      page.locator('input[type="password"]'),
-    ];
-    let password = null;
-    for (const candidate of passwordCandidates) {
-      if (await candidate.isVisible({ timeout: 2_000 }).catch(() => false)) {
-        password = candidate;
-        break;
-      }
-    }
-    if (!password) {
-      throw new Error("DataHub login page was visible but no password field was found");
-    }
-    await password.fill("datahub");
-    await password.press("Enter");
-    await waitForAnyText(["DataHub", "Search", "Home"], 45_000);
-    await sleep(1_200);
+  await username.fill(process.env.DATAHUB_ADMIN_USERNAME ?? "datahub");
+  await password.fill(process.env.DATAHUB_ADMIN_PASSWORD ?? "datahub");
+  await signIn.click();
+  await page.waitForURL((url) => !url.pathname.includes("login"), {
+    waitUntil: "networkidle",
+    timeout: 45_000,
+  });
+  await page.evaluate(() => localStorage.setItem("skipWelcomeModal", "true"));
+  await sleep(1_200);
+}
+
+async function clickEntityTab(testId, fallbackName) {
+  const byTestId = page.getByTestId(testId);
+  if (await byTestId.isVisible({ timeout: 8_000 }).catch(() => false)) {
+    await byTestId.click();
+    return;
   }
+  const byText = page.getByText(fallbackName, { exact: true }).first();
+  await byText.waitFor({ state: "visible", timeout: 15_000 });
+  await byText.click();
+}
+
+let captureError = null;
+try {
+  await loginAsQuickstartAdmin();
 
   await capture(
     "01-dataset-overview",
@@ -198,15 +197,15 @@ try {
     ["retention_scores", "retention scores", "Retention Scores"],
   );
 
-  await capture(
+  await clickEntityTab("schema-tab", "Schema");
+  await captureCurrent(
     "02-governed-schema",
-    entityUrl("dataset", datasetUrn, "Schema"),
     ["churn_score", "customer_id", "Schema"],
   );
 
-  await capture(
+  await clickEntityTab("lineage-tab", "Lineage");
+  await captureCurrent(
     "03-column-lineage",
-    entityUrl("dataset", datasetUrn, "Lineage"),
     ["Lineage", "Upstream", "retention_scores"],
   );
 
