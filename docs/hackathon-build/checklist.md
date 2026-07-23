@@ -54,12 +54,12 @@ Wow moment: a query built from individually acceptable datasets becomes unsafe o
   Acceptance: IDs and timestamps may vary while semantic content remains hash-stable; unknown fields, traversal IDs, lifecycle contradictions, overwrites, and tampered files are rejected; no result rows enter persisted receipts.
   Verified: `pytest tests/unit/test_receipts.py -q` and full CI on Python 3.11/3.12.
 
-- [ ] **9. Complete real DataHub integration spike**
+- [x] **9. Complete real DataHub integration spike**
   Spec ref: `spec.md > DataHub context resolver`, `DataHub write-back`, and `Definition of done for the integration spike`
-  What is built: Provider-neutral context models; official SDK seed plan for five datasets, 19 fields, controlled tags, glossary terms, and four column-lineage relationships; official MCP stdio transport; runtime tool/schema validation; bounded pagination; normalized live metadata; fail-closed classifications; hard operation timeouts; minimal child environment; Decision write; fresh-process read-back verification; sanitized atomic seed/spike reports; complete fake-SDK and fake-MCP tests.
-  Current gate: Code and protocol are green in CI on Python 3.11/3.12. A real Docker/hosted DataHub run has not yet produced the final `.toxicjoin/datahub-spike.json` evidence report, so this item remains unchecked.
-  Acceptance: Sanitized evidence from the final demo environment proves Python -> DataHub read -> lineage read -> Decision write -> new MCP process -> independent read-back; failures exit non-zero.
-  Verify: `toxicjoin-datahub-seed --yes && toxicjoin-datahub-spike --verify`
+  What was built: Provider-neutral context models; official SDK seed for five datasets, 19 governed fields, nine tags, seven glossary terms, and four column-lineage writes; official MCP stdio transport; runtime tool/schema validation; bounded pagination; normalized live metadata; fail-closed classifications; hard operation timeouts; minimal child environment; entity/schema/lineage reads; Decision write; process closure; fresh-process `grep_documents` read-back; sanitized atomic reports; reproducible evidence hashes; and complete fake-SDK/fake-MCP regression tests.
+  Live result: GitHub Actions run `29975433969` passed against DataHub OSS. MCP read three upstream relationships for the flagship field, persisted `urn:li:document:shared-8d25384c-c52d-4864-a103-1203b0c34bf6`, and verified its unique marker from a fresh MCP process.
+  Acceptance: Sanitized evidence proves SDK seed -> MCP entity/schema/lineage reads -> Decision write -> first process closed -> new MCP process -> persisted-content marker read-back; failures exit non-zero.
+  Verified: `docs/evidence/datahub-live.md`, `docs/evidence/datahub-live-seed.json`, `docs/evidence/datahub-live-spike.json`, and GitHub Actions run https://github.com/Z3X-1337/toxicjoin/actions/runs/29975433969.
 
 - [x] **10. Expose API and curated scenarios**
   Spec ref: `spec.md > API contracts`
@@ -76,6 +76,7 @@ Wow moment: a query built from individually acceptable datasets becomes unsafe o
 
 - [ ] **12. Build hosted replay and Devpost handoff**
   Spec ref: `spec.md > Modes`, `Deployment`, and `Demo contract`
-  What to build: Clearly labeled recorded replay, SQL diff, evidence graph, verification, DataHub write-back proof, README, video storyboard, and submission links.
-  Acceptance: A judge understands and verifies the flagship flow within 90 seconds; video is under three minutes; repository and Apache 2.0 are public.
-  Verify: Follow `docs/judge-testing.md` from a clean browser and complete the Devpost readiness checklist.
+  What is built: Judge decision cockpit, clearly labeled deterministic Replay, evidence graph, SQL diff, verification and receipt panels, hardened Docker/FastAPI executable path, GitHub Pages deployment workflow, Devpost draft, owner review index/checklist, real-interface cover, Microsoft neural narration specification, and under-three-minute storyboard.
+  Remaining gates: publicly verify the hosted Replay URL, receive and approve the Microsoft WAV, edit and publish the final video, replace every pending link, complete the exact-version owner review, and stop for explicit submission approval.
+  Acceptance: A judge understands and verifies the flagship flow within 90 seconds; video is under three minutes; repository and Apache 2.0 are public; owner approves the exact final packet.
+  Verify: Follow `docs/judge-testing.md` and `docs/submission/owner-review-index.md`, then complete `docs/submission/review-checklist.md`.
