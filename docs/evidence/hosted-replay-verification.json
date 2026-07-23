@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "replay_url": "https://toxicjoin-replay.vercel.app/",
+  "verified_at": "2026-07-23T04:41:40.135Z",
+  "browser_executable": "/usr/bin/google-chrome",
+  "disclosure": "API unavailable. Showing a clearly labeled deterministic replay; no live execution or DataHub write is being claimed.",
+  "source_artifact": {
+    "workflow_run": 29968713188,
+    "artifact_id": 8548808025,
+    "artifact_digest": "sha256:93c8773c931ece44f0963a0b19e839430e2e49f31fcfcb380a4a6f4c9cf382a7",
+    "source_commit": "bd8085c300a0065cc714d6e86f62f657df2d84c9"
+  },
+  "verification_run": {
+    "workflow_run": 29980181195,
+    "artifact_id": 8552895947,
+    "artifact_digest": "sha256:2b493d0da06df547c598db686014d5862130fdb2666ebd79bf029c91f1da90bd"
+  },
+  "profiles": [
+    {
+      "name": "desktop",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "full_page_screenshot": {
+        "width": 1440,
+        "height": 2756,
+        "sha256": "bedd09cd4f15a25136d6e5a40e758e1bc4994dba08a3933586608a33fb4d96e6"
+      },
+      "document_status": 200,
+      "immutable_asset_count": 2,
+      "replay_fallback_api_response_count": 3,
+      "expected_network_console_error_count": 3,
+      "horizontal_overflow": false,
+      "unexpected_console_error_count": 0,
+      "page_error_count": 0,
+      "failed_request_count": 0
+    },
+    {
+      "name": "mobile",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "full_page_screenshot": {
+        "width": 390,
+        "height": 5696,
+        "sha256": "f65ee0b163bfb3ec5f6e6af16ba878a6a8386706b6ba404c485ce6962c93bf8a"
+      },
+      "document_status": 200,
+      "immutable_asset_count": 2,
+      "replay_fallback_api_response_count": 3,
+      "expected_network_console_error_count": 3,
+      "horizontal_overflow": false,
+      "unexpected_console_error_count": 0,
+      "page_error_count": 0,
+      "failed_request_count": 0
+    }
+  ]
+}

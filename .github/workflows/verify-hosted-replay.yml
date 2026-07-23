@@ -1,0 +1,103 @@
+name: Verify Hosted Replay
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/verify-hosted-replay.yml"
+      - "scripts/verify_hosted_replay.mjs"
+      - "public/replay/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-replay-verification-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-public-replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      REPLAY_URL: https://toxicjoin-replay.vercel.app/
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.16.0"
+
+      - name: Install pinned browser automation client
+        run: npm install --no-save --no-audit --no-fund playwright-core@1.54.1
+
+      - name: Discover preinstalled Chrome or Edge
+        id: browser
+        shell: bash
+        run: |
+          set -euo pipefail
+          browser_path=""
+          for command_name in \
+            google-chrome \
+            google-chrome-stable \
+            chromium \
+            chromium-browser \
+            microsoft-edge \
+            microsoft-edge-stable; do
+            candidate=$(command -v "$command_name" || true)
+            if [[ -n "$candidate" && -x "$candidate" ]]; then
+              browser_path="$candidate"
+              break
+            fi
+          done
+
+          if [[ -z "$browser_path" ]]; then
+            browser_path=$(find /usr/bin /opt -maxdepth 4 -type f \
+              \( -name 'google-chrome*' -o -name 'chromium*' -o -name 'microsoft-edge*' \) \
+              -perm -111 2>/dev/null | head -n 1 || true)
+          fi
+
+          if [[ -z "$browser_path" ]]; then
+            echo "No supported preinstalled browser was found." >&2
+            exit 1
+          fi
+
+          echo "path=$browser_path" >> "$GITHUB_OUTPUT"
+          "$browser_path" --version
+
+      - name: Verify public HTTP response and immutable asset references
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=$(curl --location --silent --output hosted-replay.html --write-out '%{http_code}' "$REPLAY_URL")
+          test "$status" = "200"
+          grep -q '<div id="root"></div>' hosted-replay.html
+          grep -q 'cdn.jsdelivr.net/gh/Z3X-1337/toxicjoin@183571534a35be6a5ae85ed9d75308ada6eba41e/public/replay/assets/index-CIeiud0i.js' hosted-replay.html
+          grep -q 'cdn.jsdelivr.net/gh/Z3X-1337/toxicjoin@183571534a35be6a5ae85ed9d75308ada6eba41e/public/replay/assets/index-C9DIVvrs.css' hosted-replay.html
+          provenance_status=$(curl --location --silent --output hosted-provenance.json --write-out '%{http_code}' "${REPLAY_URL}provenance.json")
+          test "$provenance_status" = "200"
+          grep -q '93c8773c931ece44f0963a0b19e839430e2e49f31fcfcb380a4a6f4c9cf382a7' hosted-provenance.json
+
+      - name: Verify desktop and mobile replay in Chromium
+        env:
+          BROWSER_EXECUTABLE: ${{ steps.browser.outputs.path }}
+        run: node scripts/verify_hosted_replay.mjs
+
+      - name: Upload hosted replay verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-hosted-replay-verification
+          path: |
+            hosted-replay.html
+            hosted-provenance.json
+            artifacts/hosted-replay/verification.json
+            artifacts/hosted-replay/diagnostics.json
+            artifacts/hosted-replay/failure.json
+            artifacts/hosted-replay/desktop.png
+            artifacts/hosted-replay/mobile.png
+          if-no-files-found: warn
+          retention-days: 30
