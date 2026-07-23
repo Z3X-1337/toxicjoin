@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "evaluation_version": "1.0",
+  "policy_version": "0.1.0",
+  "ablation": "same PolicyEngine with quasi_identifier_threshold raised to 1000000, disabling the declared non-grouped pseudonym + quasi-identifiers + sensitive interaction for this finite evaluation while preserving other branches",
+  "unsafe_cases": 144,
+  "control_cases": 20,
+  "full_policy_unsafe_blocks": 144,
+  "ablated_policy_unsafe_allows": 144,
+  "unsafe_decision_changes": 144,
+  "controls_preserved": 20,
+  "gate_failures": [],
+  "report_sha256": "98c83efb95f0b7feec89a87233ab3e015dd73428c2eaaafe9f5ad9cdad9b8959",
+  "workflow_run": 30047247527,
+  "artifact_id": 8579602510,
+  "artifact_digest": "sha256:0e7d2769d28b9f19b7cf7fe07d86103122569664eeda49f64eea286b8b9932e9",
+  "tested_commit": "21a68d2850397654fc54a9f5be55836937faeb18"
+}
