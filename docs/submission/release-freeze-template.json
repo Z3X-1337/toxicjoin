@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "submission_authorized": false,
+  "project": "ToxicJoin",
+  "hackathon": "Build with DataHub: The Agent Hackathon",
+  "track": "Agents That Do Real Work",
+  "review_status": "PENDING_OWNER_APPROVAL",
+  "exact_version": {
+    "main_commit": "PENDING_FINAL_MAIN_COMMIT",
+    "repository_url": "https://github.com/Z3X-1337/toxicjoin",
+    "hosted_replay_url": "https://toxicjoin-replay.vercel.app/",
+    "video_url": "PENDING_PUBLIC_YOUTUBE_OR_VIMEO_URL",
+    "cover_sha256": "7a4c666bf173bc1492fde16bee87ea47ad0e8e3d051b4e6dd73875169f2c7ad3"
+  },
+  "required_evidence": {
+    "benchmark": "docs/evidence/benchmark.md",
+    "stable_datahub": "docs/evidence/datahub-live.md",
+    "hosted_replay": "docs/evidence/hosted-replay.md",
+    "agent_registry_preview": "docs/evidence/datahub-agent-registry.md",
+    "agent_skill": "skills/compositional-risk-review/SKILL.md",
+    "claims_map": "docs/submission/claims-evidence-map.md"
+  },
+  "approval_gate": {
+    "owner_reviewed_repository": false,
+    "owner_reviewed_replay": false,
+    "owner_reviewed_datahub_evidence": false,
+    "owner_reviewed_cover": false,
+    "owner_reviewed_final_video": false,
+    "owner_reviewed_devpost_text": false,
+    "owner_approved_exact_version": false
+  },
+  "invariants": [
+    "No Devpost submission action occurs while submission_authorized is false.",
+    "The final video must be public and shorter than three minutes.",
+    "The hosted Replay must remain explicitly labeled as non-live.",
+    "Benchmark claims must remain scoped to the declared deterministic corpus.",
+    "Agent Registry evidence must remain labeled preview/development channel.",
+    "The Agent Skill must not be described as upstream-merged unless an upstream merge actually occurs.",
+    "No Rayluno code, assets, infrastructure, branding, or submission content may appear."
+  ]
+}
