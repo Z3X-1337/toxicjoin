@@ -31,14 +31,26 @@ jobs:
         with:
           node-version: "22.16.0"
 
-      - name: Install pinned Chromium verifier
+      - name: Install pinned browser automation client
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p .replay-verifier
           cd .replay-verifier
           npm init -y >/dev/null
-          npm install --no-audit --no-fund playwright@1.54.1
-          npx playwright install --with-deps chromium
+          npm install --no-audit --no-fund playwright-core@1.54.1
+          for candidate in \
+            /usr/bin/google-chrome \
+            /usr/bin/google-chrome-stable \
+            /usr/bin/chromium \
+            /usr/bin/chromium-browser; do
+            if [[ -x "$candidate" ]]; then
+              echo "$candidate" > chrome-path.txt
+              break
+            fi
+          done
+          test -s chrome-path.txt
+          "$(cat chrome-path.txt)" --version
 
       - name: Wait for public GitHub Pages response
         shell: bash
@@ -65,20 +77,28 @@ jobs:
           node <<'NODE'
           const fs = require('fs');
           const path = require('path');
-          const { chromium } = require('./.replay-verifier/node_modules/playwright');
+          const { chromium } = require('./.replay-verifier/node_modules/playwright-core');
 
           const replayUrl = process.env.REPLAY_URL;
+          const executablePath = fs
+            .readFileSync('.replay-verifier/chrome-path.txt', 'utf8')
+            .trim();
           const profiles = [
             { name: 'desktop', width: 1440, height: 1000 },
             { name: 'mobile', width: 390, height: 844 },
           ];
 
           (async () => {
-            const browser = await chromium.launch({ headless: true });
+            const browser = await chromium.launch({
+              headless: true,
+              executablePath,
+              args: ['--no-sandbox', '--disable-dev-shm-usage'],
+            });
             const report = {
               schema_version: '1.0',
               replay_url: replayUrl,
               verified_at: new Date().toISOString(),
+              browser_executable: executablePath,
               disclosure: null,
               profiles: [],
             };
