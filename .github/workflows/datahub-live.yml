@@ -43,7 +43,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
           cache: pip
 
       - name: Set up Node.js
@@ -85,10 +85,16 @@ jobs:
         run: toxicjoin-seed
 
       - name: Seed governed DataHub metadata
-        run: toxicjoin-datahub-seed --yes
+        shell: bash
+        run: |
+          set -o pipefail
+          toxicjoin-datahub-seed --yes 2>&1 | tee datahub-seed.log
 
       - name: Verify MCP read-write-readback protocol
-        run: toxicjoin-datahub-spike --verify
+        shell: bash
+        run: |
+          set -o pipefail
+          toxicjoin-datahub-spike --verify 2>&1 | tee datahub-spike.log
 
       - name: Validate sanitized evidence gates
         shell: bash
@@ -109,7 +115,7 @@ jobs:
 
           assert spike['status'] == 'verified'
           assert spike['independent_readback_verified'] is True
-          assert len(spike['dataset_urns']) == 5
+          assert len(spike['verified_entities']) == 5
           assert 'save_document' in spike['discovered_tools']
           assert spike['decision_document_urn'].startswith('urn:li:document:')
           assert len(spike['report_sha256']) == 64
@@ -153,6 +159,9 @@ jobs:
         with:
           name: toxicjoin-live-datahub-diagnostics
           path: |
+            .toxicjoin/datahub-seed.json
+            datahub-seed.log
+            datahub-spike.log
             datahub-quickstart.log
             datahub-docker-ps.txt
             datahub-compose-ls.txt
