@@ -1,0 +1,96 @@
+name: Apply README Live Evidence
+
+on:
+  push:
+    branches: [agent/live-datahub-proof]
+    paths:
+      - ".github/workflows/apply-readme-live-evidence.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/live-datahub-proof
+
+      - name: Apply exact README replacements
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('README.md')
+          content = path.read_text(encoding='utf-8')
+          old_status = '''The DataHub integration boundary is also implemented and tested:
+
+```text
+DataHub SDK seed
+  -> five datasets + 19 fields
+  -> tags + glossary terms
+  -> four column-lineage relationships
+  -> official MCP tool discovery and contract validation
+  -> entity/schema/lineage reads
+  -> Decision document write
+  -> first MCP process closed
+  -> fresh MCP process
+  -> Decision read-back marker verification
+  -> sanitized evidence report
+```
+
+The repository tests this complete protocol with deterministic fake SDK/MCP transports on Python 3.11 and 3.12. A real live report is intentionally not claimed until the final DataHub environment is started and the read/write/read-back command succeeds.
+'''
+          new_status = '''The DataHub integration also passed a real DataHub OSS evidence gate:
+
+```text
+DataHub SDK seed
+  -> five datasets + 19 governed fields
+  -> nine tags + seven glossary terms
+  -> four column-lineage writes
+  -> official MCP tool discovery and contract validation
+  -> entity/schema reads + three upstream lineage relationships
+  -> DataHub Decision document write
+  -> first MCP process closed
+  -> fresh MCP process
+  -> persisted-content marker verification through grep_documents
+  -> sanitized self-verifying evidence reports
+```
+
+Evidence from GitHub Actions run `29975433969` is committed in [docs/evidence/datahub-live.md](docs/evidence/datahub-live.md), [datahub-live-seed.json](docs/evidence/datahub-live-seed.json), and [datahub-live-spike.json](docs/evidence/datahub-live-spike.json). Both report hashes are reproducible from their persisted JSON, and the retained evidence contains no token value, password, local endpoint, raw warehouse row, or application secret.
+'''
+          old_limit = '''Fixture metadata proves deterministic behavior and judge accessibility. The MCP adapter, seed plan, and two-session verification protocol are tested, but final live evidence must come from the actual demo DataHub environment and must not be fabricated or inferred from mocks.
+'''
+          new_limit = '''Fixture metadata provides deterministic judge accessibility. Separately, the committed live evidence proves the SDK seed and MCP read/write/fresh-process-read-back protocol against an ephemeral DataHub OSS deployment in GitHub Actions. It does not claim that the public static Replay is a live DataHub session or that a permanent public DataHub environment is hosted.
+'''
+          for old, new in ((old_status, new_status), (old_limit, new_limit)):
+              if content.count(old) != 1:
+                  raise SystemExit('expected README block was not found exactly once')
+              content = content.replace(old, new, 1)
+          path.write_text(content, encoding='utf-8')
+          PY
+
+      - name: Validate links and no pending live claim
+        shell: bash
+        run: |
+          grep -q 'docs/evidence/datahub-live.md' README.md
+          grep -q '29975433969' README.md
+          ! grep -q 'A real live report is intentionally not claimed' README.md
+          test -f docs/evidence/datahub-live.md
+          test -f docs/evidence/datahub-live-seed.json
+          test -f docs/evidence/datahub-live-spike.json
+
+      - name: Commit README only
+        shell: bash
+        run: |
+          git config user.name 'toxicjoin-ci'
+          git config user.email 'actions@users.noreply.github.com'
+          git add README.md
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'Link verified live DataHub evidence from README'
+          git push origin HEAD:agent/live-datahub-proof
