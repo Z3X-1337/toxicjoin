@@ -17,10 +17,11 @@
 ## Links
 
 - **Public repository:** https://github.com/Z3X-1337/toxicjoin
-- **Hosted judge replay:** [PENDING_VERIFIED_PAGES_URL]
+- **Hosted judge replay:** https://toxicjoin-replay.vercel.app/
 - **Examples:** https://github.com/Z3X-1337/toxicjoin/tree/main/examples
 - **Demo video:** [PENDING_PUBLIC_YOUTUBE_OR_VIMEO_URL]
 - **Live DataHub evidence:** https://github.com/Z3X-1337/toxicjoin/blob/main/docs/evidence/datahub-live.md
+- **Hosted replay evidence:** https://github.com/Z3X-1337/toxicjoin/blob/main/docs/evidence/hosted-replay.md
 
 ## Devpost field answers
 
@@ -34,7 +35,7 @@ https://github.com/Z3X-1337/toxicjoin
 
 ### Project URL for easy testing
 
-[PENDING_VERIFIED_PAGES_URL]
+https://toxicjoin-replay.vercel.app/
 
 The hosted site is a clearly labeled deterministic replay for immediate judge access. The repository also provides a single hardened Docker service that runs the real FastAPI, policy, DuckDB execution, verification, and receipt path.
 

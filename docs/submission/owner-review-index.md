@@ -12,7 +12,7 @@ Use this page as the entry point for the final owner review. A gate marked **Pen
 | Core CI | Ready; recheck exact final commit | GitHub Actions on `main` |
 | 30-query benchmark | Ready | `docs/evidence/benchmark.md` and `docs/evidence/benchmark.json` |
 | Judge interface | Ready locally and in Docker | `apps/web/` and production container |
-| Hosted replay | Pending public HTTP and Chromium verification | `[PENDING_VERIFIED_PAGES_URL]` |
+| Hosted replay | Ready | https://toxicjoin-replay.vercel.app/ — evidence: https://github.com/Z3X-1337/toxicjoin/blob/main/docs/evidence/hosted-replay.md |
 | Live DataHub proof | Ready | https://github.com/Z3X-1337/toxicjoin/blob/main/docs/evidence/datahub-live.md |
 | Devpost cover | Ready for visual approval | Real ToxicJoin interface-derived 1200×630 image |
 | Microsoft narration | Specification ready; WAV pending | `microsoft-voice-production.md` |
