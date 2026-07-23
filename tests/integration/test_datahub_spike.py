@@ -182,6 +182,7 @@ def _contracts() -> tuple[McpToolDefinition, ...]:
                     "content": {},
                     "document_type": {"enum": ["Decision"]},
                     "related_assets": {},
+                    "external_url": {},
                 }
             },
         ),
