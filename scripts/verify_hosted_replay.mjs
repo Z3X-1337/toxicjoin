@@ -108,27 +108,11 @@ try {
       });
 
       const bodyText = await page.locator("body").innerText();
-      for (const required of [
-        "ToxicJoin",
-        "Initial policy",
-        "REWRITE",
-        "After remediation",
-        "ALLOW",
-        "30",
-        "False allows",
-        "0",
-      ]) {
-        if (!bodyText.includes(required)) {
-          throw new Error(`${profile.name}: missing required text ${required}`);
-        }
-      }
-
       const layout = await page.evaluate(() => ({
         innerWidth: window.innerWidth,
         scrollWidth: document.documentElement.scrollWidth,
         bodyScrollWidth: document.body.scrollWidth,
       }));
-
       const screenshot = path.join(outputDirectory, `${profile.name}.png`);
       await page.screenshot({ path: screenshot, fullPage: true });
 
@@ -145,6 +129,7 @@ try {
       diagnostics.profiles.push({
         name: profile.name,
         viewport: { width: profile.width, height: profile.height },
+        body_text: bodyText,
         layout,
         console_errors: consoleErrors,
         page_errors: pageErrors,
@@ -153,6 +138,21 @@ try {
         api_responses: apiResponses,
         screenshot,
       });
+
+      for (const required of [
+        "ToxicJoin",
+        "Initial policy",
+        "REWRITE",
+        "After remediation",
+        "ALLOW",
+        "30",
+        "False allows",
+        "0",
+      ]) {
+        if (!bodyText.includes(required)) {
+          throw new Error(`${profile.name}: missing required text ${required}`);
+        }
+      }
 
       if (
         layout.scrollWidth > layout.innerWidth + 1 ||
