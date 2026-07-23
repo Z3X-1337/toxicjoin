@@ -76,10 +76,21 @@ jobs:
         shell: bash
         run: |
           set +e
-          toxicjoin-datahub-agent-registry \
-            --yes \
-            --output .toxicjoin/datahub-agent-registry.json \
-            > .toxicjoin/datahub-agent-registry.log 2>&1
+          python - <<'PY' > .toxicjoin/datahub-agent-registry.log 2>&1
+          import traceback
+          from toxicjoin.integrations.datahub_agent_registry import register_datahub_agent_registry
+
+          try:
+              report = register_datahub_agent_registry(
+                  output='.toxicjoin/datahub-agent-registry.json',
+                  skill_path='skills/compositional-risk-review/SKILL.md',
+              )
+          except Exception:
+              traceback.print_exc()
+              raise
+          else:
+              print(report.model_dump_json(indent=2))
+          PY
           status=$?
           cat .toxicjoin/datahub-agent-registry.log
           exit "$status"
@@ -88,10 +99,21 @@ jobs:
         shell: bash
         run: |
           set +e
-          toxicjoin-datahub-agent-registry-verify \
-            --registry-report .toxicjoin/datahub-agent-registry.json \
-            --output .toxicjoin/datahub-agent-registry-verified.json \
-            > .toxicjoin/datahub-agent-registry-verify.log 2>&1
+          python - <<'PY' > .toxicjoin/datahub-agent-registry-verify.log 2>&1
+          import traceback
+          from toxicjoin.integrations.datahub_agent_registry_verify import verify_datahub_agent_registry
+
+          try:
+              report = verify_datahub_agent_registry(
+                  registry_report='.toxicjoin/datahub-agent-registry.json',
+                  output='.toxicjoin/datahub-agent-registry-verified.json',
+              )
+          except Exception:
+              traceback.print_exc()
+              raise
+          else:
+              print(report.model_dump_json(indent=2))
+          PY
           status=$?
           cat .toxicjoin/datahub-agent-registry-verify.log
           exit "$status"
