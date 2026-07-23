@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  pages: read
 
 concurrency:
   group: hosted-replay-verification-${{ github.event.pull_request.number || github.ref }}
@@ -20,8 +21,6 @@ jobs:
   verify-public-replay:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      REPLAY_URL: https://z3x-1337.github.io/toxicjoin/
 
     steps:
       - name: Check out repository
@@ -69,6 +68,54 @@ jobs:
           echo "path=$browser_path" >> "$GITHUB_OUTPUT"
           "$browser_path" --version
 
+      - name: Inspect official GitHub Pages configuration
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${REPOSITORY}/pages"
+          for attempt in $(seq 1 60); do
+            status=$(curl --silent --output pages-status.json --write-out '%{http_code}' \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$api" || true)
+            if [[ "$status" == "200" ]]; then
+              break
+            fi
+            echo "Pages API attempt $attempt returned HTTP ${status:-unavailable}."
+            sleep 5
+          done
+
+          test "$(curl --silent --output pages-status.json --write-out '%{http_code}' \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$api")" = "200"
+
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path('pages-status.json').read_text())
+          assert payload['build_type'] == 'workflow'
+          url = payload['html_url']
+          assert url.startswith('https://')
+          if not url.endswith('/'):
+              url += '/'
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as handle:
+              handle.write(f'REPLAY_URL={url}\n')
+          print(json.dumps({
+              'html_url': url,
+              'build_type': payload['build_type'],
+              'status': payload.get('status'),
+              'custom_404': payload.get('custom_404'),
+          }, indent=2))
+          PY
+
       - name: Wait for public GitHub Pages response
         shell: bash
         run: |
@@ -97,6 +144,7 @@ jobs:
         with:
           name: toxicjoin-hosted-replay-verification
           path: |
+            pages-status.json
             hosted-replay.html
             artifacts/hosted-replay/verification.json
             artifacts/hosted-replay/desktop.png
