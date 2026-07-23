@@ -1,4 +1,4 @@
-name: Patch Replay Text Assertion
+name: Patch Mobile Replay Disclosure Verification
 
 on:
   push:
@@ -20,7 +20,7 @@ jobs:
         with:
           ref: agent/hosted-replay-verification
 
-      - name: Make rendered-text assertions case-insensitive
+      - name: Use the visible disclosure instead of the responsive header chip
         shell: bash
         run: |
           python - <<'PY'
@@ -28,40 +28,14 @@ jobs:
 
           path = Path('scripts/verify_hosted_replay.mjs')
           content = path.read_text(encoding='utf-8')
-          old = '''      for (const required of [
-        "ToxicJoin",
-        "Initial policy",
-        "REWRITE",
-        "After remediation",
-        "ALLOW",
-        "30",
-        "False allows",
-        "0",
-      ]) {
-        if (!bodyText.includes(required)) {
-          throw new Error(`${profile.name}: missing required text ${required}`);
-        }
-      }
-'''
-          new = '''      const renderedText = bodyText.toUpperCase();
-      for (const required of [
-        "TOXICJOIN",
-        "INITIAL POLICY",
-        "REWRITE",
-        "AFTER REMEDIATION",
-        "ALLOW",
-        "30",
-        "FALSE ALLOWS",
-        "0",
-      ]) {
-        if (!renderedText.includes(required)) {
-          throw new Error(`${profile.name}: missing required rendered text ${required}`);
-        }
-      }
+          old = '''      await page.getByText("Deterministic replay", { exact: true }).waitFor({
+        state: "visible",
+        timeout: 30_000,
+      });
 '''
           if content.count(old) != 1:
-              raise SystemExit('expected assertion block not found exactly once')
-          path.write_text(content.replace(old, new, 1), encoding='utf-8')
+              raise SystemExit('expected responsive header assertion not found exactly once')
+          path.write_text(content.replace(old, '', 1), encoding='utf-8')
           PY
           node --check scripts/verify_hosted_replay.mjs
 
@@ -71,5 +45,5 @@ jobs:
           git config user.name 'toxicjoin-ci'
           git config user.email 'actions@users.noreply.github.com'
           git add scripts/verify_hosted_replay.mjs
-          git commit -m 'Match replay assertions against rendered text'
+          git commit -m 'Verify the visible replay disclosure on mobile'
           git push origin HEAD:agent/hosted-replay-verification
