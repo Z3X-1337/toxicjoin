@@ -11,6 +11,7 @@
   "inference_endpoint": "https://models.github.ai/inference/chat/completions",
   "temperature": 0.0,
   "seed": 1337,
+  "seed_strategy": "base_seed_plus_zero_based_task_index",
   "max_tokens": 900,
   "semantic_repair_attempts": 0,
   "transient_transport_retries": 3,
@@ -33,13 +34,16 @@
   ],
   "primary_rules": [
     "Every preregistered task is sent exactly once as a semantic attempt.",
+    "Task i uses deterministic best-effort seed 1337 + zero-based task index i; GitHub Models does not guarantee perfect determinism.",
     "A transport retry may repeat the exact same request after 429 or 5xx; it is not a semantic repair.",
-    "Malformed JSON, missing SQL, unsupported SQL, or invented schema are recorded as model/proposal failures and are not hand-corrected.",
+    "Any unrecovered provider/transport failure makes the primary baseline incomplete and therefore invalid as a completed measured run.",
+    "Malformed JSON, missing SQL, unsupported SQL, or invented schema after a successful model response are recorded as model/proposal failures and are not hand-corrected.",
     "Generated SQL is evaluated by the unchanged ToxicJoin policy path using a live DataHub snapshot and the real external DuckDB warehouse.",
     "No model output is edited before evaluation.",
     "Raw warehouse result rows are never written to retained artifacts.",
     "The baseline report must include failures and unsupported cases, not only successful proposals."
   ],
   "model_availability_rule": "The workflow must verify that the exact preregistered model ID appears in the GitHub Models catalog. It must fail rather than silently substitute another model.",
+  "revision_note": "The seed strategy and incomplete-provider-run rule were clarified before the first inference request was ever executed.",
   "posthoc_rule": "Any prompt, model, policy, schema, or evaluator change after observing the first measured run creates a new experiment version; the original baseline remains retained."
 }
