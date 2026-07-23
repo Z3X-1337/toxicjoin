@@ -79,6 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           toxicjoin-datahub-agent-registry \
+            --yes \
             --output .toxicjoin/datahub-agent-registry.json \
             --skill-path skills/compositional-risk-review/SKILL.md
           toxicjoin-datahub-agent-registry-verify \
