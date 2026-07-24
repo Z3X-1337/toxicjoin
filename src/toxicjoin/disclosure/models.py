@@ -213,8 +213,17 @@ class DisclosureCommitment(StrictModel):
     content_sha256: str = Field(pattern=_HASH_PATTERN)
 
 
+class DisclosureCompositionEvaluation(StrictModel):
+    """Non-persistent evaluation result produced while the writer lock is held."""
+
+    allowed: bool
+    rule: CompositionRule
+    protected_release: bool
+    prior_protected_count: int = Field(ge=0)
+
+
 class DisclosureCompositionDecision(StrictModel):
-    """Result of atomic cumulative-history evaluation and optional append."""
+    """Final result of atomic cumulative-history evaluation and optional append."""
 
     allowed: bool
     rule: CompositionRule
