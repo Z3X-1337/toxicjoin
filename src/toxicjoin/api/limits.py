@@ -199,12 +199,11 @@ class PrincipalTrafficLimiter:
             finished = float(self._clock())
             with self._lock:
                 state = self._states.get(principal_id)
-                if state is None:
-                    return
-                state.active = max(0, state.active - 1)
-                self._prune(state, finished)
-                if state.active == 0 and not state.timestamps:
-                    self._states.pop(principal_id, None)
+                if state is not None:
+                    state.active = max(0, state.active - 1)
+                    self._prune(state, finished)
+                    if state.active == 0 and not state.timestamps:
+                        self._states.pop(principal_id, None)
 
     def _prune(self, state: _PrincipalState, now: float) -> None:
         threshold = now - self.limits.rate_limit_window_seconds
