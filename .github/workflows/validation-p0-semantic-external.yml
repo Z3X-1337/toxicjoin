@@ -1,4 +1,5 @@
 name: Validation P0 External Replay
+# Validation-only: every run resolves the exact current head of production PR #48.
 
 on:
   pull_request:
