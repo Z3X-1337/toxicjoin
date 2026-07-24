@@ -19,6 +19,7 @@ from sqlglot import exp
 
 from toxicjoin.auth import RequestIdentity, current_request_identity
 from toxicjoin.context.fixture import ContextResolution
+from toxicjoin.context.governance import GovernanceContextBinding
 from toxicjoin.models import PolicyDecision
 from toxicjoin.receipts.models import (
     DecisionReceipt,
@@ -67,6 +68,7 @@ def build_receipt(
     initial_decision: PolicyDecision,
     context: ContextResolution,
     identity: RequestIdentity | None = None,
+    governance_binding: GovernanceContextBinding | None = None,
     safe_sql: str | None = None,
     final_decision: PolicyDecision | None = None,
     verification: VerificationResult | None = None,
@@ -134,7 +136,7 @@ def build_receipt(
         )
 
     payload: dict[str, Any] = {
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "receipt_id": resolved_receipt_id,
         "created_at": resolved_created_at,
         "mode": mode,
@@ -153,6 +155,7 @@ def build_receipt(
             else {}
         ),
         "policy_version": initial_decision.policy_version,
+        "governance": governance_binding,
         "sql": sql_evidence,
         "columns": column_evidence,
         "verification": verification_checks,
