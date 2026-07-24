@@ -86,10 +86,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker pull node:22-alpine >/dev/null
+          docker pull node:22.16.0-alpine >/dev/null
           docker pull python:3.12-slim >/dev/null
           {
-            docker inspect --format='node:22-alpine={{index .RepoDigests 0}}' node:22-alpine
+            docker inspect --format='node:22.16.0-alpine={{index .RepoDigests 0}}' node:22.16.0-alpine
             docker inspect --format='python:3.12-slim={{index .RepoDigests 0}}' python:3.12-slim
           } | tee p4-bootstrap/base-image-digests.txt
 
