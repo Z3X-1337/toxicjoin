@@ -17,6 +17,7 @@ on:
       - "tests/security/test_secure_api_surface.py"
       - "tests/security/test_datahub_edited_governance.py"
       - "tests/security/test_datahub_mcp_least_privilege.py"
+      - "tests/integration/test_datahub_spike.py"
       - "tests/integration/test_datahub_spike_authority.py"
       - "config/datahub-assets.json"
       - "pyproject.toml"
@@ -275,22 +276,22 @@ jobs:
           assert len(seed['dataset_urns']) == 5
           assert len(seed['report_sha256']) == 64
 
-          assert spike['schema_version'] == '1.1'
+          assert spike['schema_version'] == '1.2'
           assert spike['status'] == 'verified'
           assert spike['independent_readback_verified'] is True
           assert spike['lineage_relationship_count'] == 3
           assert len(spike['verified_entities']) == 5
-          assert spike['read_settings']['mutation_enabled'] is False
-          assert spike['write_settings']['mutation_enabled'] is True
-          assert spike['read_settings']['metadata_mutations_enabled'] is False
-          assert spike['write_settings']['metadata_mutations_enabled'] is False
-          assert spike['read_settings']['document_write_enabled'] is False
-          assert spike['write_settings']['document_write_enabled'] is True
-          assert 'save_document' not in spike['read_discovered_tools']
-          assert 'save_document' in spike['write_discovered_tools']
-          assert 'save_document' not in spike['readback_discovered_tools']
-          assert spike['decision_document_urn'].startswith('urn:li:document:')
-          assert len(spike['report_sha256']) == 64
+
+          read_settings = spike['read_settings']
+          write_settings = spike['write_settings']
+          assert read_settings['mutation_enabled'] is False
+          assert write_settings['mutation_enabled'] is True
+          assert read_settings['role'] == 'read_only'
+          assert write_settings['role'] == 'mutation'
+          assert read_settings['document_write_enabled'] is False
+          assert write_settings['document_write_enabled'] is True
+          assert read_settings['writer_transport_allowlist'] == []
+          assert write_settings['writer_transport_allowlist'] == ['save_document']
 
           mutation_prefixes = (
               'add_', 'remove_', 'set_', 'update_',
@@ -299,26 +300,38 @@ jobs:
           for tool in spike['read_discovered_tools'] + spike['readback_discovered_tools']:
               assert tool != 'save_document'
               assert not tool.startswith(mutation_prefixes), tool
-          for tool in spike['write_discovered_tools']:
-              if tool == 'save_document':
-                  continue
-              assert not tool.startswith(mutation_prefixes), tool
+
+          raw_writer = spike['write_server_discovered_tools']
+          effective_writer = spike['write_discovered_tools']
+          assert 'save_document' in raw_writer
+          assert effective_writer == ['save_document']
+          assert set(effective_writer).issubset(set(raw_writer))
+
+          assert spike['decision_document_urn'].startswith('urn:li:document:')
+          assert len(spike['report_sha256']) == 64
 
           forbidden = ('password', 'secret', 'http://127.0.0.1:8080')
-          raw = Path('.toxicjoin/datahub-spike.json').read_text().lower()
+          raw_report = Path('.toxicjoin/datahub-spike.json').read_text().lower()
           for value in forbidden:
-              assert value not in raw, value
+              assert value not in raw_report, value
 
+          raw_mutation_extras = sorted(
+              tool
+              for tool in raw_writer
+              if tool != 'save_document' and tool.startswith(mutation_prefixes)
+          )
           print(json.dumps({
             'seed_report_sha256': seed['report_sha256'],
             'spike_report_sha256': spike['report_sha256'],
             'decision_document_urn': spike['decision_document_urn'],
             'lineage_relationship_count': spike['lineage_relationship_count'],
             'independent_readback_verified': True,
-            'read_process_metadata_mutations_enabled': False,
-            'write_process_metadata_mutations_enabled': False,
-            'write_process_document_write_enabled': True,
-            'readback_process_metadata_mutations_enabled': False,
+            'read_server_mutation_enabled': False,
+            'writer_server_mutation_registration_enabled': True,
+            'writer_raw_tool_count': len(raw_writer),
+            'writer_raw_mutation_extras': raw_mutation_extras,
+            'writer_effective_tools': effective_writer,
+            'readback_server_mutation_enabled': False,
           }, indent=2))
           PY
 
