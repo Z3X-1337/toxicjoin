@@ -8,7 +8,7 @@ import pytest
 from toxicjoin.context import FixtureContextResolver
 from toxicjoin.demo import seed_database
 from toxicjoin.execute import DuckDBExecutor, ExecutionError
-from toxicjoin.models import ColumnRef, Decision, PolicyDecision, ReasonCode
+from toxicjoin.models import ColumnRef, Decision, ReasonCode
 from toxicjoin.policy import PolicyEngine, load_policy
 from toxicjoin.rewrite import enforce_minimum_group_size
 from toxicjoin.verify import verify_and_execute
@@ -41,7 +41,7 @@ class FailIfCalledExecutor:
     def __init__(self) -> None:
         self.called = False
 
-    def execute_allowed(self, *_: Any, **__: Any) -> Any:
+    def __getattr__(self, _: str) -> Any:
         self.called = True
         raise AssertionError("executor must not be called")
 
@@ -52,15 +52,6 @@ def _resolver() -> FixtureContextResolver:
 
 def _engine() -> PolicyEngine:
     return PolicyEngine(load_policy())
-
-
-def _allow_decision() -> PolicyDecision:
-    return PolicyDecision(
-        decision=Decision.ALLOW,
-        reason_codes=(ReasonCode.NO_COMPOSITIONAL_RISK,),
-        policy_version="test",
-        evidence={},
-    )
 
 
 def test_rewritten_flagship_query_executes_and_verifies(tmp_path) -> None:
@@ -86,6 +77,7 @@ def test_rewritten_flagship_query_executes_and_verifies(tmp_path) -> None:
     assert result.policy_decision is not None
     assert result.policy_decision.decision == Decision.ALLOW
     assert result.execution is not None
+    assert result.execution.authorization_id.startswith("tj_auth_")
     assert result.execution.columns == (
         "coarse_region",
         "average_churn",
@@ -95,6 +87,7 @@ def test_rewritten_flagship_query_executes_and_verifies(tmp_path) -> None:
     assert result.execution.truncated is False
     assert {int(row[2]) for row in result.execution.rows} == {40}
     assert all(check.passed for check in result.checks)
+    assert any(check.name == "execution_authorization" for check in result.checks)
 
 
 def test_rewrite_decision_never_reaches_executor() -> None:
@@ -169,46 +162,61 @@ def test_raw_forbidden_output_stops_before_execution() -> None:
     assert executor.called is False
 
 
-def test_executor_requires_allow_decision(tmp_path) -> None:
+def test_executor_cannot_issue_without_bound_authority(tmp_path) -> None:
     database = tmp_path / "demo.duckdb"
     seed_database(database)
     executor = DuckDBExecutor(database)
-    rewrite_decision = PolicyDecision(
-        decision=Decision.REWRITE,
-        reason_codes=(ReasonCode.SMALL_GROUP_RISK,),
-        policy_version="test",
-        evidence={},
-        rewrite_required=True,
-    )
 
-    with pytest.raises(ExecutionError, match="requires ALLOW"):
-        executor.execute_allowed(
+    with pytest.raises(ExecutionError, match="no execution authorizer bound"):
+        executor.issue_authorization(
             "SELECT c.coarse_region FROM customers c",
-            policy_decision=rewrite_decision,
+            task_purpose="List coarse regions",
+            subject_key=SUBJECT,
         )
 
 
-def test_executor_rejects_mutation_even_with_allow_decision(tmp_path) -> None:
+def test_executor_rejects_post_authorization_sql_mutation(tmp_path) -> None:
     database = tmp_path / "demo.duckdb"
     seed_database(database)
+    resolver = _resolver()
+    engine = _engine()
+    executor = DuckDBExecutor(database)
+    executor.bind_authority(context_resolver=resolver, policy_engine=engine)
 
-    with pytest.raises(ExecutionError) as captured:
-        DuckDBExecutor(database).execute_allowed(
-            "DELETE FROM customers",
-            policy_decision=_allow_decision(),
+    sql = "SELECT c.coarse_region FROM customers c LIMIT 5"
+    authorization = executor.issue_authorization(
+        sql,
+        task_purpose="List coarse regions",
+        subject_key=SUBJECT,
+    )
+
+    with pytest.raises(ExecutionError, match="AUTH_SQL_MISMATCH") as captured:
+        executor.execute_authorized(
+            sql + " LIMIT 1",
+            authorization=authorization,
+            task_purpose="List coarse regions",
+            subject_key=SUBJECT,
         )
 
-    assert captured.value.reason_code == ReasonCode.UNSUPPORTED_STATEMENT
+    assert captured.value.reason_code == ReasonCode.VERIFICATION_FAILED
 
 
 def test_executor_hardens_duckdb_configuration(tmp_path) -> None:
     database = tmp_path / "demo.duckdb"
     seed_database(database)
 
-    result = DuckDBExecutor(database).execute_allowed(
+    result = verify_and_execute(
         "SELECT current_setting('enable_external_access') AS external_access",
-        policy_decision=_allow_decision(),
+        task_purpose="Verify hardened DuckDB execution configuration",
+        subject_key=SUBJECT,
+        context_resolver=_resolver(),
+        policy_engine=_engine(),
+        executor=DuckDBExecutor(database),
+        required_minimum_group_size=20,
+        require_subject_threshold=False,
     )
 
-    assert result.rows == ((False,),)
-    assert result.truncated is False
+    assert result.passed is True
+    assert result.execution is not None
+    assert result.execution.rows == ((False,),)
+    assert result.execution.truncated is False
