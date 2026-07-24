@@ -1,13 +1,13 @@
 """Ablation study for ToxicJoin's cross-column compositional policy rule.
 
 This is not a competitor benchmark. It uses ToxicJoin's own deterministic policy
-engine twice: once with the shipped configuration, and once with only the
-non-grouped compositional interaction effectively disabled by setting the
-quasi-identifier interaction threshold above the maximum possible in this
-declared evaluation.
+engine twice: once with the shipped semantic-exposure input, and once with only
+the declared non-grouped compositional interaction removed from the policy input.
+The ablated path strips semantic projection-exposure evidence and raises the legacy
+quasi-identifier threshold above the maximum possible in this evaluation.
 
-The parser, governed context resolver, policy implementation, and all other
-policy branches remain identical. This isolates whether the cross-column
+The parser, governed context resolver, policy implementation, and all unrelated
+policy branches remain identical. This isolates whether ToxicJoin's compositional
 interaction is necessary to detect the declared unsafe individual profiles.
 """
 
@@ -26,7 +26,7 @@ from toxicjoin.benchmark.adversarial import _mutation_specs, _render_sql
 from toxicjoin.benchmark.cases import BENCHMARK_CASES
 from toxicjoin.context import FixtureContextResolver
 from toxicjoin.demo import default_fixture_catalog
-from toxicjoin.models import ColumnRef, Decision, StrictModel
+from toxicjoin.models import ColumnRef, Decision, PolicyInput, StrictModel
 from toxicjoin.policy import PolicyEngine, load_policy
 from toxicjoin.sql import analyze_sql
 
@@ -56,7 +56,7 @@ class AblationControlResult(StrictModel):
 
 class CompositionalAblationReport(StrictModel):
     schema_version: str = "1.0"
-    evaluation_version: str = "1.0"
+    evaluation_version: str = "2.0"
     policy_version: str
     ablation: str
     unsafe_cases: int = Field(ge=1)
@@ -78,7 +78,7 @@ class CompositionalAblationReport(StrictModel):
 def run_compositional_ablation(
     *, output_dir: str | Path | None = None
 ) -> CompositionalAblationReport:
-    """Compare the shipped policy with one targeted interaction-rule ablation."""
+    """Compare shipped policy with one targeted compositional-rule ablation."""
 
     policy = load_policy()
     ablated_policy = policy.model_copy(
@@ -140,13 +140,13 @@ def run_compositional_ablation(
 
     payload: dict[str, Any] = {
         "schema_version": "1.0",
-        "evaluation_version": "1.0",
+        "evaluation_version": "2.0",
         "policy_version": policy.version,
         "ablation": (
-            "same PolicyEngine with quasi_identifier_threshold raised to "
-            f"{_ABLATION_QUASI_IDENTIFIER_THRESHOLD}, disabling the declared "
-            "non-grouped pseudonym + quasi-identifiers + sensitive interaction "
-            "for this finite evaluation while preserving other branches"
+            "same PolicyEngine with final-output semantic exposure evidence removed "
+            "from QueryPlan and quasi_identifier_threshold raised to "
+            f"{_ABLATION_QUASI_IDENTIFIER_THRESHOLD}; this disables the declared "
+            "non-grouped compositional interaction while preserving unrelated branches"
         ),
         "unsafe_cases": len(unsafe_results),
         "control_cases": len(control_results),
@@ -195,7 +195,7 @@ def _evaluate_unsafe_mutation(*, resolver, full_engine, ablated_engine, spec):
         ),
     )
     full = full_engine.evaluate(policy_input)
-    ablated = ablated_engine.evaluate(policy_input)
+    ablated = ablated_engine.evaluate(_without_compositional_evidence(policy_input))
     material = "|".join(
         (family.family_id, customer_alias, sensitive_alias, join_style, predicate, tail)
     )
@@ -226,7 +226,7 @@ def _evaluate_control(*, resolver, full_engine, ablated_engine, case):
         subject_key=case.subject_key,
     )
     full = full_engine.evaluate(policy_input)
-    ablated = ablated_engine.evaluate(policy_input)
+    ablated = ablated_engine.evaluate(_without_compositional_evidence(policy_input))
     preserved = (
         full.decision == case.expected_initial
         and ablated.decision == case.expected_initial
@@ -238,6 +238,21 @@ def _evaluate_control(*, resolver, full_engine, ablated_engine, case):
         ablated_policy_decision=ablated.decision,
         control_preserved=preserved,
     )
+
+
+def _without_compositional_evidence(policy_input: PolicyInput) -> PolicyInput:
+    """Remove only the semantic exposure evidence consumed by Policy v0.2.
+
+    The ablated engine still receives the same task, governed column contexts,
+    subject key, grouping state, threshold evidence, and SQL-derived structure.
+    Its raised legacy quasi threshold then prevents the older interaction from
+    standing in for the semantic rule being removed.
+    """
+
+    ablated_plan = policy_input.query_plan.model_copy(
+        update={"projected_exposures": ()}
+    )
+    return policy_input.model_copy(update={"query_plan": ablated_plan})
 
 
 def _report_hash(payload: dict[str, Any]) -> str:
@@ -292,7 +307,7 @@ def _markdown(report: CompositionalAblationReport) -> str:
             "",
             "## Interpretation",
             "",
-            "This is an internal ablation study, not a competitor comparison. Both sides use the same ToxicJoin parser, governed metadata resolver, and deterministic PolicyEngine implementation. The ablated side changes one configuration dimension so the declared non-grouped cross-column interaction cannot fire in this finite evaluation.",
+            "This is an internal ablation study, not a competitor comparison. Both sides use the same ToxicJoin parser, governed metadata resolver, and deterministic PolicyEngine implementation. The ablated side removes final-output semantic exposure evidence and raises the legacy quasi-identifier threshold so the declared non-grouped compositional interaction cannot fire in this finite evaluation; unrelated branches remain active.",
             "",
             "The result isolates the value of compositional reasoning: the 144 unsafe individual profiles are blocked by the shipped policy, while the targeted interaction ablation allows them. At the same time, all 20 ALLOW/REWRITE control decisions remain unchanged.",
             "",

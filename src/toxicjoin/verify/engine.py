@@ -5,15 +5,13 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Protocol
 
-import sqlglot
-from sqlglot import exp
-
 from toxicjoin.context.fixture import ContextResolution
 from toxicjoin.execute import DuckDBExecutor, ExecutionError, ExecutionResult
 from toxicjoin.models import (
     ColumnRef,
     Decision,
     PolicyDecision,
+    ProjectionExposureKind,
     QueryPlan,
     StrictModel,
 )
@@ -123,16 +121,19 @@ def verify_and_execute(
     )
 
     forbidden = {field.lower() for field in forbidden_raw_output_fields}
-    bare_outputs = _bare_output_field_names(sql, dialect=dialect)
-    leaked_fields = tuple(sorted(forbidden.intersection(bare_outputs)))
+    leaked_fields, unresolved_outputs = _semantic_forbidden_outputs(
+        query_plan,
+        forbidden=forbidden,
+    )
+    semantic_outputs_safe = not leaked_fields and not unresolved_outputs
     checks.append(
         VerificationCheck(
             name="no_raw_forbidden_output",
-            passed=not leaked_fields,
+            passed=semantic_outputs_safe,
             detail=(
-                "no forbidden field is projected as a raw output column"
-                if not leaked_fields
-                else f"raw forbidden output fields: {', '.join(leaked_fields)}"
+                "no forbidden field is exposed through final-output semantic lineage"
+                if semantic_outputs_safe
+                else _forbidden_output_detail(leaked_fields, unresolved_outputs)
             ),
         )
     )
@@ -238,17 +239,46 @@ def verify_and_execute(
     )
 
 
-def _bare_output_field_names(sql: str, *, dialect: str) -> set[str]:
-    root = sqlglot.parse_one(sql, read=dialect)
-    if not isinstance(root, exp.Select):
-        return set()
+def _semantic_forbidden_outputs(
+    query_plan: QueryPlan,
+    *,
+    forbidden: set[str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    value_exposing_kinds = {
+        ProjectionExposureKind.RAW_VALUE,
+        ProjectionExposureKind.TRANSFORMED_RAW_VALUE,
+        ProjectionExposureKind.GROUP_KEY,
+        ProjectionExposureKind.AGGREGATE_OPERAND,
+    }
+    leaked_fields = {
+        ref.field_path.lower()
+        for exposure in query_plan.projected_exposures
+        if exposure.kind in value_exposing_kinds
+        for ref in exposure.source_columns
+        if ref.field_path.lower() in forbidden
+    }
+    unresolved_outputs = {
+        exposure.output_name
+        for exposure in query_plan.projected_exposures
+        if exposure.kind == ProjectionExposureKind.NESTED_SCOPE
+    }
+    return tuple(sorted(leaked_fields)), tuple(sorted(unresolved_outputs))
 
-    names: set[str] = set()
-    for projection in root.expressions:
-        expression = projection.this if isinstance(projection, exp.Alias) else projection
-        if isinstance(expression, exp.Column):
-            names.add(expression.name.lower())
-    return names
+
+def _forbidden_output_detail(
+    leaked_fields: tuple[str, ...],
+    unresolved_outputs: tuple[str, ...],
+) -> str:
+    details: list[str] = []
+    if leaked_fields:
+        details.append(
+            "forbidden source lineage exposed by output: " + ", ".join(leaked_fields)
+        )
+    if unresolved_outputs:
+        details.append(
+            "output lineage could not be proven safe: " + ", ".join(unresolved_outputs)
+        )
+    return "; ".join(details)
 
 
 def _result(

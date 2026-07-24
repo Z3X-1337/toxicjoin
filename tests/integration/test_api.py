@@ -52,7 +52,7 @@ def test_health_discloses_fixture_mode_and_readiness(tmp_path) -> None:
         "status": "ok",
         "version": "0.1.0",
         "mode": "fixture",
-        "policy_version": "0.1.0",
+        "policy_version": load_policy().version,
         "database_ready": True,
         "receipt_store_ready": True,
     }

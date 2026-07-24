@@ -60,6 +60,27 @@ class ColumnRef(StrictModel):
         return f"{self.dataset}.{self.field_path}"
 
 
+class ProjectionExposureKind(StrEnum):
+    """How a final projected value exposes its governed source lineage."""
+
+    RAW_VALUE = "RAW_VALUE"
+    TRANSFORMED_RAW_VALUE = "TRANSFORMED_RAW_VALUE"
+    GROUP_KEY = "GROUP_KEY"
+    AGGREGATE_OPERAND = "AGGREGATE_OPERAND"
+    AGGREGATE_VALUE = "AGGREGATE_VALUE"
+    FILTER_ONLY = "FILTER_ONLY"
+    JOIN_ONLY = "JOIN_ONLY"
+    NESTED_SCOPE = "NESTED_SCOPE"
+
+
+class ProjectionExposure(StrictModel):
+    """Semantic lineage for one final output expression."""
+
+    output_name: str = Field(min_length=1)
+    kind: ProjectionExposureKind
+    source_columns: tuple[ColumnRef, ...] = ()
+
+
 class ColumnContext(StrictModel):
     ref: ColumnRef
     category: SensitivityCategory
@@ -79,6 +100,7 @@ class QueryPlan(StrictModel):
     statement_type: str
     source_datasets: tuple[str, ...]
     projected_columns: tuple[ColumnRef, ...]
+    projected_exposures: tuple[ProjectionExposure, ...] = ()
     referenced_columns: tuple[ColumnRef, ...] = ()
     join_columns: tuple[ColumnRef, ...] = ()
     group_by_columns: tuple[ColumnRef, ...] = ()
@@ -105,6 +127,18 @@ class QueryPlan(StrictModel):
             missing = sorted(structural - referenced)
             raise ValueError(
                 "referenced_columns must include projected/join/group columns; "
+                f"missing={missing}"
+            )
+        projected = {column.key for column in self.projected_columns}
+        exposure_sources = {
+            column.key
+            for exposure in self.projected_exposures
+            for column in exposure.source_columns
+        }
+        if projected and not exposure_sources.issubset(projected):
+            missing = sorted(exposure_sources - projected)
+            raise ValueError(
+                "projected_exposures must reference projected_columns; "
                 f"missing={missing}"
             )
         if (self.minimum_group_size_present is None) != (
