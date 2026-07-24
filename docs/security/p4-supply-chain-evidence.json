@@ -1,0 +1,84 @@
+{
+  "action_pins": {
+    "actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955": "08eba0b27e820071cde6df949e0beb9ba4906955",
+    "actions/checkout@11d5960a326750d5838078e36cf38b85af677262": "11d5960a326750d5838078e36cf38b85af677262",
+    "actions/checkout@v4": "11d5960a326750d5838078e36cf38b85af677262",
+    "actions/dependency-review-action@v4": "2031cfc080254a8a887f58cffee85186f0e49e48",
+    "actions/setup-node@v4": "49933ea5288caeca8642d1e84afbd3f7d6820020",
+    "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065": "a26af69be951a213d495a4c3e4e4022e16d87065",
+    "actions/setup-python@v5": "a26af69be951a213d495a4c3e4e4022e16d87065",
+    "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+    "actions/upload-artifact@v4": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+    "github/codeql-action/analyze@v4": "e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81",
+    "github/codeql-action/init@v4": "e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81"
+  },
+  "dependency_audits": {
+    "npm": {
+      "exit_code": 0,
+      "finding_count": 0,
+      "findings": [],
+      "metadata": {
+        "critical": 0,
+        "high": 0,
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "total": 0
+      }
+    },
+    "python_agent_registry": {
+      "exit_code": 1,
+      "finding_count": 1,
+      "findings": [
+        {
+          "fix_versions": ["83.0.0"],
+          "id": "PYSEC-2026-3447",
+          "package": "setuptools",
+          "version": "81.0.0"
+        }
+      ]
+    },
+    "python_datahub": {
+      "exit_code": 1,
+      "finding_count": 1,
+      "findings": [
+        {
+          "fix_versions": ["83.0.0"],
+          "id": "PYSEC-2026-3447",
+          "package": "setuptools",
+          "version": "81.0.0"
+        }
+      ]
+    }
+  },
+  "docker_base_images": [
+    "node:22.16.0-alpine=node@sha256:41e4389f3d988d2ed55392df4db1420ad048ae53324a8e2b7c6d19508288107e",
+    "python:3.12-slim=python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de"
+  ],
+  "finalizer_start_sha": "7a3ec00a2b2d5e981cb1be834a6ef7fd5c6abbe7",
+  "materialized_source_sha": "beda45878674a0192de95fed0735f2b7f17cd7d8",
+  "risk_exceptions": [
+    {
+      "accepted_on": "2026-07-25",
+      "affected_range": "<83.0.0",
+      "aliases": ["PYSEC-2026-3447", "GHSA-h35f-9h28-mq5c"],
+      "applicability": "The advisory concerns MANIFEST.in exclusion bypass when creating source distributions on macOS APFS/HFS+ with Unicode-normalization differences. ToxicJoin release CI and production containers are Linux-based, consume locked artifacts, do not create source distributions from untrusted trees, and the production application container does not install the DataHub extras.",
+      "expires_on": "2026-08-15",
+      "fixed_version": "83.0.0",
+      "id": "CVE-2026-59890",
+      "owner": "ToxicJoin security release gate",
+      "package": "setuptools",
+      "required_controls": [
+        "Linux-only release CI for DataHub profiles",
+        "No source-distribution publishing in the ToxicJoin release workflow",
+        "Locked dependency graph with hashes/provenance retained",
+        "Any Python audit finding other than this exact setuptools advisory fails the gate",
+        "Re-evaluate immediately when acryl-datahub removes setuptools<82.0.0"
+      ],
+      "scope": ["datahub", "agent-registry"],
+      "status": "temporary_upstream_blocked",
+      "upstream_constraint": "acryl-datahub requires setuptools<82.0.0 because its runtime still depends on pkg_resources, which setuptools 82 removed"
+    }
+  ],
+  "schema_version": "1.0"
+}
