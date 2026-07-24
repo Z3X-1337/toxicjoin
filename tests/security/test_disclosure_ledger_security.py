@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import hashlib
 import os
+import re
 import sqlite3
 import stat
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -20,10 +19,6 @@ from toxicjoin.disclosure import (
 )
 from toxicjoin.models import ColumnRef
 from toxicjoin.sql import analyze_sql
-
-
-def _sha(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _identity(
@@ -60,7 +55,6 @@ def _event(
         query_plan=plan,
         subject_key=ColumnRef(dataset=dataset, field_path="customer_id"),
         receipt_id=f"tj_{index:016x}",
-        query_sha256=_sha(sql),
         policy_version="0.2.0",
     )
 
@@ -70,24 +64,33 @@ def test_append_is_hash_chained_and_idempotent_by_receipt(tmp_path: Path) -> Non
     first_event = _event(1)
     second_event = _event(2)
 
-    first = ledger.append(
-        first_event,
-        created_at=datetime(2026, 7, 24, 18, 0, tzinfo=timezone.utc),
-        record_id="dl_00000000000000000000000000000001",
-    )
-    second = ledger.append(
-        second_event,
-        created_at=datetime(2026, 7, 24, 18, 1, tzinfo=timezone.utc),
-        record_id="dl_00000000000000000000000000000002",
-    )
+    first = ledger.append(first_event)
+    second = ledger.append(second_event)
     replay = ledger.append(first_event)
 
     assert first.sequence == 1
     assert second.sequence == 2
+    assert re.fullmatch(r"dl_[0-9a-f]{32}", first.record_id)
+    assert re.fullmatch(r"dl_[0-9a-f]{32}", second.record_id)
+    assert first.record_id != second.record_id
+    assert first.created_at.tzinfo is not None
+    assert second.created_at.tzinfo is not None
     assert first.previous_content_sha256 is None
     assert second.previous_content_sha256 == first.content_sha256
     assert replay == first
     assert ledger.verify_all() == 2
+
+
+def test_append_does_not_accept_caller_record_identity_or_timestamp(tmp_path: Path) -> None:
+    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3")
+    event = _event(30)
+
+    with pytest.raises(TypeError):
+        ledger.append(event, record_id="dl_00000000000000000000000000000000")
+    with pytest.raises(TypeError):
+        ledger.append(event, created_at="2026-07-24T00:00:00Z")
+
+    assert ledger.verify_all() == 0
 
 
 def test_receipt_reuse_with_different_event_fails_closed(tmp_path: Path) -> None:
@@ -95,7 +98,7 @@ def test_receipt_reuse_with_different_event_fails_closed(tmp_path: Path) -> None
     original = _event(3)
     ledger.append(original)
 
-    mutated = original.model_copy(update={"query_sha256": _sha("different-query")})
+    mutated = original.model_copy(update={"policy_version": "0.2.1"})
     with pytest.raises(DisclosureLedgerConflict, match="different disclosure content"):
         ledger.append(mutated)
 
@@ -120,6 +123,9 @@ def test_credential_session_and_dataset_rotation_share_privacy_history(
     ]
     assert records[0].event.audit_identity.credential_id == "credential-a"
     assert records[1].event.audit_identity.credential_id == "credential-b"
+    persisted = (tmp_path / "disclosures.sqlite3").read_bytes()
+    assert b"session-a" not in persisted
+    assert b"session-b" not in persisted
 
 
 def test_concurrent_appends_are_serialized_without_lost_records(tmp_path: Path) -> None:
@@ -209,25 +215,33 @@ def test_broken_scope_chain_is_detected_after_out_of_band_tamper(tmp_path: Path)
         ledger.list_for_scope(first.scope)
 
 
-def test_ledger_never_persists_raw_sql_or_literal_values(tmp_path: Path) -> None:
-    marker = "RAW_LITERAL_MUST_NOT_ENTER_DISCLOSURE_LEDGER"
-    sql = f"SELECT AVG(o.purchase_amount) FROM orders o WHERE o.category = '{marker}'"
+def test_ledger_never_persists_sql_hash_literal_alias_or_session_values(tmp_path: Path) -> None:
+    literal_marker = "RAW_LITERAL_MUST_NOT_ENTER_DISCLOSURE_LEDGER"
+    alias_marker = "CALLER_ALIAS_MUST_NOT_ENTER_DISCLOSURE_LEDGER"
+    session_marker = "CALLER_SESSION_MUST_NOT_ENTER_DISCLOSURE_LEDGER"
+    sql = (
+        f"SELECT AVG(o.purchase_amount) AS {alias_marker} "
+        f"FROM orders o WHERE o.category = '{literal_marker}'"
+    )
     plan = analyze_sql(sql, dialect="duckdb")
     event = build_disclosure_event(
-        identity=_identity(),
+        identity=_identity(session=session_marker),
         catalog=default_fixture_catalog(),
         query_plan=plan,
         subject_key=ColumnRef(dataset="orders", field_path="customer_id"),
         receipt_id="tj_00000000000000aa",
-        query_sha256=_sha(sql),
         policy_version="0.2.0",
     )
     path = tmp_path / "disclosures.sqlite3"
     ledger = DisclosureLedger(path)
     ledger.append(event)
 
-    assert marker.encode("utf-8") not in path.read_bytes()
-    assert sql.encode("utf-8") not in path.read_bytes()
+    persisted = path.read_bytes()
+    assert sql.encode("utf-8") not in persisted
+    assert literal_marker.encode("utf-8") not in persisted
+    assert alias_marker.encode("utf-8") not in persisted
+    assert session_marker.encode("utf-8") not in persisted
+    assert b"query_sha256" not in persisted
 
 
 def test_ledger_file_is_owner_only_and_symlink_target_is_rejected(tmp_path: Path) -> None:
