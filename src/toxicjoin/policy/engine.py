@@ -8,9 +8,11 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from toxicjoin.models import (
+    ColumnContext,
     Decision,
     PolicyDecision,
     PolicyInput,
+    ProjectionExposureKind,
     ReasonCode,
     SensitivityCategory,
 )
@@ -74,24 +76,42 @@ class PolicyEngine:
         if unresolved and self.config.fail_closed:
             block_reasons.append(ReasonCode.UNCLASSIFIED_COLUMN)
 
-        has_direct = SensitivityCategory.DIRECT_IDENTIFIER in categories
-        has_pseudonym = SensitivityCategory.STABLE_PSEUDONYM in categories
-        has_sensitive = SensitivityCategory.SENSITIVE_ATTRIBUTE in categories
-        quasi_count = sum(
-            category == SensitivityCategory.QUASI_IDENTIFIER
-            for category in categories
+        semantic_context, semantic_mode = _semantic_projected_context(policy_input)
+        semantic_categories = [column.category for column in semantic_context]
+        semantic_quasi_count = sum(
+            column.category == SensitivityCategory.QUASI_IDENTIFIER
+            for column in semantic_context
+        )
+
+        if (
+            semantic_mode
+            and self.config.fail_closed
+            and any(
+                exposure.kind == ProjectionExposureKind.NESTED_SCOPE
+                for exposure in policy_input.query_plan.projected_exposures
+            )
+        ):
+            block_reasons.append(ReasonCode.UNRESOLVED_COLUMN)
+
+        risk_categories = semantic_categories if semantic_mode else categories
+        has_direct = SensitivityCategory.DIRECT_IDENTIFIER in risk_categories
+        has_pseudonym = SensitivityCategory.STABLE_PSEUDONYM in risk_categories
+        has_sensitive = SensitivityCategory.SENSITIVE_ATTRIBUTE in risk_categories
+        quasi_count = (
+            semantic_quasi_count
+            if semantic_mode
+            else sum(
+                category == SensitivityCategory.QUASI_IDENTIFIER
+                for category in categories
+            )
         )
 
         if has_direct and has_sensitive:
             block_reasons.append(ReasonCode.DIRECT_SENSITIVE_LINKAGE)
 
-        if (
-            has_pseudonym
-            and has_sensitive
-            and quasi_count >= self.config.quasi_identifier_threshold
-            and not policy_input.query_plan.is_grouped
-        ):
-            block_reasons.append(ReasonCode.COMPOSITIONAL_REIDENTIFICATION_RISK)
+        if not policy_input.query_plan.is_grouped and has_pseudonym and has_sensitive:
+            if semantic_mode or quasi_count >= self.config.quasi_identifier_threshold:
+                block_reasons.append(ReasonCode.COMPOSITIONAL_REIDENTIFICATION_RISK)
 
         if block_reasons:
             return PolicyDecision(
@@ -100,6 +120,14 @@ class PolicyEngine:
                 policy_version=self.config.version,
                 evidence={
                     "projected_categories": [category.value for category in categories],
+                    "semantic_projected_categories": [
+                        category.value for category in semantic_categories
+                    ],
+                    "semantic_exposure_mode": semantic_mode,
+                    "projected_exposures": [
+                        exposure.model_dump(mode="json")
+                        for exposure in policy_input.query_plan.projected_exposures
+                    ],
                     "referenced_categories": [
                         category.value for category in referenced_categories
                     ],
@@ -140,6 +168,10 @@ class PolicyEngine:
                             detected_subject.key if detected_subject is not None else None
                         ),
                         "threshold_subject_matches": threshold_subject_matches,
+                        "projected_exposures": [
+                            exposure.model_dump(mode="json")
+                            for exposure in policy_input.query_plan.projected_exposures
+                        ],
                     },
                     rewrite_required=True,
                 )
@@ -150,6 +182,14 @@ class PolicyEngine:
             policy_version=self.config.version,
             evidence={
                 "projected_categories": [category.value for category in categories],
+                "semantic_projected_categories": [
+                    category.value for category in semantic_categories
+                ],
+                "semantic_exposure_mode": semantic_mode,
+                "projected_exposures": [
+                    exposure.model_dump(mode="json")
+                    for exposure in policy_input.query_plan.projected_exposures
+                ],
                 "referenced_categories": [
                     category.value for category in referenced_categories
                 ],
@@ -159,6 +199,32 @@ class PolicyEngine:
                 ),
             },
         )
+
+
+def _semantic_projected_context(
+    policy_input: PolicyInput,
+) -> tuple[tuple[ColumnContext, ...], bool]:
+    exposures = policy_input.query_plan.projected_exposures
+    if not exposures:
+        return policy_input.projected_context, False
+
+    raw_like_kinds = {
+        ProjectionExposureKind.RAW_VALUE,
+        ProjectionExposureKind.TRANSFORMED_RAW_VALUE,
+        ProjectionExposureKind.GROUP_KEY,
+        ProjectionExposureKind.NESTED_SCOPE,
+    }
+    exposed_keys = {
+        ref.key
+        for exposure in exposures
+        if exposure.kind in raw_like_kinds
+        for ref in exposure.source_columns
+    }
+    by_key = {column.ref.key: column for column in policy_input.projected_context}
+    return (
+        tuple(by_key[key] for key in sorted(exposed_keys) if key in by_key),
+        True,
+    )
 
 
 def _deduplicate(values: list[ReasonCode]) -> tuple[ReasonCode, ...]:
