@@ -104,10 +104,15 @@ class ReceiptWriteback(StrictModel):
 
 
 class DecisionReceipt(StrictModel):
-    schema_version: str = "1.0"
+    schema_version: str = "1.1"
     receipt_id: str = Field(pattern=r"^tj_[0-9a-f]{16}$")
     created_at: datetime
     mode: ReceiptMode
+    principal_id: str | None = Field(
+        default=None,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$",
+    )
     task_purpose: str = Field(min_length=1)
     initial_decision: Decision
     initial_reason_codes: tuple[ReasonCode, ...]
