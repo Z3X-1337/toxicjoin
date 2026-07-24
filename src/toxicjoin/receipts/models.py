@@ -13,6 +13,7 @@ from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 
+from toxicjoin.auth import RequestIdentity
 from toxicjoin.models import Decision, ReasonCode, SensitivityCategory, StrictModel
 
 
@@ -104,10 +105,11 @@ class ReceiptWriteback(StrictModel):
 
 
 class DecisionReceipt(StrictModel):
-    schema_version: str = "1.0"
+    schema_version: str = "1.1"
     receipt_id: str = Field(pattern=r"^tj_[0-9a-f]{16}$")
     created_at: datetime
     mode: ReceiptMode
+    identity: RequestIdentity | None = None
     task_purpose: str = Field(min_length=1)
     initial_decision: Decision
     initial_reason_codes: tuple[ReasonCode, ...]
@@ -133,6 +135,8 @@ class DecisionReceipt(StrictModel):
     @model_validator(mode="after")
     def lifecycle_is_consistent(self) -> "DecisionReceipt":
         effective_decision = self.final_decision or self.initial_decision
+        if self.mode == ReceiptMode.LIVE and self.identity is None:
+            raise ValueError("live receipt requires authenticated request identity")
         if self.final_decision is None and (self.final_reason_codes or self.final_evidence):
             raise ValueError("final reason codes and evidence require final_decision")
         if (
