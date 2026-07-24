@@ -32,6 +32,11 @@ def enforce_sql_resource_budget(sql: str, *, dialect: str = "duckdb") -> None:
 
     try:
         statements = [statement for statement in sqlglot.parse(sql, read=dialect) if statement]
+    except RecursionError as exc:
+        raise SqlAnalysisError(
+            ReasonCode.QUERY_COMPLEXITY_LIMIT,
+            "SQL parser recursion budget exceeded",
+        ) from exc
     except (ParseError, TokenError, ValueError):
         return
 
