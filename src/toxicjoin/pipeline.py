@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Protocol
 
 from pydantic import Field
@@ -128,6 +129,7 @@ class ToxicJoinPipeline:
                 initial_context=context,
                 initial_decision=initial_decision,
                 include_sanitized_sql=False,
+                governance_binding=_receipt_governance_binding(self.context_resolver),
             )
 
         try:
@@ -150,6 +152,7 @@ class ToxicJoinPipeline:
                 original_plan=original_plan,
                 initial_context=initial_context,
                 initial_decision=initial_decision,
+                governance_binding=_receipt_governance_binding(self.context_resolver),
             )
 
         initial_decision = self.policy_engine.evaluate(
@@ -431,6 +434,7 @@ class ToxicJoinPipeline:
             initial_decision=initial_decision,
             final_decision=final_decision,
             context=receipt_context,
+            governance_binding=governance_binding,
             verification=verification,
             include_sanitized_sql=(
                 self.include_sanitized_sql
@@ -552,3 +556,24 @@ def _governance_failure_reason(exc: Exception) -> ReasonCode:
     if isinstance(exc, GovernanceContextDriftError):
         return ReasonCode.DATAHUB_CONTEXT_DRIFT
     return ReasonCode.DATAHUB_UNAVAILABLE
+
+
+def _receipt_governance_binding(
+    resolver: ContextResolver,
+) -> GovernanceContextBinding | None:
+    """Capture provenance for a LIVE failure receipt without asserting freshness.
+
+    A stale snapshot must still be identifiable in the immutable receipt that records why
+    the request failed. The normal policy/execution path never uses this helper as authority.
+    """
+
+    if not isinstance(resolver, DataHubSnapshotContextResolver):
+        return None
+    snapshot = resolver.snapshot
+    return GovernanceContextBinding(
+        source="datahub-mcp",
+        snapshot_sha256=snapshot.snapshot_sha256,
+        catalog_version=snapshot.catalog.version,
+        observed_at=snapshot.observed_at,
+        expires_at=snapshot.observed_at + timedelta(seconds=resolver.max_age_seconds),
+    )
