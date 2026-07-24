@@ -21,7 +21,7 @@ class RecordingExecutor:
         return ExecutionResult(
             query_sha256=hashlib.sha256(sql.encode("utf-8")).hexdigest(),
             query_plan=plan,
-            columns=("area_count",),
+            columns=("customer_count",),
             rows=((120,),),
             preview_row_count=1,
             truncated=False,
@@ -39,15 +39,15 @@ def _verify(sql: str, executor: RecordingExecutor):
         executor=executor,
         required_minimum_group_size=20,
         require_subject_threshold=False,
-        forbidden_raw_output_fields=("precise_area",),
+        forbidden_raw_output_fields=("customer_id",),
     )
 
 
-def test_transformed_forbidden_output_is_stopped_before_executor() -> None:
+def test_wrapped_subject_identifier_is_stopped_before_executor() -> None:
     executor = RecordingExecutor()
     result = _verify(
         """
-        SELECT UPPER(c.precise_area) AS area_token
+        SELECT UPPER(c.customer_id) AS subject_token
         FROM customers c
         ORDER BY c.customer_id
         LIMIT 5
@@ -63,14 +63,14 @@ def test_transformed_forbidden_output_is_stopped_before_executor() -> None:
         check for check in result.checks if check.name == "no_raw_forbidden_output"
     )
     assert output_check.passed is False
-    assert "precise_area" in output_check.detail
+    assert "customer_id" in output_check.detail
 
 
-def test_aggregate_of_forbidden_source_is_not_misclassified_as_raw_output() -> None:
+def test_count_of_subject_identifier_is_not_misclassified_as_raw_output() -> None:
     executor = RecordingExecutor()
     result = _verify(
         """
-        SELECT COUNT(c.precise_area) AS area_count
+        SELECT COUNT(c.customer_id) AS customer_count
         FROM customers c
         """.strip(),
         executor,
