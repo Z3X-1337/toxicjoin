@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -238,6 +239,30 @@ def test_commitment_verification_rejects_sql_or_event_mutation(tmp_path: Path) -
     mutated_event = event.model_copy(update={"policy_version": "9.9.9"})
     with pytest.raises(DisclosureLedgerIntegrityError, match="does not match current"):
         ledger.verify_commitment(decision.commitment, mutated_event, sql=sql)
+
+
+def test_authorization_claim_is_append_only_and_bound_to_commitment(tmp_path: Path) -> None:
+    path = tmp_path / "disclosures.sqlite3"
+    ledger = DisclosureLedger(path)
+    sql = _sensitive_sql("alpha")
+    decision = ledger.evaluate_and_commit(_event(sql, 17), sql=sql)
+    assert decision.commitment is not None
+    authorization_id = "tj_auth_" + "a" * 32
+
+    ledger.claim_commitment(decision.commitment, authorization_id)
+    ledger.verify_authorization_claim(decision.commitment, authorization_id)
+
+    with sqlite3.connect(path) as connection:
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            connection.execute(
+                "UPDATE disclosure_authorization_claims SET authorization_id = ?",
+                ("tj_auth_" + "b" * 32,),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            connection.execute("DELETE FROM disclosure_authorization_claims")
+
+    ledger.verify_authorization_claim(decision.commitment, authorization_id)
+    assert ledger.verify_all() == 1
 
 
 def test_provider_neutral_event_matches_fixture_semantics_and_scope() -> None:
