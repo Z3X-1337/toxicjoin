@@ -9,6 +9,7 @@ on:
       - "src/toxicjoin/pipeline.py"
       - "src/toxicjoin/auth.py"
       - "src/toxicjoin/context/**"
+      - "src/toxicjoin/integrations/**"
       - "src/toxicjoin/policy/**"
       - "src/toxicjoin/receipts/**"
       - "src/toxicjoin/api/**"

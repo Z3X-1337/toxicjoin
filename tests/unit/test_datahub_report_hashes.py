@@ -37,10 +37,18 @@ def test_seed_report_hash_matches_persisted_json_representation() -> None:
 
 def test_spike_report_hash_matches_persisted_json_representation() -> None:
     payload = {
-        "schema_version": "1.0",
+        "schema_version": "1.2",
         "created_at": datetime(2026, 7, 23, 2, 45, 24, tzinfo=timezone.utc),
         "status": "verified",
-        "settings": {
+        "read_settings": {
+            "command": "uvx",
+            "args": ["--from", "mcp-server-datahub==0.6.0", "mcp-server-datahub"],
+            "gms_scheme": "http",
+            "token_present": True,
+            "mutation_enabled": False,
+            "timeout_seconds": 90.0,
+        },
+        "write_settings": {
             "command": "uvx",
             "args": ["--from", "mcp-server-datahub==0.6.0", "mcp-server-datahub"],
             "gms_scheme": "http",
@@ -48,7 +56,19 @@ def test_spike_report_hash_matches_persisted_json_representation() -> None:
             "mutation_enabled": True,
             "timeout_seconds": 90.0,
         },
-        "discovered_tools": ("get_entities", "grep_documents", "save_document"),
+        "read_discovered_tools": ("get_entities", "get_lineage", "list_schema_fields"),
+        "write_server_discovered_tools": (
+            "add_tags",
+            "remove_tags",
+            "save_document",
+        ),
+        "write_discovered_tools": ("save_document",),
+        "readback_discovered_tools": (
+            "get_entities",
+            "get_lineage",
+            "grep_documents",
+            "list_schema_fields",
+        ),
         "verified_entities": (
             "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.customers,PROD)",
         ),
