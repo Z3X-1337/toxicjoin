@@ -157,17 +157,23 @@ def build_receipt(
 
 
 def compute_content_hash(receipt_or_payload: BaseModel | Mapping[str, Any]) -> str:
-    """Hash deterministic receipt content, excluding ID, time, and the hash field."""
+    """Hash deterministic receipt content with schema-aware compatibility rules."""
 
     if isinstance(receipt_or_payload, BaseModel):
         payload = receipt_or_payload.model_dump(mode="json")
     else:
         payload = _json_compatible(dict(receipt_or_payload))
 
+    excluded_fields = set(_HASH_EXCLUDED_FIELDS)
+    if payload.get("schema_version") == "1.0":
+        # v1.0 predates principal ownership. Exclude the model's compatibility
+        # default so previously persisted receipt hashes remain verifiable.
+        excluded_fields.add("principal_id")
+
     canonical_payload = {
         key: value
         for key, value in payload.items()
-        if key not in _HASH_EXCLUDED_FIELDS
+        if key not in excluded_fields
     }
     canonical = json.dumps(
         canonical_payload,
