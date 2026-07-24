@@ -147,6 +147,26 @@ def verify_and_execute(
         )
 
     try:
+        executor.bind_authority(
+            context_resolver=context_resolver,
+            policy_engine=policy_engine,
+        )
+    except ValueError as exc:
+        checks.append(
+            VerificationCheck(
+                name="execution_authorization",
+                passed=False,
+                detail=str(exc),
+            )
+        )
+        return _result(
+            query_plan=query_plan,
+            policy_decision=decision,
+            checks=checks,
+            execution_error=str(exc),
+        )
+
+    try:
         authorization = executor.issue_authorization(
             sql,
             task_purpose=task_purpose,
