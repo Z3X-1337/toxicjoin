@@ -123,6 +123,7 @@ def test_read_and_write_roles_use_distinct_credentials_and_child_capabilities(mo
     monkeypatch.setenv("DATAHUB_GMS_READ_TOKEN", "READ_ONLY_TOKEN")
     monkeypatch.setenv("DATAHUB_GMS_WRITE_TOKEN", "WRITE_ONLY_TOKEN")
     monkeypatch.setenv("TOOLS_IS_MUTATION_ENABLED", "true")
+    monkeypatch.setenv("SAVE_DOCUMENT_TOOL_ENABLED", "true")
 
     read_settings = read_only_settings_from_env()
     write_settings = mutation_settings_from_env()
@@ -135,6 +136,12 @@ def test_read_and_write_roles_use_distinct_credentials_and_child_capabilities(mo
     assert write_env["DATAHUB_GMS_TOKEN"] == "WRITE_ONLY_TOKEN"
     assert read_env["TOOLS_IS_MUTATION_ENABLED"] == "false"
     assert write_env["TOOLS_IS_MUTATION_ENABLED"] == "true"
+    assert read_env["SAVE_DOCUMENT_TOOL_ENABLED"] == "false"
+    assert write_env["SAVE_DOCUMENT_TOOL_ENABLED"] == "true"
+    assert read_env["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] == "false"
+    assert write_env["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] == "false"
+    assert read_settings.redacted_summary()["role"] == "read_only"
+    assert write_settings.redacted_summary()["role"] == "mutation"
     assert "WRITE_ONLY_TOKEN" not in repr(read_settings.redacted_summary())
     assert "READ_ONLY_TOKEN" not in repr(write_settings.redacted_summary())
 
