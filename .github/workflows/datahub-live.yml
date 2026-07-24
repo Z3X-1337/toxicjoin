@@ -4,7 +4,9 @@ on:
   pull_request:
     paths:
       - ".github/workflows/datahub-live.yml"
+      - "src/toxicjoin/context/**"
       - "src/toxicjoin/integrations/**"
+      - "tests/security/test_datahub_edited_governance.py"
       - "config/datahub-assets.json"
       - "pyproject.toml"
   workflow_dispatch:

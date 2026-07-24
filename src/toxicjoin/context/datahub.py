@@ -265,43 +265,84 @@ def _field_path(field: dict[str, Any]) -> str:
 
 
 def _extract_tag_names(field: dict[str, Any]) -> tuple[str, ...]:
-    container = field.get("tags")
-    if isinstance(container, dict):
-        items = container.get("tags", [])
-    elif isinstance(container, list):
-        items = container
-    else:
-        items = []
-
     names: set[str] = set()
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        tag = item.get("tag", item)
-        name = _name_or_urn(tag)
-        if name:
+    for source_key in ("tags", "editedTags", "edited_tags"):
+        for item in _association_items(
+            field,
+            source_key=source_key,
+            collection_key="tags",
+        ):
+            if isinstance(item, str):
+                name = item
+            elif isinstance(item, dict):
+                tag = item.get("tag", item)
+                name = _name_or_urn(tag)
+            else:
+                raise DataHubMetadataError(
+                    f"DataHub field {_field_path(field)} has an invalid tag entry"
+                )
+            if not isinstance(name, str) or not name.strip():
+                raise DataHubMetadataError(
+                    f"DataHub field {_field_path(field)} has an unresolvable tag entry"
+                )
             names.add(name)
     return tuple(sorted(names))
 
 
 def _extract_glossary_names(field: dict[str, Any]) -> tuple[str, ...]:
-    container = field.get("glossaryTerms", field.get("glossary_terms"))
+    names: set[str] = set()
+    for source_key in (
+        "glossaryTerms",
+        "glossary_terms",
+        "editedGlossaryTerms",
+        "edited_glossary_terms",
+    ):
+        for item in _association_items(
+            field,
+            source_key=source_key,
+            collection_key="terms",
+        ):
+            if isinstance(item, str):
+                name = item
+            elif isinstance(item, dict):
+                term = item.get("term", item)
+                name = _name_or_urn(term)
+            else:
+                raise DataHubMetadataError(
+                    f"DataHub field {_field_path(field)} has an invalid glossary entry"
+                )
+            if not isinstance(name, str) or not name.strip():
+                raise DataHubMetadataError(
+                    f"DataHub field {_field_path(field)} has an unresolvable glossary entry"
+                )
+            names.add(name)
+    return tuple(sorted(names))
+
+
+def _association_items(
+    field: dict[str, Any],
+    *,
+    source_key: str,
+    collection_key: str,
+) -> tuple[Any, ...]:
+    if source_key not in field or field[source_key] is None:
+        return ()
+
+    container = field[source_key]
     if isinstance(container, dict):
-        items = container.get("terms", [])
+        items = container.get(collection_key, [])
     elif isinstance(container, list):
         items = container
     else:
-        items = []
+        raise DataHubMetadataError(
+            f"DataHub field {_field_path(field)} has invalid {source_key} metadata"
+        )
 
-    names: set[str] = set()
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        term = item.get("term", item)
-        name = _name_or_urn(term)
-        if name:
-            names.add(name)
-    return tuple(sorted(names))
+    if not isinstance(items, list):
+        raise DataHubMetadataError(
+            f"DataHub field {_field_path(field)} has invalid {source_key}.{collection_key} metadata"
+        )
+    return tuple(items)
 
 
 def _name_or_urn(value: Any) -> str | None:
