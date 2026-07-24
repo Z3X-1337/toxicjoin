@@ -4,7 +4,15 @@ on:
   pull_request:
     paths:
       - ".github/workflows/datahub-live.yml"
+      - "src/toxicjoin/context/**"
       - "src/toxicjoin/integrations/**"
+      - "src/toxicjoin/models.py"
+      - "src/toxicjoin/sql/**"
+      - "src/toxicjoin/policy/**"
+      - "src/toxicjoin/rewrite/**"
+      - "src/toxicjoin/verify/**"
+      - "src/toxicjoin/pipeline.py"
+      - "tests/security/test_datahub_edited_governance.py"
       - "config/datahub-assets.json"
       - "pyproject.toml"
   workflow_dispatch:
@@ -156,6 +164,81 @@ jobs:
         run: |
           set -o pipefail
           toxicjoin-datahub-spike --verify 2>&1 | tee datahub-spike.log
+
+      - name: Verify live semantic policy decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import asyncio
+          import json
+
+          from toxicjoin.context import (
+              DataHubAssetMap,
+              DataHubSnapshotContextResolver,
+              DataHubSnapshotLoader,
+          )
+          from toxicjoin.integrations.datahub_mcp import (
+              DataHubMcpClient,
+              DataHubMcpSettings,
+              StdioDataHubMcpTransport,
+          )
+          from toxicjoin.models import ColumnRef, Decision, ProjectionExposureKind, ReasonCode
+          from toxicjoin.policy import PolicyEngine, load_policy
+          from toxicjoin.sql import analyze_sql
+
+          async def load_snapshot():
+              settings = DataHubMcpSettings.from_env()
+              asset_map = DataHubAssetMap.from_path('config/datahub-assets.json')
+              async with StdioDataHubMcpTransport(settings) as transport:
+                  client = DataHubMcpClient(transport)
+                  return await DataHubSnapshotLoader(client, asset_map).load(
+                      require_mutations=False
+                  )
+
+          snapshot = asyncio.run(load_snapshot())
+          resolver = DataHubSnapshotContextResolver(snapshot)
+          policy = load_policy()
+          assert policy.version == '0.2.0', policy.version
+
+          sql = '''
+          SELECT c.customer_id, r.churn_score
+          FROM customers c
+          JOIN retention_scores r ON c.customer_id = r.customer_id
+          LIMIT 5
+          '''
+          plan = analyze_sql(sql, dialect='duckdb')
+          context = resolver.resolve(plan)
+          decision = PolicyEngine(policy).evaluate(
+              context.to_policy_input(
+                  task_purpose='Live DataHub P0 semantic exposure gate',
+                  query_plan=plan,
+                  subject_key=ColumnRef(
+                      dataset='customers',
+                      field_path='customer_id',
+                      alias='c',
+                  ),
+              )
+          )
+          assert decision.decision == Decision.BLOCK, decision.model_dump(mode='json')
+          assert ReasonCode.COMPOSITIONAL_REIDENTIFICATION_RISK in decision.reason_codes
+
+          wrapped = analyze_sql(
+              'SELECT UPPER(c.customer_id) AS subject_token FROM customers c LIMIT 5',
+              dialect='duckdb',
+          )
+          assert len(wrapped.projected_exposures) == 1
+          assert wrapped.projected_exposures[0].kind == ProjectionExposureKind.TRANSFORMED_RAW_VALUE
+          assert {ref.key for ref in wrapped.projected_exposures[0].source_columns} == {'customers.customer_id'}
+
+          print(json.dumps({
+              'policy_version': policy.version,
+              'live_semantic_decision': decision.decision.value,
+              'live_semantic_reason_codes': [code.value for code in decision.reason_codes],
+              'wrapped_output_kind': wrapped.projected_exposures[0].kind.value,
+              'snapshot_catalog_version': snapshot.catalog.version,
+          }, indent=2, sort_keys=True))
+          PY
 
       - name: Validate sanitized evidence gates
         shell: bash
