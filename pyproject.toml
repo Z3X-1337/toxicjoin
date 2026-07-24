@@ -43,7 +43,6 @@ security = [
   "bandit>=1.9.4,<2",
   "cyclonedx-bom>=7.2,<8",
   "pip-audit>=2.9,<3",
-  "setuptools>=83,<84",
 ]
 
 [build-system]
