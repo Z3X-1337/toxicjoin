@@ -17,7 +17,7 @@ import sqlglot
 from pydantic import BaseModel
 from sqlglot import exp
 
-from toxicjoin.auth import RequestIdentity
+from toxicjoin.auth import RequestIdentity, current_request_identity
 from toxicjoin.context.fixture import ContextResolution
 from toxicjoin.models import PolicyDecision
 from toxicjoin.receipts.models import (
@@ -74,6 +74,7 @@ def build_receipt(
 
     resolved_receipt_id = receipt_id or f"tj_{uuid4().hex[:16]}"
     resolved_created_at = (created_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    resolved_identity = identity or current_request_identity()
 
     sql_evidence = ReceiptSqlEvidence(
         original_sha256=_sha256_text(original_sql),
@@ -131,7 +132,7 @@ def build_receipt(
         "receipt_id": resolved_receipt_id,
         "created_at": resolved_created_at,
         "mode": mode,
-        "identity": identity,
+        "identity": resolved_identity,
         "task_purpose": task_purpose,
         "initial_decision": initial_decision.decision,
         "initial_reason_codes": initial_decision.reason_codes,
