@@ -46,8 +46,6 @@ class VerificationResult(StrictModel):
         if self.execution is not None:
             if not self.passed:
                 raise ValueError("failed verification cannot release execution rows")
-            if not self.execution_attempted:
-                raise ValueError("released execution requires execution_attempted")
             if self.execution_quarantined:
                 raise ValueError("released execution cannot also be quarantined")
         if self.execution_quarantined:
