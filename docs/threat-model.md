@@ -16,6 +16,7 @@
 5. Live mode to public replay mode.
 6. Verifier/authorizer to the execution boundary.
 7. Post-execution verifier to public result release.
+8. Runtime mode label to the metadata resolver that supplies governed context.
 
 ## Adversaries and failure modes
 - Agent produces an over-broad query unintentionally.
@@ -30,6 +31,7 @@
 - A previously valid execution authorization is replayed, forged, expired, or used for a different task/subject/query.
 - A query executes successfully but post-execution checks fail while preview rows are still returned to the caller.
 - SQL is parsed and authorized under one dialect but executed by DuckDB under different syntax/semantics.
+- A fixture metadata resolver is mislabeled as LIVE, or a live DataHub snapshot is mislabeled as FIXTURE/REPLAY.
 
 ## Security invariants
 - No query executes before a deterministic decision.
@@ -45,6 +47,7 @@
 - Successful database execution does not imply result release; rows are released only when every post-execution verification check passes.
 - Failed post-execution verification must return no `ExecutionResult` rows and must remain persistable as a normal BLOCK receipt.
 - The production execution contract uses one parser/executor dialect: DuckDB. Alternate SQL dialects are rejected before governed execution.
+- LIVE mode requires a verified `DataHubSnapshotContextResolver`; FIXTURE and REPLAY modes cannot use that live resolver.
 
 ## Initial controls
 - sqlglot AST parsing.
@@ -61,6 +64,7 @@
 - Thread-safe one-time executor-to-authority binding and single-use authorization consumption.
 - Quarantined post-execution results with schema-enforced no-release on failed verification.
 - DuckDB-only request and execution-authorization dialect validation.
+- Pipeline-construction guard that binds LIVE/FIXTURE/REPLAY labels to the supported metadata-source class.
 
 ## Threat-Model Delta — 2026-07-24: Execution Authorization (C1)
 
@@ -134,3 +138,26 @@ No new runtime capability is introduced. C3 removes configuration flexibility fr
 
 ### Residual risk
 `analyze_sql()` remains a reusable lower-level parser utility and may support other sqlglot dialects for non-executing analysis. The security invariant applies to the governed **production execution contract**: any SQL that can reach DuckDB execution is parsed, authorized, rewritten, sanitized, and verified as DuckDB.
+
+## Threat-Model Delta — 2026-07-24: Explicit Runtime Modes (C4)
+
+### Change
+`ToxicJoinPipeline` now validates the configured receipt/runtime mode against the metadata source at construction time. LIVE mode requires the verified live `DataHubSnapshotContextResolver`. FIXTURE and REPLAY reject that live resolver. Custom test doubles remain usable in FIXTURE mode but cannot claim LIVE.
+
+### Threats reduced
+- **Fixture-as-live misrepresentation:** deterministic fixture metadata cannot be labeled or receipted as a live DataHub decision path.
+- **Live-as-fixture/replay misrepresentation:** a verified DataHub snapshot cannot be silently relabeled as fixture or replay evidence.
+- **Test-double promotion:** arbitrary custom resolvers cannot claim LIVE status merely because they satisfy the `resolve()` protocol.
+
+### New attack surface
+No new external surface is added. The change adds a constructor-time type/identity check against the supported live resolver implementation.
+
+### Mitigations and negative tests
+- LIVE + fixture resolver fails before any request, execution, or receipt can occur.
+- LIVE + unknown/custom resolver also fails.
+- FIXTURE and REPLAY + live DataHub resolver fail.
+- LIVE + verified DataHub snapshot resolver succeeds.
+- Default API pipeline remains explicitly FIXTURE and keeps deterministic test doubles available in fixture tests.
+
+### Residual risk
+The LIVE identity guarantee currently recognizes the supported in-process `DataHubSnapshotContextResolver` implementation. A future additional live metadata provider must be added deliberately to the runtime-mode contract; it must not be accepted implicitly via duck typing.
