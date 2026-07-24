@@ -63,7 +63,7 @@ export interface BootstrapResult {
 export async function bootstrapJudgeSession(): Promise<BootstrapResult> {
   try {
     const [health, scenarioList, benchmark] = await Promise.all([
-      requestJson<HealthResponse>("/api/health"),
+      requestJson<HealthResponse>("/api/ready"),
       requestJson<DemoScenarioList>("/api/demo/scenarios"),
       requestJson<BenchmarkSummary>("/api/benchmark/summary"),
     ]);
