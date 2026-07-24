@@ -143,11 +143,17 @@ jobs:
           test "$(docker inspect --format '{{.Config.User}}' toxicjoin-ci)" = "10001:10001"
           test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' toxicjoin-ci)" = "true"
 
-      - name: Wait for application health
+      - name: Wait for application liveness
         shell: bash
         run: |
           for attempt in $(seq 1 45); do
             if curl --fail --silent --show-error http://127.0.0.1:18000/api/health > health.json; then
+              python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("health.json").read_text(encoding="utf-8"))
+          assert payload == {"status": "ok"}, payload
+          PY
               exit 0
             fi
             sleep 2
@@ -155,7 +161,7 @@ jobs:
           docker logs toxicjoin-ci
           exit 1
 
-      - name: Execute flagship flow through production container
+      - name: Execute readiness and flagship flow through production container
         run: |
           python - <<'PY'
           import json
@@ -171,8 +177,15 @@ jobs:
 
           with urllib.request.urlopen(f"{origin}/api/health", timeout=5) as response:
               health = json.load(response)
-              assert health["status"] == "ok"
-              assert health["mode"] == "fixture"
+              assert health == {"status": "ok"}, health
+
+          with urllib.request.urlopen(f"{origin}/api/ready", timeout=5) as response:
+              ready = json.load(response)
+              assert ready["status"] == "ok"
+              assert ready["mode"] == "fixture"
+              assert ready["policy_version"]
+              assert ready["database_ready"] is True
+              assert ready["receipt_store_ready"] is True
 
           with urllib.request.urlopen(f"{origin}/api/benchmark/summary", timeout=5) as response:
               benchmark = json.load(response)
