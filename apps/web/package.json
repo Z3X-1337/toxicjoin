@@ -12,14 +12,13 @@
     "test": "vitest run",
     "build": "tsc -b --pretty false && vite build",
     "check": "npm run typecheck && npm run test && npm run build",
-    "sbom": "cyclonedx-npm --output-file sbom.cdx.json --output-format JSON"
+    "sbom": "npm sbom --package-lock-only --sbom-format cyclonedx > sbom.cdx.json"
   },
   "dependencies": {
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
   "devDependencies": {
-    "@cyclonedx/cyclonedx-npm": "6.0.0",
     "@types/node": "26.1.1",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
