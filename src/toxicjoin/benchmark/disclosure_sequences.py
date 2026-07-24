@@ -14,7 +14,7 @@ from toxicjoin.context import FixtureContextResolver
 from toxicjoin.demo import default_fixture_catalog, seed_database
 from toxicjoin.disclosure import DisclosureLedger
 from toxicjoin.execute import DuckDBExecutor
-from toxicjoin.models import ColumnRef, Decision
+from toxicjoin.models import ColumnRef
 from toxicjoin.pipeline import PipelineRequest, ToxicJoinPipeline
 from toxicjoin.policy import PolicyEngine, load_policy
 from toxicjoin.receipts import ReceiptMode, ReceiptStore
@@ -195,7 +195,7 @@ def generate_report() -> dict[str, Any]:
 
     return {
         "schema_version": "1.0",
-        "git_sha": os.getenv("GITHUB_SHA"),
+        "release_candidate_sha": os.getenv("TOXICJOIN_RELEASE_CANDIDATE_SHA"),
         "policy_version": load_policy().version,
         "model": "controlled-query cumulative composition",
         "cases": cases,
