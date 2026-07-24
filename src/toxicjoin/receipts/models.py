@@ -104,7 +104,7 @@ class ReceiptWriteback(StrictModel):
 
 
 class DecisionReceipt(StrictModel):
-    schema_version: str = "1.1"
+    schema_version: str = Field(default="1.1", pattern=r"^1\.(0|1)$")
     receipt_id: str = Field(pattern=r"^tj_[0-9a-f]{16}$")
     created_at: datetime
     mode: ReceiptMode
@@ -137,6 +137,11 @@ class DecisionReceipt(StrictModel):
 
     @model_validator(mode="after")
     def lifecycle_is_consistent(self) -> "DecisionReceipt":
+        if self.schema_version == "1.1" and self.principal_id is None:
+            raise ValueError("schema 1.1 receipts require principal_id")
+        if self.schema_version == "1.0" and self.principal_id is not None:
+            raise ValueError("schema 1.0 receipts cannot contain principal_id")
+
         effective_decision = self.final_decision or self.initial_decision
         if self.final_decision is None and (self.final_reason_codes or self.final_evidence):
             raise ValueError("final reason codes and evidence require final_decision")
