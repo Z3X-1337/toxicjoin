@@ -59,6 +59,7 @@ def build_receipt(
     original_sql: str,
     initial_decision: PolicyDecision,
     context: ContextResolution,
+    principal_id: str = "local-library",
     safe_sql: str | None = None,
     final_decision: PolicyDecision | None = None,
     verification: VerificationResult | None = None,
@@ -125,10 +126,11 @@ def build_receipt(
         )
 
     payload: dict[str, Any] = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "receipt_id": resolved_receipt_id,
         "created_at": resolved_created_at,
         "mode": mode,
+        "principal_id": principal_id,
         "task_purpose": task_purpose,
         "initial_decision": initial_decision.decision,
         "initial_reason_codes": initial_decision.reason_codes,
