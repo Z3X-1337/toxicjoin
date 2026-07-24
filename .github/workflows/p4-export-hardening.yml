@@ -95,5 +95,6 @@ jobs:
         with:
           name: p4-verified-hardened-tree
           path: /tmp/p4-export/
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
