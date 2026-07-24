@@ -113,6 +113,10 @@ class RequestBodyLimitMiddleware:
         await self.app(scope, replay_receive, send)
 
 
+class _ResponseSizeExceeded(RuntimeError):
+    pass
+
+
 class ResponseBodyLimitMiddleware:
     """Buffer API responses and release them only when the final body fits budget."""
 
@@ -130,10 +134,9 @@ class ResponseBodyLimitMiddleware:
         response_start: Message | None = None
         response_bodies: list[Message] = []
         total = 0
-        overflow = False
 
         async def capture_send(message: Message) -> None:
-            nonlocal response_start, total, overflow
+            nonlocal response_start, total
             message_type = message.get("type")
             if message_type == "http.response.start":
                 response_start = message
@@ -144,15 +147,13 @@ class ResponseBodyLimitMiddleware:
             body = message.get("body", b"")
             total += len(body)
             if total > self.max_bytes:
-                overflow = True
                 response_bodies.clear()
-                return
-            if not overflow:
-                response_bodies.append(message)
+                raise _ResponseSizeExceeded
+            response_bodies.append(message)
 
-        await self.app(scope, receive, capture_send)
-
-        if overflow:
+        try:
+            await self.app(scope, receive, capture_send)
+        except _ResponseSizeExceeded:
             response = JSONResponse(
                 status_code=422,
                 content={
