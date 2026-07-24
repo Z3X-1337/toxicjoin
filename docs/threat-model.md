@@ -29,6 +29,7 @@
 - Governance metadata or policy configuration changes between authorization and execution.
 - A previously valid execution authorization is replayed, forged, expired, or used for a different task/subject/query.
 - A query executes successfully but post-execution checks fail while preview rows are still returned to the caller.
+- SQL is parsed and authorized under one dialect but executed by DuckDB under different syntax/semantics.
 
 ## Security invariants
 - No query executes before a deterministic decision.
@@ -43,6 +44,7 @@
 - Execution authorizations are single-use; mutation, authority substitution, expiry, replay, or integrity failure blocks execution.
 - Successful database execution does not imply result release; rows are released only when every post-execution verification check passes.
 - Failed post-execution verification must return no `ExecutionResult` rows and must remain persistable as a normal BLOCK receipt.
+- The production execution contract uses one parser/executor dialect: DuckDB. Alternate SQL dialects are rejected before governed execution.
 
 ## Initial controls
 - sqlglot AST parsing.
@@ -58,6 +60,7 @@
 - Fresh SQL analysis, governance resolution, and deterministic policy evaluation at authorization verification time.
 - Thread-safe one-time executor-to-authority binding and single-use authorization consumption.
 - Quarantined post-execution results with schema-enforced no-release on failed verification.
+- DuckDB-only request and execution-authorization dialect validation.
 
 ## Threat-Model Delta — 2026-07-24: Execution Authorization (C1)
 
@@ -109,3 +112,25 @@ Database rows are now treated as quarantined intermediate data until all post-ex
 
 ### Residual risk
 The database query has already executed internally before post-execution checks can inspect its result. C2 controls **release**, not execution side effects; the current DuckDB contract remains read-only, which limits this residual risk. Stateful or mutating backends remain outside the supported execution contract.
+
+## Threat-Model Delta — 2026-07-24: DuckDB-Only Execution Contract (C3)
+
+### Change
+The production pipeline no longer accepts a caller-selected SQL dialect. `PipelineRequest.dialect` is restricted to `duckdb`, and `ExecutionAuthorizer` independently rejects any non-DuckDB dialect before analysis or authorization. The signed authorization schema itself can carry only `duckdb`.
+
+### Threats reduced
+- **Parser/executor semantic mismatch:** SQL cannot be interpreted under PostgreSQL/MySQL/etc. rules and then executed as DuckDB text.
+- **Direct-library bypass:** callers that skip the HTTP schema still cannot issue or verify a governed execution authorization for an alternate dialect.
+- **Forged authorization metadata:** a crafted `ExecutionAuthorization` cannot encode an alternate dialect because the strict model rejects it.
+
+### New attack surface
+No new runtime capability is introduced. C3 removes configuration flexibility from the execution path and adds validation branches only.
+
+### Mitigations and negative tests
+- `PipelineRequest` schema rejects non-DuckDB dialects, producing HTTP 422 before pipeline execution or receipt creation.
+- `ExecutionAuthorizer.issue()` and `verify_and_consume()` fail closed with `AUTH_UNSUPPORTED_DIALECT` before SQL analysis when the dialect is not DuckDB.
+- `ExecutionAuthorization.dialect` is schema-restricted to `duckdb`.
+- Direct verifier regression confirms that bypassing the request schema still cannot reach execution with an alternate dialect.
+
+### Residual risk
+`analyze_sql()` remains a reusable lower-level parser utility and may support other sqlglot dialects for non-executing analysis. The security invariant applies to the governed **production execution contract**: any SQL that can reach DuckDB execution is parsed, authorized, rewritten, sanitized, and verified as DuckDB.

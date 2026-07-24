@@ -35,6 +35,9 @@ from toxicjoin.policy import PolicyEngine
 from toxicjoin.sql import SqlAnalysisError, analyze_sql
 
 
+SUPPORTED_EXECUTION_DIALECT = "duckdb"
+
+
 class ContextResolver(Protocol):
     def resolve(self, query_plan: QueryPlan) -> ContextResolution: ...
 
@@ -53,7 +56,7 @@ class ExecutionAuthorization(StrictModel):
     authorization_id: str = Field(pattern=r"^tj_auth_[0-9a-f]{32}$")
     issued_at: float
     expires_at: float
-    dialect: str = Field(min_length=1)
+    dialect: str = Field(pattern=r"^duckdb$")
     sql_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     query_plan_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     context_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -108,11 +111,12 @@ class ExecutionAuthorizer:
         *,
         task_purpose: str,
         subject_key: ColumnRef,
-        dialect: str = "duckdb",
+        dialect: str = SUPPORTED_EXECUTION_DIALECT,
         rewrite_parent_sql: str | None = None,
     ) -> ExecutionAuthorization:
         """Independently re-evaluate the exact SQL and issue only for ALLOW."""
 
+        _validate_execution_dialect(dialect)
         if not task_purpose.strip():
             raise ExecutionAuthorizationError("AUTH_INVALID_TASK_PURPOSE")
 
@@ -156,11 +160,12 @@ class ExecutionAuthorizer:
         *,
         task_purpose: str,
         subject_key: ColumnRef,
-        dialect: str = "duckdb",
+        dialect: str = SUPPORTED_EXECUTION_DIALECT,
         rewrite_parent_sql: str | None = None,
     ) -> QueryPlan:
         """Verify current state, atomically consume the capability, and return its plan."""
 
+        _validate_execution_dialect(dialect)
         expected_mac = self._mac(
             authorization.model_copy(update={"mac_sha256": "0" * 64})
         )
@@ -259,6 +264,11 @@ class ExecutionAuthorizer:
             ensure_ascii=True,
         ).encode("utf-8")
         return hmac.new(self._secret_key, canonical, hashlib.sha256).hexdigest()
+
+
+def _validate_execution_dialect(dialect: str) -> None:
+    if dialect != SUPPORTED_EXECUTION_DIALECT:
+        raise ExecutionAuthorizationError("AUTH_UNSUPPORTED_DIALECT")
 
 
 def _hash_query_plan(query_plan: QueryPlan) -> str:
