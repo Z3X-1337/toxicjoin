@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import sqlite3
 from datetime import datetime, timezone
@@ -33,6 +34,7 @@ from toxicjoin.disclosure.models import (
 _SCHEMA_VERSION = 2
 _COHORT_KEY_BYTES = 32
 _COHORT_KEY_METADATA = "cohort_hmac_key_sha256"
+_AUTHORIZATION_ID = re.compile(r"^tj_auth_[0-9a-f]{32}$")
 
 
 class DisclosureLedgerError(RuntimeError):
@@ -41,6 +43,10 @@ class DisclosureLedgerError(RuntimeError):
 
 class DisclosureLedgerConflict(DisclosureLedgerError):
     """Raised when an idempotency key is reused for different disclosure content."""
+
+
+class DisclosureCommitmentReplay(DisclosureLedgerConflict):
+    """Raised when one disclosure commitment is claimed for a second capability."""
 
 
 class DisclosureLedgerIntegrityError(DisclosureLedgerError):
@@ -52,8 +58,8 @@ class DisclosureLedger:
 
     ``evaluate_and_commit`` acquires a SQLite writer lock, validates the complete scope
     history, evaluates cumulative release risk, and appends an allowed release before
-    releasing the transaction. The resulting commitment must then be verified again by
-    the execution authorizer before an execution capability can be issued.
+    releasing the transaction. The resulting commitment must then be verified and
+    single-claimed by the execution authorizer before a capability can be issued.
     """
 
     def __init__(
@@ -235,6 +241,98 @@ class DisclosureLedger:
             raise DisclosureLedgerIntegrityError("disclosure commitment hash mismatch")
         return record
 
+    def claim_commitment(
+        self,
+        commitment: DisclosureCommitment,
+        authorization_id: str,
+    ) -> None:
+        """Bind one committed release to exactly one execution capability ID."""
+
+        if not _AUTHORIZATION_ID.fullmatch(authorization_id):
+            raise ValueError("invalid execution authorization ID")
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            record = self._record_for_commitment_connection(connection, commitment)
+            existing = connection.execute(
+                """
+                SELECT authorization_id, receipt_id, commitment_content_sha256
+                FROM disclosure_authorization_claims
+                WHERE record_id = ?
+                """,
+                (commitment.record_id,),
+            ).fetchone()
+            if existing is not None:
+                raise DisclosureCommitmentReplay(
+                    "disclosure commitment was already claimed for execution"
+                )
+            connection.execute(
+                """
+                INSERT INTO disclosure_authorization_claims (
+                    record_id,
+                    authorization_id,
+                    receipt_id,
+                    commitment_content_sha256,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    record.record_id,
+                    authorization_id,
+                    record.event.receipt_id,
+                    record.content_sha256,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            connection.commit()
+        except DisclosureLedgerError:
+            connection.rollback()
+            raise
+        except sqlite3.IntegrityError as exc:
+            connection.rollback()
+            raise DisclosureCommitmentReplay(
+                "disclosure commitment claim uniqueness conflict"
+            ) from exc
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def verify_authorization_claim(
+        self,
+        commitment: DisclosureCommitment,
+        authorization_id: str,
+    ) -> None:
+        """Verify that this exact capability owns the committed release claim."""
+
+        if not _AUTHORIZATION_ID.fullmatch(authorization_id):
+            raise DisclosureLedgerIntegrityError("invalid claimed authorization ID")
+        connection = self._connect()
+        try:
+            record = self._record_for_commitment_connection(connection, commitment)
+            row = connection.execute(
+                """
+                SELECT authorization_id, receipt_id, commitment_content_sha256
+                FROM disclosure_authorization_claims
+                WHERE record_id = ?
+                """,
+                (commitment.record_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        if row is None:
+            raise DisclosureLedgerIntegrityError("disclosure commitment has no authorization claim")
+        if (
+            str(row["authorization_id"]) != authorization_id
+            or str(row["receipt_id"]) != commitment.receipt_id
+            or str(row["commitment_content_sha256"]) != commitment.content_sha256
+            or record.content_sha256 != commitment.content_sha256
+        ):
+            raise DisclosureLedgerIntegrityError(
+                "disclosure authorization claim does not match commitment"
+            )
+
     def read_receipt(self, receipt_id: str) -> DisclosureRecord:
         connection = self._connect()
         try:
@@ -286,6 +384,7 @@ class DisclosureLedger:
                 continue
             scope = self._row_to_record(first).event.scope
             count += len(self.list_for_scope(scope))
+        self._verify_all_claims()
         return count
 
     def _append_event_connection(
@@ -396,6 +495,53 @@ class DisclosureLedger:
         ).fetchone()
         return self._row_to_record(row) if row is not None else None
 
+    def _record_for_commitment_connection(
+        self,
+        connection: sqlite3.Connection,
+        commitment: DisclosureCommitment,
+    ) -> DisclosureRecord:
+        row = connection.execute(
+            "SELECT * FROM disclosure_records WHERE record_id = ?",
+            (commitment.record_id,),
+        ).fetchone()
+        if row is None:
+            raise DisclosureLedgerIntegrityError("disclosure commitment record is missing")
+        record = self._row_to_record(row)
+        if _commitment(record) != commitment:
+            raise DisclosureLedgerIntegrityError("disclosure commitment hash mismatch")
+        return record
+
+    def _verify_all_claims(self) -> None:
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT record_id, authorization_id, receipt_id, commitment_content_sha256
+                FROM disclosure_authorization_claims
+                ORDER BY record_id
+                """
+            ).fetchall()
+            for row in rows:
+                record_row = connection.execute(
+                    "SELECT * FROM disclosure_records WHERE record_id = ?",
+                    (str(row["record_id"]),),
+                ).fetchone()
+                if record_row is None:
+                    raise DisclosureLedgerIntegrityError(
+                        "authorization claim references missing disclosure record"
+                    )
+                record = self._row_to_record(record_row)
+                if (
+                    not _AUTHORIZATION_ID.fullmatch(str(row["authorization_id"]))
+                    or str(row["receipt_id"]) != record.event.receipt_id
+                    or str(row["commitment_content_sha256"]) != record.content_sha256
+                ):
+                    raise DisclosureLedgerIntegrityError(
+                        "authorization claim does not match disclosure record"
+                    )
+        finally:
+            connection.close()
+
     def _initialize_database(self) -> int:
         if self.path.exists() and self.path.is_symlink():
             raise ValueError("disclosure ledger path must not be a symbolic link")
@@ -444,6 +590,14 @@ class DisclosureLedger:
                     value TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS disclosure_authorization_claims (
+                    record_id TEXT PRIMARY KEY,
+                    authorization_id TEXT NOT NULL UNIQUE,
+                    receipt_id TEXT NOT NULL,
+                    commitment_content_sha256 TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
                 CREATE TRIGGER IF NOT EXISTS disclosure_records_no_update
                 BEFORE UPDATE ON disclosure_records
                 BEGIN
@@ -466,6 +620,18 @@ class DisclosureLedger:
                 BEFORE DELETE ON disclosure_metadata
                 BEGIN
                     SELECT RAISE(ABORT, 'disclosure metadata is immutable');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS disclosure_authorization_claims_no_update
+                BEFORE UPDATE ON disclosure_authorization_claims
+                BEGIN
+                    SELECT RAISE(ABORT, 'disclosure authorization claims are append-only');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS disclosure_authorization_claims_no_delete
+                BEFORE DELETE ON disclosure_authorization_claims
+                BEGIN
+                    SELECT RAISE(ABORT, 'disclosure authorization claims are append-only');
                 END;
                 """
             )
