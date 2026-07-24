@@ -6,6 +6,7 @@ from typing import Protocol
 
 from pydantic import Field
 
+from toxicjoin.context.datahub import DataHubSnapshotContextResolver
 from toxicjoin.context.fixture import ContextResolution
 from toxicjoin.execute import DuckDBExecutor
 from toxicjoin.models import (
@@ -72,6 +73,7 @@ class ToxicJoinPipeline:
         executor: DuckDBExecutor | None = None,
         include_sanitized_sql: bool = True,
     ) -> None:
+        _validate_runtime_mode(mode, context_resolver)
         self.context_resolver = context_resolver
         self.policy_engine = policy_engine
         self.receipt_store = receipt_store
@@ -372,6 +374,14 @@ class ToxicJoinPipeline:
             verification=verification,
             receipt=receipt,
         )
+
+
+def _validate_runtime_mode(mode: ReceiptMode, resolver: ContextResolver) -> None:
+    is_live_resolver = isinstance(resolver, DataHubSnapshotContextResolver)
+    if mode == ReceiptMode.LIVE and not is_live_resolver:
+        raise ValueError("LIVE mode requires a verified DataHub snapshot context resolver")
+    if mode in (ReceiptMode.FIXTURE, ReceiptMode.REPLAY) and is_live_resolver:
+        raise ValueError(f"{mode.value.upper()} mode cannot use a live DataHub context resolver")
 
 
 def _empty_context(reason: ReasonCode) -> ContextResolution:
