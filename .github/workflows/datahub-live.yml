@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - ".github/workflows/datahub-live.yml"
+      - "src/toxicjoin/api/**"
+      - "src/toxicjoin/auth.py"
       - "src/toxicjoin/context/**"
       - "src/toxicjoin/integrations/**"
       - "src/toxicjoin/models.py"
@@ -12,6 +14,7 @@ on:
       - "src/toxicjoin/rewrite/**"
       - "src/toxicjoin/verify/**"
       - "src/toxicjoin/pipeline.py"
+      - "tests/security/test_secure_api_surface.py"
       - "tests/security/test_datahub_edited_governance.py"
       - "config/datahub-assets.json"
       - "pyproject.toml"

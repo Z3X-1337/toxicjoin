@@ -18,7 +18,13 @@ from toxicjoin.receipts import DecisionReceipt, ReceiptMode
 from toxicjoin.verify import VerificationResult
 
 
+class LivenessResponse(StrictModel):
+    status: Literal["ok"] = "ok"
+
+
 class HealthResponse(StrictModel):
+    """Internal readiness contract retained under the /api/ready endpoint."""
+
     status: Literal["ok", "degraded"]
     version: str
     mode: ReceiptMode

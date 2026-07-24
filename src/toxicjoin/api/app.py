@@ -8,9 +8,10 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated, Any, Iterator
 
-from fastapi import FastAPI, HTTPException, Path as ApiPath, Request
+from fastapi import FastAPI, HTTPException, Path as ApiPath, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from toxicjoin.api.limits import (
     ApiResourceLimits,
@@ -22,6 +23,7 @@ from toxicjoin.api.limits import (
 from toxicjoin.api.models import (
     DemoScenarioList,
     HealthResponse,
+    LivenessResponse,
     PipelineResponse,
 )
 from toxicjoin.api.scenarios import SCENARIOS
@@ -51,14 +53,17 @@ _CONTENT_SECURITY_POLICY = "; ".join(
         "object-src 'none'",
         "frame-ancestors 'none'",
         "form-action 'none'",
-        "script-src 'self' https://cdn.jsdelivr.net",
-        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data:",
         "font-src 'self' data:",
         "connect-src 'self'",
     )
 )
 _RESERVED_SPA_PREFIXES = ("api/", "docs", "redoc")
+_ALLOWED_HOSTS_ENV = "TOXICJOIN_ALLOWED_HOSTS"
+_DEFAULT_SECURE_ALLOWED_HOSTS = ("localhost", "127.0.0.1", "testserver")
+_HSTS_VALUE = "max-age=31536000; includeSubDomains"
 
 
 def create_default_pipeline() -> ToxicJoinPipeline:
@@ -112,6 +117,24 @@ def create_app(
     ):
         raise ValueError("LIVE API requires configured authentication")
 
+    restricted_surface = resolved_authenticator is not None or (
+        pipeline is not None and pipeline.mode == ReceiptMode.LIVE
+    )
+    serve_judge_interface = resolved_web_dist is not None and not restricted_surface
+    fastapi_kwargs = {
+        "title": "ToxicJoin",
+        "version": _package_version(),
+        "description": (
+            "Compositional privacy firewall for AI data agents. The default "
+            "deployment is explicitly labeled fixture mode."
+            if pipeline is None
+            else "Compositional privacy firewall for AI data agents."
+        ),
+        "docs_url": None if restricted_surface else "/docs",
+        "redoc_url": None if restricted_surface else "/redoc",
+        "openapi_url": None if restricted_surface else "/openapi.json",
+    }
+
     if pipeline is None:
 
         @asynccontextmanager
@@ -119,27 +142,16 @@ def create_app(
             application.state.pipeline = create_default_pipeline()
             yield
 
-        application = FastAPI(
-            title="ToxicJoin",
-            version=_package_version(),
-            description=(
-                "Compositional privacy firewall for AI data agents. The default "
-                "deployment is explicitly labeled fixture mode."
-            ),
-            lifespan=lifespan,
-        )
+        application = FastAPI(lifespan=lifespan, **fastapi_kwargs)
     else:
-        application = FastAPI(
-            title="ToxicJoin",
-            version=_package_version(),
-            description="Compositional privacy firewall for AI data agents.",
-        )
+        application = FastAPI(**fastapi_kwargs)
         application.state.pipeline = pipeline
 
-    application.state.web_dist = resolved_web_dist
+    application.state.web_dist = resolved_web_dist if serve_judge_interface else None
     application.state.authenticator = resolved_authenticator
     application.state.resource_limits = resolved_limits
     application.state.traffic_limiter = resolved_traffic_limiter
+    application.state.restricted_surface = restricted_surface
     application.add_middleware(
         RequestBodyLimitMiddleware,
         max_bytes=resolved_limits.max_request_bytes,
@@ -148,6 +160,11 @@ def create_app(
         ResponseBodyLimitMiddleware,
         max_bytes=resolved_limits.max_response_bytes,
     )
+    if restricted_surface:
+        application.add_middleware(
+            TrustedHostMiddleware,
+            allowed_hosts=list(_secure_allowed_hosts()),
+        )
 
     @application.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -162,6 +179,8 @@ def create_app(
             "Permissions-Policy",
             "camera=(), microphone=(), geolocation=()",
         )
+        if request.url.scheme == "https":
+            response.headers.setdefault("Strict-Transport-Security", _HSTS_VALUE)
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store, max-age=0"
             response.headers["Pragma"] = "no-cache"
@@ -171,34 +190,49 @@ def create_app(
             response.headers["Cache-Control"] = "no-cache, max-age=0"
         return response
 
-    @application.get("/api/health", response_model=HealthResponse)
-    def health(request: Request) -> HealthResponse:
-        services = _pipeline(request)
-        database_ready = (
-            services.executor is not None
-            and services.executor.database.is_file()
-        )
-        receipt_root = services.receipt_store.root
-        receipt_parent = receipt_root if receipt_root.exists() else receipt_root.parent
-        receipt_store_ready = receipt_parent.exists() and os.access(
-            receipt_parent,
-            os.W_OK,
-        )
-        return HealthResponse(
-            status="ok" if database_ready and receipt_store_ready else "degraded",
-            version=_package_version(),
-            mode=services.mode,
-            policy_version=services.policy_engine.config.version,
-            database_ready=database_ready,
-            receipt_store_ready=receipt_store_ready,
-        )
+    @application.get("/api/health", response_model=LivenessResponse)
+    def health() -> LivenessResponse:
+        return LivenessResponse()
 
-    @application.get(
-        "/api/benchmark/summary",
-        response_model=BenchmarkEvidenceSummary,
-    )
-    def benchmark_summary() -> BenchmarkEvidenceSummary:
-        return BENCHMARK_EVIDENCE
+    @application.get("/api/ready", response_model=HealthResponse)
+    def readiness(request: Request, response: Response) -> HealthResponse:
+        authenticated = _require_scope(request, AuthScope.SYSTEM_READ)
+        with _traffic_slot(request, authenticated.identity.principal_id):
+            services = _pipeline(request)
+            database_ready = (
+                services.executor is not None
+                and services.executor.database.is_file()
+            )
+            receipt_root = services.receipt_store.root
+            receipt_parent = receipt_root if receipt_root.exists() else receipt_root.parent
+            receipt_store_ready = receipt_parent.exists() and os.access(
+                receipt_parent,
+                os.W_OK,
+            )
+            ready = database_ready and receipt_store_ready
+            if not ready:
+                response.status_code = 503
+            return HealthResponse(
+                status="ok" if ready else "degraded",
+                version=_package_version(),
+                mode=services.mode,
+                policy_version=services.policy_engine.config.version,
+                database_ready=database_ready,
+                receipt_store_ready=receipt_store_ready,
+            )
+
+    if not restricted_surface:
+
+        @application.get(
+            "/api/benchmark/summary",
+            response_model=BenchmarkEvidenceSummary,
+        )
+        def benchmark_summary() -> BenchmarkEvidenceSummary:
+            return BENCHMARK_EVIDENCE
+
+        @application.get("/api/demo/scenarios", response_model=DemoScenarioList)
+        def demo_scenarios() -> DemoScenarioList:
+            return DemoScenarioList(scenarios=SCENARIOS)
 
     @application.post("/api/analyze", response_model=PipelineResponse)
     def analyze(payload: PipelineRequest, request: Request) -> PipelineResponse:
@@ -257,11 +291,8 @@ def create_app(
                 )
             return receipt
 
-    @application.get("/api/demo/scenarios", response_model=DemoScenarioList)
-    def demo_scenarios() -> DemoScenarioList:
-        return DemoScenarioList(scenarios=SCENARIOS)
-
-    if resolved_web_dist is not None:
+    if serve_judge_interface:
+        assert resolved_web_dist is not None
         assets = resolved_web_dist / "assets"
         if assets.is_dir():
             application.mount(
@@ -289,16 +320,35 @@ def create_app(
 
         @application.get("/", include_in_schema=False)
         def service_root() -> JSONResponse:
-            return JSONResponse(
-                {
-                    "name": "ToxicJoin",
-                    "version": _package_version(),
-                    "judge_interface": "not_built",
-                    "api_docs": "/docs",
-                }
-            )
+            payload: dict[str, Any] = {"name": "ToxicJoin"}
+            if not restricted_surface:
+                payload.update(
+                    {
+                        "version": _package_version(),
+                        "judge_interface": "not_built",
+                        "api_docs": "/docs",
+                    }
+                )
+            return JSONResponse(payload)
 
     return application
+
+
+def _secure_allowed_hosts() -> tuple[str, ...]:
+    configured = os.getenv(_ALLOWED_HOSTS_ENV)
+    if configured is None:
+        return _DEFAULT_SECURE_ALLOWED_HOSTS
+    hosts = tuple(item.strip() for item in configured.split(",") if item.strip())
+    if not hosts:
+        raise ValueError(f"{_ALLOWED_HOSTS_ENV} must contain at least one host")
+    if len(hosts) > 32:
+        raise ValueError(f"{_ALLOWED_HOSTS_ENV} contains too many hosts")
+    for host in hosts:
+        if host == "*":
+            raise ValueError(f"{_ALLOWED_HOSTS_ENV} cannot contain wildcard '*'")
+        if "://" in host or "/" in host or any(character.isspace() for character in host):
+            raise ValueError(f"invalid host pattern in {_ALLOWED_HOSTS_ENV}")
+    return tuple(dict.fromkeys(hosts))
 
 
 def _resolve_web_dist(value: str | Path | None) -> Path | None:
@@ -408,13 +458,10 @@ def _run_pipeline(
         with bind_request_identity(identity):
             return pipeline.execute_safe(payload) if execute else pipeline.analyze(payload)
     except Exception as exc:
-        # Do not expose paths, SQL, credentials, or exception messages through the API.
+        # Stable public error only. Internal exception types/messages remain server-side.
         raise HTTPException(
             status_code=503,
-            detail={
-                "code": "PIPELINE_PERSISTENCE_FAILURE",
-                "error_type": type(exc).__name__,
-            },
+            detail={"code": "PIPELINE_PERSISTENCE_FAILURE"},
         ) from exc
 
 

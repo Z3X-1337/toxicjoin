@@ -41,14 +41,17 @@ def _payload(sql: str, purpose: str) -> dict:
     }
 
 
-def test_health_discloses_fixture_mode_and_readiness(tmp_path) -> None:
+def test_public_health_is_liveness_only_and_fixture_ready_is_detailed(tmp_path) -> None:
     app = create_app(_pipeline(tmp_path))
 
     with TestClient(app) as client:
-        response = client.get("/api/health")
+        health = client.get("/api/health")
+        ready = client.get("/api/ready")
 
-    assert response.status_code == 200
-    assert response.json() == {
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok"}
+    assert ready.status_code == 200
+    assert ready.json() == {
         "status": "ok",
         "version": "0.1.0",
         "mode": "fixture",
@@ -239,5 +242,5 @@ def test_default_app_seeds_runtime_without_import_side_effects(
         response = client.get("/api/health")
 
     assert response.status_code == 200
-    assert response.json()["status"] == "ok"
+    assert response.json() == {"status": "ok"}
     assert (runtime / "demo.duckdb").is_file()

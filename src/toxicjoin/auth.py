@@ -29,6 +29,7 @@ class AuthScope(StrEnum):
     ANALYZE = "analyze"
     EXECUTE = "execute"
     RECEIPTS_READ = "receipts:read"
+    SYSTEM_READ = "system:read"
 
 
 class RequestIdentity(StrictModel):
@@ -187,6 +188,7 @@ def fixture_anonymous_request() -> AuthenticatedRequest:
             AuthScope.ANALYZE,
             AuthScope.EXECUTE,
             AuthScope.RECEIPTS_READ,
+            AuthScope.SYSTEM_READ,
         ),
     )
 
