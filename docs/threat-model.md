@@ -7,6 +7,7 @@
 - ToxicJoin policy configuration.
 - Decision receipts and DataHub write-backs.
 - Process-local execution-authorization key material and short-lived capabilities.
+- API-key digest configuration and authenticated principal identities.
 
 ## Trust boundaries
 1. AI agent to ToxicJoin API.
@@ -17,6 +18,7 @@
 6. Verifier/authorizer to the execution boundary.
 7. Post-execution verifier to public result release.
 8. Runtime mode label to the metadata resolver that supplies governed context.
+9. External API caller identity and scopes to the governed pipeline and receipt store.
 
 ## Adversaries and failure modes
 - Agent produces an over-broad query unintentionally.
@@ -32,6 +34,10 @@
 - A query executes successfully but post-execution checks fail while preview rows are still returned to the caller.
 - SQL is parsed and authorized under one dialect but executed by DuckDB under different syntax/semantics.
 - A fixture metadata resolver is mislabeled as LIVE, or a live DataHub snapshot is mislabeled as FIXTURE/REPLAY.
+- An unauthenticated caller reaches analysis, execution, or receipt APIs.
+- A valid API key is used outside its granted scope.
+- One principal reads another principal's receipt by guessing or obtaining its receipt ID.
+- Raw API-key material is persisted in receipts, configuration, or error output.
 
 ## Security invariants
 - No query executes before a deterministic decision.
@@ -48,6 +54,9 @@
 - Failed post-execution verification must return no `ExecutionResult` rows and must remain persistable as a normal BLOCK receipt.
 - The production execution contract uses one parser/executor dialect: DuckDB. Alternate SQL dialects are rejected before governed execution.
 - LIVE mode requires a verified `DataHubSnapshotContextResolver`; FIXTURE and REPLAY modes cannot use that live resolver.
+- Non-fixture HTTP deployments require authentication; `analyze`, `execute`, and receipt access are independently scoped.
+- New receipts are cryptographically bound to the authenticated principal identity, and ordinary receipt readers may read only their own receipts.
+- Raw API keys and configured API-key digests are never written into receipts.
 
 ## Initial controls
 - sqlglot AST parsing.
@@ -65,6 +74,7 @@
 - Quarantined post-execution results with schema-enforced no-release on failed verification.
 - DuckDB-only request and execution-authorization dialect validation.
 - Pipeline-construction guard that binds LIVE/FIXTURE/REPLAY labels to the supported metadata-source class.
+- SHA-256 API-key digest configuration, constant-time digest comparison, scope checks, and receipt ownership enforcement.
 
 ## Threat-Model Delta — 2026-07-24: Execution Authorization (C1)
 
@@ -161,3 +171,32 @@ No new external surface is added. The change adds a constructor-time type/identi
 
 ### Residual risk
 The LIVE identity guarantee currently recognizes the supported in-process `DataHubSnapshotContextResolver` implementation. A future additional live metadata provider must be added deliberately to the runtime-mode contract; it must not be accepted implicitly via duck typing.
+
+## Threat-Model Delta — 2026-07-24: API Authentication, Scopes, and Receipt Ownership (P1-A)
+
+### Change
+The HTTP API now supports bearer API-key authentication using configuration that stores SHA-256 key digests only. Authenticated principals receive explicit scopes. `analyze`, `execute-safe`, and receipt reads enforce separate scopes, and newly created receipts include the principal identity inside the immutable receipt content hash. Non-fixture API deployments fail closed when authentication is not configured; the zero-configuration fixture judge remains intentionally available under a fixed `fixture-anonymous` principal.
+
+### Threats reduced
+- **Unauthenticated governed operations:** LIVE/REPLAY HTTP deployments cannot expose governed endpoints without configured authentication.
+- **Scope confusion:** a key authorized for analysis cannot execute SQL unless it separately holds the `execute` scope.
+- **Cross-principal receipt access:** `receipts:read` is owner-scoped; a different principal receives the same 404 surface as a missing receipt. Administrative cross-owner access requires the explicit `receipts:read:any` scope.
+- **Credential persistence:** raw keys are accepted only from the bearer header; configuration accepts only SHA-256 digests, and neither raw keys nor digests are written into receipts.
+- **Audit ambiguity:** the principal identity is part of the receipt's deterministic content hash, so changing ownership invalidates receipt integrity.
+
+### New attack surface
+- Bearer-token parsing and API-key digest configuration.
+- In-process API-key digest table and scope assignments.
+- Principal ownership checks on receipt retrieval.
+
+### Mitigations and negative tests
+- API-key digests are compared with `hmac.compare_digest`; duplicate configured digests are rejected.
+- Auth configuration uses strict Pydantic models and rejects plaintext `key` fields or unknown fields.
+- Missing/malformed and invalid credentials return stable 401 errors with `WWW-Authenticate: Bearer`.
+- Missing scopes return 403 before pipeline execution.
+- Cross-principal receipt reads return 404 to avoid confirming receipt existence.
+- Security tests assert that neither the raw API key nor its SHA-256 digest appears in HTTP responses or persisted receipts.
+- LIVE API construction without an authenticator fails before serving requests.
+
+### Residual risk
+This phase uses static API keys rather than short-lived federated identity. Key rotation, revocation distribution, tenant-aware quotas, and external identity-provider integration remain deployment responsibilities until a later identity-management phase. API-key digests protect configuration disclosure from directly revealing usable bearer tokens, but weak or low-entropy raw keys remain vulnerable to offline guessing if digest configuration is exposed; deployments must generate high-entropy keys.
