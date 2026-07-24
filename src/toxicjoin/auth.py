@@ -6,8 +6,10 @@ import hashlib
 import hmac
 import json
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from enum import StrEnum
-from typing import Any
+from typing import Iterator
 
 from pydantic import Field, ValidationError
 
@@ -17,6 +19,10 @@ from toxicjoin.models import StrictModel
 _API_KEYS_ENV = "TOXICJOIN_API_KEYS_JSON"
 _ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$"
 _SESSION_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+_CURRENT_IDENTITY: ContextVar[RequestIdentity | None] = ContextVar(
+    "toxicjoin_request_identity",
+    default=None,
+)
 
 
 class AuthScope(StrEnum):
@@ -183,6 +189,21 @@ def fixture_anonymous_request() -> AuthenticatedRequest:
             AuthScope.RECEIPTS_READ,
         ),
     )
+
+
+def current_request_identity() -> RequestIdentity | None:
+    return _CURRENT_IDENTITY.get()
+
+
+@contextmanager
+def bind_request_identity(identity: RequestIdentity) -> Iterator[None]:
+    """Bind authenticated identity to one synchronous request execution context."""
+
+    token = _CURRENT_IDENTITY.set(identity)
+    try:
+        yield
+    finally:
+        _CURRENT_IDENTITY.reset(token)
 
 
 def _sha256_text(value: str) -> str:
