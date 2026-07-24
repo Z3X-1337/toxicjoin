@@ -24,6 +24,7 @@ from toxicjoin.auth import RequestIdentity, current_request_identity
 from toxicjoin.context.models import ContextResolution
 from toxicjoin.disclosure import (
     DisclosureCommitment,
+    DisclosureCommitmentReplay,
     DisclosureLedger,
     DisclosureLedgerError,
     DisclosureSemanticError,
@@ -168,9 +169,26 @@ class ExecutionAuthorizer:
             dialect=dialect,
         )
 
+        authorization_id = f"tj_auth_{secrets.token_hex(16)}"
+        if disclosure_commitment is not None:
+            assert self._disclosure_ledger is not None
+            try:
+                self._disclosure_ledger.claim_commitment(
+                    disclosure_commitment,
+                    authorization_id,
+                )
+            except DisclosureCommitmentReplay as exc:
+                raise ExecutionAuthorizationError(
+                    "AUTH_DISCLOSURE_COMMITMENT_REPLAYED"
+                ) from exc
+            except (DisclosureLedgerError, ValueError) as exc:
+                raise ExecutionAuthorizationError(
+                    "AUTH_DISCLOSURE_COMMITMENT_INVALID"
+                ) from exc
+
         now = float(self._clock())
         unsigned = ExecutionAuthorization(
-            authorization_id=f"tj_auth_{secrets.token_hex(16)}",
+            authorization_id=authorization_id,
             issued_at=now,
             expires_at=now + self._ttl_seconds,
             dialect=dialect,
@@ -267,6 +285,17 @@ class ExecutionAuthorizer:
             identity=identity,
             dialect=dialect,
         )
+        if authorization.disclosure_commitment is not None:
+            assert self._disclosure_ledger is not None
+            try:
+                self._disclosure_ledger.verify_authorization_claim(
+                    authorization.disclosure_commitment,
+                    authorization.authorization_id,
+                )
+            except (DisclosureLedgerError, ValueError) as exc:
+                raise ExecutionAuthorizationError(
+                    "AUTH_DISCLOSURE_COMMITMENT_INVALID"
+                ) from exc
 
         with self._consume_lock:
             self._consumed_ids = {
