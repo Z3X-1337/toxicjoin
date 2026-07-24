@@ -62,8 +62,9 @@ Before HMAC calculation:
 
 - SQL is parsed as exactly one DuckDB `SELECT`;
 - the root output list is replaced with a constant because output semantics are tracked separately;
-- root `ORDER BY` is removed because presentation order does not change cohort membership;
-- predicates and other membership-shaping structure remain, including `WHERE`, `JOIN`, CTEs, `HAVING`, `QUALIFY`, `DISTINCT`, `GROUP BY`, `LIMIT`, `OFFSET`, and literal predicate values.
+- root `ORDER BY` is removed only when neither `LIMIT` nor `OFFSET` is present, because unlimited ordering changes presentation but not membership;
+- when `LIMIT` or `OFFSET` is present, root `ORDER BY` is retained because ordering changes which rows or groups are selected;
+- predicates and other membership-shaping structure remain, including `WHERE`, `JOIN`, CTEs, `HAVING`, `QUALIFY`, `DISTINCT`, `GROUP BY`, `LIMIT`, `OFFSET`, retained row-limiting `ORDER BY`, and literal predicate values.
 
 The canonical SQL exists only in memory long enough to calculate HMAC. The ledger stores only the resulting keyed digest. Raw SQL, literals, task prompts, API keys, aliases, and session IDs remain absent from disclosure state.
 
@@ -146,6 +147,7 @@ A synthetic metadata-only subject probe resolves the governed subject field acro
 - Any authenticated/restricted API surface with an explicit pipeline requires an enabled disclosure ledger before startup.
 - A default authenticated API constructs the default ledger with stateful privacy enabled.
 - The unauthenticated fixture judge remains deterministic and does not make cross-request privacy state release-blocking by default.
+- Merely passing a disclosure-ledger object does not implicitly enable enforcement when `stateful_privacy_required=False`; the pipeline drops inactive disclosure authority instead of allowing storage presence to create order-dependent fixture behavior.
 - `/api/ready` becomes degraded when a required disclosure database or cohort key disappears after startup, without expanding the public readiness response schema.
 
 ## Stable failure behavior
@@ -163,6 +165,8 @@ Coverage includes:
 
 - two request-local `ALLOW` aggregate cohorts where the first executes and the second different cohort is `BLOCK` before execution;
 - identical cohort + alias change remaining repeatable;
+- unlimited root ordering being ignored when it cannot change cohort membership;
+- `ORDER BY` direction remaining in cohort identity when paired with `LIMIT/OFFSET`, preventing row-selection variation from collapsing to the same cohort;
 - protected release-family variation being blocked;
 - credential/session rotation not resetting history;
 - two concurrent different protected cohorts not both committing;
