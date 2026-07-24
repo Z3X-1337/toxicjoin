@@ -22,7 +22,6 @@ from toxicjoin.models import (
 from toxicjoin.sql.parser import (
     SqlAnalysisError,
     _columns_belonging_to,
-    _nodes_belonging_to,
     _resolve_columns,
     _selected_source,
     _sorted_refs,
