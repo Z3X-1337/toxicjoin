@@ -1,7 +1,8 @@
 """Strict models for persistent cross-request disclosure history.
 
-The ledger records governed semantic metadata only. Raw rows, SQL text, literal values,
-API keys, and task prompts do not belong in this layer.
+The ledger records governed semantic metadata only. Raw rows, SQL text, SQL-derived
+hashes, literal values, API keys, task prompts, output aliases, and caller-controlled
+session identifiers do not belong in this layer.
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ _HASH_PATTERN = r"^[0-9a-f]{64}$"
 _RECORD_ID_PATTERN = r"^dl_[0-9a-f]{32}$"
 _RECEIPT_ID_PATTERN = r"^tj_[0-9a-f]{16}$"
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$"
-_SESSION_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
 _SUBJECT_CATEGORIES = {
     SensitivityCategory.DIRECT_IDENTIFIER,
     SensitivityCategory.STABLE_PSEUDONYM,
@@ -83,16 +83,14 @@ class DisclosureScope(StrictModel):
 
 
 class DisclosureAuditIdentity(StrictModel):
-    """Credential/session audit metadata excluded from privacy-scope partitioning."""
+    """Administrator-controlled credential audit metadata outside privacy partitioning."""
 
     credential_id: str = Field(pattern=_IDENTIFIER_PATTERN)
-    session_id: str | None = Field(default=None, pattern=_SESSION_PATTERN)
 
 
 class SemanticOutput(StrictModel):
-    """One released output expression and its governed source lineage."""
+    """One released semantic exposure and its governed source lineage."""
 
-    output_name: str = Field(min_length=1, max_length=512)
     kind: ProjectionExposureKind
     sources: tuple[GovernedColumn, ...] = Field(default=(), max_length=128)
 
@@ -105,7 +103,7 @@ class SemanticOutput(StrictModel):
 
 
 class DisclosureSemanticRelease(StrictModel):
-    """Semantic information released by one query, independent of output aliases."""
+    """Semantic information released by one query, independent of caller-controlled names."""
 
     source_dataset_urns: tuple[str, ...] = Field(min_length=1, max_length=64)
     outputs: tuple[SemanticOutput, ...] = Field(default=(), max_length=256)
@@ -140,12 +138,11 @@ class DisclosureSemanticRelease(StrictModel):
 
 
 class DisclosureEvent(StrictModel):
-    """Caller-independent payload that is eligible for append-only persistence."""
+    """Minimal governed payload eligible for append-only persistence."""
 
     scope: DisclosureScope
     audit_identity: DisclosureAuditIdentity
     receipt_id: str = Field(pattern=_RECEIPT_ID_PATTERN)
-    query_sha256: str = Field(pattern=_HASH_PATTERN)
     policy_version: str = Field(min_length=1, max_length=128)
     semantic: DisclosureSemanticRelease
 
@@ -210,7 +207,7 @@ def compute_scope_sha256(
 
 
 def compute_semantic_sha256(release: DisclosureSemanticRelease) -> str:
-    """Hash released semantics while intentionally excluding output aliases/names."""
+    """Hash governed release semantics without caller-controlled output aliases."""
 
     output_signatures = {
         _hash_json(
