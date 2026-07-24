@@ -1,0 +1,46 @@
+name: P3-A Focused Preflight
+
+on:
+  push:
+    branches:
+      - security/p3a-datahub-freshness
+
+permissions:
+  contents: read
+
+jobs:
+  focused:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install package and development tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+      - name: Lint P3-A changes
+        run: |
+          python -m ruff check \
+            src/toxicjoin/integrations/datahub_authority.py \
+            src/toxicjoin/integrations/datahub_spike.py \
+            tests/security/test_datahub_mcp_least_privilege.py \
+            tests/integration/test_datahub_spike_authority.py \
+            tests/unit/test_datahub_report_hashes.py
+      - name: Run focused DataHub authority regressions
+        run: |
+          python -m pytest -q \
+            tests/security/test_datahub_mcp_least_privilege.py \
+            tests/integration/test_datahub_spike_authority.py \
+            tests/unit/test_datahub_report_hashes.py \
+            tests/unit/test_datahub_mcp.py \
+            tests/unit/test_datahub_settings.py
