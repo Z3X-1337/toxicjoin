@@ -1,6 +1,6 @@
 {
   "docker_base_images": [
-    "node:22-alpine=node@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2",
+    "node:22.16.0-alpine=node@sha256:41e4389f3d988d2ed55392df4db1420ad048ae53324a8e2b7c6d19508288107e",
     "python:3.12-slim=python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de"
   ],
   "npm": {
@@ -44,5 +44,5 @@
       }
     ]
   },
-  "source_head_sha": "b3ee2ceae5f8bab3a086f8d185949a09c08b9b4a"
+  "source_head_sha": "58e326c5d561a45a5b520166f4d70f28af68f961"
 }
