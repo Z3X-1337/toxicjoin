@@ -18,6 +18,16 @@ from toxicjoin.api.models import (
     PipelineResponse,
 )
 from toxicjoin.api.scenarios import SCENARIOS
+from toxicjoin.auth import (
+    ApiKeyAuthenticator,
+    AuthScope,
+    AuthenticatedRequest,
+    AuthenticationError,
+    AuthorizationError,
+    RequestIdentity,
+    bind_request_identity,
+    fixture_anonymous_request,
+)
 from toxicjoin.benchmark.evidence import BENCHMARK_EVIDENCE, BenchmarkEvidenceSummary
 from toxicjoin.context import FixtureContextResolver
 from toxicjoin.demo import default_fixture_catalog, seed_database
@@ -72,10 +82,23 @@ def create_app(
     pipeline: ToxicJoinPipeline | None = None,
     *,
     web_dist: str | Path | None = None,
+    authenticator: ApiKeyAuthenticator | None = None,
 ) -> FastAPI:
     """Build the API and optionally serve a prebuilt judge interface."""
 
     resolved_web_dist = _resolve_web_dist(web_dist)
+    resolved_authenticator = (
+        authenticator
+        if authenticator is not None
+        else ApiKeyAuthenticator.from_environment()
+    )
+    if (
+        pipeline is not None
+        and pipeline.mode == ReceiptMode.LIVE
+        and resolved_authenticator is None
+    ):
+        raise ValueError("LIVE API requires configured authentication")
+
     if pipeline is None:
 
         @asynccontextmanager
@@ -101,6 +124,7 @@ def create_app(
         application.state.pipeline = pipeline
 
     application.state.web_dist = resolved_web_dist
+    application.state.authenticator = resolved_authenticator
 
     @application.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -155,12 +179,24 @@ def create_app(
 
     @application.post("/api/analyze", response_model=PipelineResponse)
     def analyze(payload: PipelineRequest, request: Request) -> PipelineResponse:
-        result = _run_pipeline(request, payload, execute=False)
+        authenticated = _require_scope(request, AuthScope.ANALYZE)
+        result = _run_pipeline(
+            request,
+            payload,
+            execute=False,
+            identity=authenticated.identity,
+        )
         return PipelineResponse.from_result(result)
 
     @application.post("/api/execute-safe", response_model=PipelineResponse)
     def execute_safe(payload: PipelineRequest, request: Request) -> PipelineResponse:
-        result = _run_pipeline(request, payload, execute=True)
+        authenticated = _require_scope(request, AuthScope.EXECUTE)
+        result = _run_pipeline(
+            request,
+            payload,
+            execute=True,
+            identity=authenticated.identity,
+        )
         return PipelineResponse.from_result(result)
 
     @application.get(
@@ -174,8 +210,9 @@ def create_app(
         ],
         request: Request,
     ) -> DecisionReceipt:
+        authenticated = _require_scope(request, AuthScope.RECEIPTS_READ)
         try:
-            return _pipeline(request).receipt_store.read(receipt_id)
+            receipt = _pipeline(request).receipt_store.read(receipt_id)
         except FileNotFoundError as exc:
             raise HTTPException(
                 status_code=404,
@@ -186,6 +223,13 @@ def create_app(
                 status_code=409,
                 detail={"code": "RECEIPT_INTEGRITY_FAILURE"},
             ) from exc
+
+        if not _receipt_visible_to(receipt, authenticated, request=request):
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "RECEIPT_NOT_FOUND"},
+            )
+        return receipt
 
     @application.get("/api/demo/scenarios", response_model=DemoScenarioList)
     def demo_scenarios() -> DemoScenarioList:
@@ -257,15 +301,67 @@ def _pipeline(request: Request) -> ToxicJoinPipeline:
     return pipeline
 
 
+def _require_scope(request: Request, scope: AuthScope) -> AuthenticatedRequest:
+    authenticator = getattr(request.app.state, "authenticator", None)
+    if authenticator is None:
+        if _pipeline(request).mode == ReceiptMode.LIVE:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "AUTH_NOT_CONFIGURED"},
+            )
+        return fixture_anonymous_request()
+
+    authorization = request.headers.get("authorization", "")
+    scheme, separator, token = authorization.partition(" ")
+    if not separator or scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "AUTH_MISSING_BEARER"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    session_id = request.headers.get("x-toxicjoin-session")
+    try:
+        return authenticator.require_scope(
+            token.strip(),
+            scope,
+            session_id=session_id,
+        )
+    except AuthenticationError as exc:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": exc.code},
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    except AuthorizationError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": exc.code, "required_scope": scope.value},
+        ) from exc
+
+
+def _receipt_visible_to(
+    receipt: DecisionReceipt,
+    authenticated: AuthenticatedRequest,
+    *,
+    request: Request,
+) -> bool:
+    if receipt.identity is None:
+        return getattr(request.app.state, "authenticator", None) is None
+    return receipt.identity.principal_id == authenticated.identity.principal_id
+
+
 def _run_pipeline(
     request: Request,
     payload: PipelineRequest,
     *,
     execute: bool,
+    identity: RequestIdentity,
 ) -> Any:
     pipeline = _pipeline(request)
     try:
-        return pipeline.execute_safe(payload) if execute else pipeline.analyze(payload)
+        with bind_request_identity(identity):
+            return pipeline.execute_safe(payload) if execute else pipeline.analyze(payload)
     except Exception as exc:
         # Do not expose paths, SQL, credentials, or exception messages through the API.
         raise HTTPException(
