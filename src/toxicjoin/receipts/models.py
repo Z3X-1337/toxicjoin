@@ -63,7 +63,6 @@ class ReceiptVerificationCheck(StrictModel):
 
 
 class ReceiptExecutionSummary(StrictModel):
-    authorization_id: str = Field(pattern=r"^tj_auth_[0-9a-f]{32}$")
     query_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     columns: tuple[str, ...]
     preview_row_count: int = Field(ge=0)
