@@ -68,7 +68,7 @@ jobs:
       - name: Generate cross-query sequence report
         shell: bash
         env:
-          GITHUB_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          TOXICJOIN_RELEASE_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           python -m toxicjoin.benchmark.disclosure_sequences \
@@ -78,8 +78,9 @@ jobs:
           from pathlib import Path
 
           report = json.loads(Path("artifacts/disclosure-sequence-report.json").read_text())
+          expected = Path("artifacts/release-candidate-sha.txt").read_text().strip()
           assert report["passed"] is True
-          assert report["git_sha"] == Path("artifacts/release-candidate-sha.txt").read_text().strip()
+          assert report["release_candidate_sha"] == expected
           by_id = {case["id"]: case for case in report["cases"]}
           changed = by_id["changed_cohort_differencing_block"]
           assert changed["first"]["effective_decision"] == "ALLOW"
