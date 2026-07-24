@@ -81,16 +81,21 @@ class PolicyEngine:
             category == SensitivityCategory.QUASI_IDENTIFIER
             for category in categories
         )
+        quasi_threshold_met = quasi_count >= self.config.quasi_identifier_threshold
+        individual_pseudonym_sensitive = (
+            has_pseudonym
+            and has_sensitive
+            and not policy_input.query_plan.is_grouped
+        )
 
         if has_direct and has_sensitive:
             block_reasons.append(ReasonCode.DIRECT_SENSITIVE_LINKAGE)
 
-        if (
-            has_pseudonym
-            and has_sensitive
-            and quasi_count >= self.config.quasi_identifier_threshold
-            and not policy_input.query_plan.is_grouped
-        ):
+        # Policy v0.2: a stable subject pseudonym plus sensitive row-level output is
+        # already a direct linkage channel. Requiring an additional quasi-identifier
+        # count created the externally reproduced E18/E20/E24 blind spots in v0.1.0.
+        # Quasi-identifier count remains evidence, but it no longer weakens this rule.
+        if individual_pseudonym_sensitive:
             block_reasons.append(ReasonCode.COMPOSITIONAL_REIDENTIFICATION_RISK)
 
         if block_reasons:
@@ -104,7 +109,10 @@ class PolicyEngine:
                         category.value for category in referenced_categories
                     ],
                     "unresolved_columns": unresolved,
+                    "individual_pseudonym_sensitive": individual_pseudonym_sensitive,
                     "quasi_identifier_count": quasi_count,
+                    "quasi_identifier_threshold": self.config.quasi_identifier_threshold,
+                    "quasi_identifier_threshold_met": quasi_threshold_met,
                 },
             )
 
@@ -153,6 +161,10 @@ class PolicyEngine:
                 "referenced_categories": [
                     category.value for category in referenced_categories
                 ],
+                "individual_pseudonym_sensitive": individual_pseudonym_sensitive,
+                "quasi_identifier_count": quasi_count,
+                "quasi_identifier_threshold": self.config.quasi_identifier_threshold,
+                "quasi_identifier_threshold_met": quasi_threshold_met,
                 "trusted_minimum_group_size": trusted_threshold,
                 "trusted_threshold_subject": (
                     detected_subject.key if threshold_subject_matches else None
