@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import Field, field_validator, model_validator
 
 from toxicjoin.auth import RequestIdentity
+from toxicjoin.context.governance import GovernanceContextBinding
 from toxicjoin.models import Decision, ReasonCode, SensitivityCategory, StrictModel
 
 
@@ -105,7 +106,7 @@ class ReceiptWriteback(StrictModel):
 
 
 class DecisionReceipt(StrictModel):
-    schema_version: str = "1.1"
+    schema_version: str = "1.2"
     receipt_id: str = Field(pattern=r"^tj_[0-9a-f]{16}$")
     created_at: datetime
     mode: ReceiptMode
@@ -118,6 +119,7 @@ class DecisionReceipt(StrictModel):
     final_reason_codes: tuple[ReasonCode, ...] = ()
     final_evidence: dict[str, Any] = Field(default_factory=dict)
     policy_version: str = Field(min_length=1)
+    governance: GovernanceContextBinding | None = None
     sql: ReceiptSqlEvidence
     columns: tuple[ReceiptColumnEvidence, ...]
     verification: tuple[ReceiptVerificationCheck, ...] = ()
