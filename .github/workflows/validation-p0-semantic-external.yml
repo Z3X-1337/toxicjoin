@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 20
 
     env:
-      RELEASE_CANDIDATE_SHA: 283791917edf8efede9ce2e11a978d0d6330aef7
+      TARGET_PR_NUMBER: "48"
       RELEASE_DIR: /tmp/toxicjoin-release-candidate
 
     steps:
@@ -34,10 +34,18 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Materialize exact production release candidate
+      - name: Resolve and materialize exact production PR head
         shell: bash
         run: |
           set -euo pipefail
+          TARGET_REF="refs/pull/${TARGET_PR_NUMBER}/head"
+          RELEASE_CANDIDATE_SHA="$(git ls-remote origin "$TARGET_REF" | awk 'NR==1 {print $1}')"
+          if [[ ! "$RELEASE_CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Could not resolve exact head for PR #${TARGET_PR_NUMBER}" >&2
+            exit 1
+          fi
+
+          printf '%s\n' "$RELEASE_CANDIDATE_SHA" > /tmp/toxicjoin-release-candidate-sha
           git fetch --no-tags --depth=1 origin "$RELEASE_CANDIDATE_SHA"
           git worktree add --detach "$RELEASE_DIR" "$RELEASE_CANDIDATE_SHA"
           test "$(git -C "$RELEASE_DIR" rev-parse HEAD)" = "$RELEASE_CANDIDATE_SHA"
@@ -50,6 +58,8 @@ jobs:
           mkdir -p validation-artifacts/p0-semantic-external
           printf '%s\n' "$RELEASE_CANDIDATE_SHA" \
             > validation-artifacts/p0-semantic-external/release-candidate-sha.txt
+          printf '%s\n' "$TARGET_PR_NUMBER" \
+            > validation-artifacts/p0-semantic-external/target-pr-number.txt
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -61,6 +71,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          RELEASE_CANDIDATE_SHA="$(cat /tmp/toxicjoin-release-candidate-sha)"
+          test "$(git -C "$RELEASE_DIR" rev-parse HEAD)" = "$RELEASE_CANDIDATE_SHA"
           python -m pip install --upgrade pip
           python -m pip install -e "$RELEASE_DIR"
           python -m py_compile "$RELEASE_DIR/research/kernel_v2/run_release_v02.py"
@@ -153,6 +165,8 @@ jobs:
           set -euo pipefail
           set -o pipefail
           EVIDENCE_DIR="$GITHUB_WORKSPACE/validation-artifacts/p0-semantic-external"
+          RELEASE_CANDIDATE_SHA="$(cat /tmp/toxicjoin-release-candidate-sha)"
+          test "$(git -C "$RELEASE_DIR" rev-parse HEAD)" = "$RELEASE_CANDIDATE_SHA"
           cd "$RELEASE_DIR"
           python -m research.kernel_v2.run_release_v02 \
             --preregistration research/kernel_v2/preregistration.json \
@@ -171,6 +185,9 @@ jobs:
         run: |
           set -euo pipefail
           EVIDENCE_DIR="$GITHUB_WORKSPACE/validation-artifacts/p0-semantic-external"
+          RELEASE_CANDIDATE_SHA="$(cat /tmp/toxicjoin-release-candidate-sha)"
+          test "$(cat "$EVIDENCE_DIR/release-candidate-sha.txt")" = "$RELEASE_CANDIDATE_SHA"
+          test "$(cat "$EVIDENCE_DIR/target-pr-number.txt")" = "$TARGET_PR_NUMBER"
           python - "$EVIDENCE_DIR/release-v02-report.json" <<'PY'
           import json
           import sys
@@ -210,6 +227,7 @@ jobs:
           name: toxicjoin-p0-external-replay
           path: |
             validation-artifacts/p0-semantic-external/release-candidate-sha.txt
+            validation-artifacts/p0-semantic-external/target-pr-number.txt
             validation-artifacts/p0-semantic-external/warehouse-profile.json
             validation-artifacts/p0-semantic-external/release-v02-report.json
             validation-artifacts/p0-semantic-external/replay.log
