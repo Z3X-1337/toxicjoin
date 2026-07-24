@@ -1,0 +1,128 @@
+name: Supply Chain Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify static supply-chain invariants
+        run: python3 scripts/validate_dependency_audit.py static
+
+  python-audit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [datahub, agent-registry]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Sync exact locked profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check 'uv==0.8.4'
+          uv sync --frozen --no-install-project --extra dev --extra security --extra "${{ matrix.profile }}"
+      - name: Audit exact locked profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROFILE="${{ matrix.profile }}"
+          uv export --frozen --no-emit-project --no-hashes --extra dev --extra security --extra "$PROFILE" --output-file "requirements-$PROFILE.txt"
+          set +e
+          .venv/bin/pip-audit -r "requirements-$PROFILE.txt" --format json --output "pip-audit-$PROFILE.json"
+          AUDIT_RC=$?
+          set -e
+          echo "pip-audit exit code: $AUDIT_RC"
+          .venv/bin/python scripts/validate_dependency_audit.py python --profile "$PROFILE" --audit-json "pip-audit-$PROFILE.json"
+      - name: Generate reproducible Python CycloneDX SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROFILE="${{ matrix.profile }}"
+          .venv/bin/cyclonedx-py requirements "requirements-$PROFILE.txt" --output-reproducible --output-format JSON --output-file "sbom-python-$PROFILE.cdx.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: python-supply-chain-${{ matrix.profile }}
+          path: |
+            pip-audit-${{ matrix.profile }}.json
+            sbom-python-${{ matrix.profile }}.cdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+  web-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22.16.0"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install exact lock
+        run: npm ci --no-audit --no-fund
+      - name: Audit npm dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          npm audit --package-lock-only --json > npm-audit.json
+          AUDIT_RC=$?
+          set -e
+          echo "npm audit exit code: $AUDIT_RC"
+          python3 ../../scripts/validate_dependency_audit.py npm --audit-json npm-audit.json
+      - name: Verify web build and tests
+        run: npm run check
+      - name: Generate Node CycloneDX SBOM
+        run: npm run sbom
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: web-supply-chain
+          path: |
+            apps/web/npm-audit.json
+            apps/web/sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+  bandit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Focused Python SAST
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check 'uv==0.8.4'
+          uv sync --frozen --no-install-project --extra security
+          .venv/bin/bandit -r src/toxicjoin -ll -ii -q
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48
+        with:
+          fail-on-severity: high
+          allow-ghsas: GHSA-h35f-9h28-mq5c
