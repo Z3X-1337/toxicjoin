@@ -66,7 +66,7 @@ def _sensitive_sql(literal: str, *, alias: str = "avg_purchase") -> str:
     )
 
 
-def test_cohort_identity_ignores_root_output_alias_and_order_but_not_predicate_literal() -> None:
+def test_cohort_identity_ignores_root_output_alias_and_unlimited_order_but_not_predicate() -> None:
     first = _sensitive_sql("alpha", alias="first_alias")
     renamed = (
         "SELECT AVG(o.purchase_amount) AS second_alias "
@@ -83,6 +83,25 @@ def test_cohort_identity_ignores_root_output_alias_and_order_but_not_predicate_l
     assert first_metadata.cohort_hmac_sha256 == renamed_metadata.cohort_hmac_sha256
     assert first_metadata.cohort_hmac_sha256 != changed_metadata.cohort_hmac_sha256
     assert first_metadata.protected_release is True
+
+
+def test_limited_query_order_changes_cohort_identity() -> None:
+    ascending = (
+        "SELECT o.purchase_amount FROM orders o "
+        "WHERE o.category = 'alpha' ORDER BY o.purchase_amount ASC LIMIT 1"
+    )
+    descending = (
+        "SELECT o.purchase_amount FROM orders o "
+        "WHERE o.category = 'alpha' ORDER BY o.purchase_amount DESC LIMIT 1"
+    )
+    semantic = build_semantic_release(
+        default_fixture_catalog(), analyze_sql(ascending, dialect="duckdb")
+    )
+
+    assert canonicalize_cohort_sql(ascending) != canonicalize_cohort_sql(descending)
+    ascending_metadata = build_composition_metadata(semantic, ascending, secret_key=_KEY)
+    descending_metadata = build_composition_metadata(semantic, descending, secret_key=_KEY)
+    assert ascending_metadata.cohort_hmac_sha256 != descending_metadata.cohort_hmac_sha256
 
 
 def test_first_protected_release_and_identical_repeat_are_allowed(tmp_path: Path) -> None:
