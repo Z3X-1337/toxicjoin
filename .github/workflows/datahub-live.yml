@@ -4,7 +4,9 @@ on:
   pull_request:
     paths:
       - ".github/workflows/datahub-live.yml"
+      - "src/toxicjoin/context/**"
       - "src/toxicjoin/integrations/**"
+      - "tests/unit/test_datahub_edited_metadata.py"
       - "config/datahub-assets.json"
       - "pyproject.toml"
   workflow_dispatch:
@@ -84,6 +86,97 @@ jobs:
         run: |
           set -o pipefail
           toxicjoin-datahub-seed --yes 2>&1 | tee datahub-seed.log
+
+      - name: Verify editable field governance through official MCP
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import asyncio
+          import json
+
+          from toxicjoin.context.datahub import DataHubAssetMap, DataHubSnapshotLoader
+          from toxicjoin.demo import default_fixture_catalog
+          from toxicjoin.integrations.datahub_mcp import (
+              DataHubMcpClient,
+              DataHubMcpSettings,
+              StdioDataHubMcpTransport,
+          )
+          from toxicjoin.models import SensitivityCategory
+
+
+          async def verify() -> None:
+              asset_map = DataHubAssetMap.from_path("config/datahub-assets.json")
+              settings = DataHubMcpSettings.from_env()
+              expected = default_fixture_catalog()
+
+              async with StdioDataHubMcpTransport(settings) as transport:
+                  client = DataHubMcpClient(transport)
+                  snapshot = await DataHubSnapshotLoader(client, asset_map).load(
+                      require_mutations=False
+                  )
+                  raw_fields = []
+                  for urn in asset_map.datasets.values():
+                      raw_fields.extend(await client.list_schema_fields(urn))
+
+              edited_field_count = sum(
+                  1
+                  for field in raw_fields
+                  if any(
+                      field.get(key)
+                      for key in (
+                          "editedTags",
+                          "edited_tags",
+                          "editedGlossaryTerms",
+                          "edited_glossary_terms",
+                      )
+                  )
+              )
+              assert edited_field_count > 0, (
+                  "live DataHub MCP did not expose any editable field metadata; "
+                  "the edited-metadata regression was not exercised"
+              )
+
+              observed_category_counts = {
+                  category.value: 0 for category in SensitivityCategory
+              }
+              compared_fields = 0
+              for logical_name, expected_dataset in expected.datasets.items():
+                  observed_dataset = snapshot.catalog.datasets[logical_name]
+                  assert set(observed_dataset.fields) == set(expected_dataset.fields)
+                  for field_path, expected_field in expected_dataset.fields.items():
+                      observed_field = observed_dataset.fields[field_path]
+                      assert observed_field.category == expected_field.category, (
+                          logical_name,
+                          field_path,
+                          expected_field.category,
+                          observed_field.category,
+                      )
+                      assert set(expected_field.tags).issubset(observed_field.tags)
+                      assert set(expected_field.glossary_terms).issubset(
+                          observed_field.glossary_terms
+                      )
+                      observed_category_counts[observed_field.category.value] += 1
+                      compared_fields += 1
+
+              assert compared_fields == 19
+              assert observed_category_counts["UNCLASSIFIED"] == 0
+              print(
+                  json.dumps(
+                      {
+                          "edited_field_count": edited_field_count,
+                          "compared_fields": compared_fields,
+                          "observed_category_counts": observed_category_counts,
+                          "status": "verified",
+                      },
+                      indent=2,
+                      sort_keys=True,
+                  )
+              )
+
+
+          asyncio.run(verify())
+          PY
 
       - name: Bootstrap and index DataHub document tools
         shell: bash
