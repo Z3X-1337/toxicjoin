@@ -2,8 +2,8 @@
 
 Secure/live ToxicJoin paths must not use an ambiguous MCP process that can both acquire
 policy context and mutate DataHub. Read-only and mutation roles use distinct credential
-environment variables and application-level capabilities in addition to the upstream MCP
-server's mutation flag.
+environment variables and application-level capabilities in addition to upstream MCP
+server controls.
 """
 
 from __future__ import annotations
@@ -32,7 +32,16 @@ class DataHubMcpRole(StrEnum):
 
 _READ_TOKEN_ENV = "DATAHUB_GMS_READ_TOKEN"
 _WRITE_TOKEN_ENV = "DATAHUB_GMS_WRITE_TOKEN"
-_MUTATION_PREFIXES = ("add_", "remove_", "set_", "update_")
+_MUTATION_PREFIXES = (
+    "add_",
+    "remove_",
+    "set_",
+    "update_",
+    "create_",
+    "delete_",
+    "upsert_",
+    "patch_",
+)
 _MUTATION_TOOL_NAMES = {"save_document"}
 _REQUIRED_SAVE_DOCUMENT_PROPERTIES = {
     "title",
@@ -42,19 +51,55 @@ _REQUIRED_SAVE_DOCUMENT_PROPERTIES = {
 }
 
 
-def read_only_settings_from_env() -> DataHubMcpSettings:
-    """Build settings for a context/read-back process with mutation disabled."""
+class RoleBoundDataHubMcpSettings(DataHubMcpSettings):
+    """MCP settings that force server-side tool exposure for one authority role."""
 
-    return _settings_from_env(token_env=_READ_TOKEN_ENV, mutation_enabled=False)
+    role: DataHubMcpRole
+
+    def child_environment(self) -> dict[str, str]:
+        environment = super().child_environment()
+        if self.role == DataHubMcpRole.READ_ONLY:
+            # DataHub controls metadata mutations and save_document independently.
+            # Keep document reads such as grep_documents enabled while explicitly
+            # suppressing document writes.
+            environment["TOOLS_IS_MUTATION_ENABLED"] = "false"
+            environment["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] = "false"
+            environment["SAVE_DOCUMENT_TOOL_ENABLED"] = "false"
+        else:
+            environment["TOOLS_IS_MUTATION_ENABLED"] = "true"
+            environment["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] = "false"
+            environment["SAVE_DOCUMENT_TOOL_ENABLED"] = "true"
+        return environment
+
+    def redacted_summary(self) -> dict[str, Any]:
+        summary = super().redacted_summary()
+        summary["role"] = self.role.value
+        return summary
 
 
-def mutation_settings_from_env() -> DataHubMcpSettings:
+def read_only_settings_from_env() -> RoleBoundDataHubMcpSettings:
+    """Build settings for a context/read-back process with all writes disabled."""
+
+    return _settings_from_env(
+        token_env=_READ_TOKEN_ENV,
+        role=DataHubMcpRole.READ_ONLY,
+    )
+
+
+def mutation_settings_from_env() -> RoleBoundDataHubMcpSettings:
     """Build settings for the isolated write-back process with mutation enabled."""
 
-    return _settings_from_env(token_env=_WRITE_TOKEN_ENV, mutation_enabled=True)
+    return _settings_from_env(
+        token_env=_WRITE_TOKEN_ENV,
+        role=DataHubMcpRole.MUTATION,
+    )
 
 
-def _settings_from_env(*, token_env: str, mutation_enabled: bool) -> DataHubMcpSettings:
+def _settings_from_env(
+    *,
+    token_env: str,
+    role: DataHubMcpRole,
+) -> RoleBoundDataHubMcpSettings:
     url = os.getenv("DATAHUB_GMS_URL")
     if not url:
         raise DataHubMcpError("DATAHUB_GMS_URL is required")
@@ -70,13 +115,14 @@ def _settings_from_env(*, token_env: str, mutation_enabled: bool) -> DataHubMcpS
     except ValueError as exc:
         raise DataHubMcpError("DATAHUB_MCP_TIMEOUT_SECONDS must be numeric") from exc
 
-    return DataHubMcpSettings(
+    return RoleBoundDataHubMcpSettings(
         gms_url=url,
         gms_token=SecretStr(os.environ[token_env]),
         command=command,
         args=args,
         timeout_seconds=timeout,
-        mutation_enabled=mutation_enabled,
+        mutation_enabled=role == DataHubMcpRole.MUTATION,
+        role=role,
     )
 
 
