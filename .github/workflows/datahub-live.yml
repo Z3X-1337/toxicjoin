@@ -45,8 +45,6 @@ jobs:
       DATAHUB_MCP_COMMAND: uvx
       DATAHUB_MCP_ARGS: --from mcp-server-datahub==0.6.0 mcp-server-datahub
       DATAHUB_MCP_TIMEOUT_SECONDS: "90"
-      DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED: "false"
-      SAVE_DOCUMENT_TOOL_ENABLED: "true"
 
     steps:
       - name: Check out repository
@@ -200,6 +198,9 @@ jobs:
           async def load_snapshot():
               settings = read_only_settings_from_env()
               assert settings.mutation_enabled is False
+              child_env = settings.child_environment()
+              assert child_env['TOOLS_IS_MUTATION_ENABLED'] == 'false'
+              assert child_env['SAVE_DOCUMENT_TOOL_ENABLED'] == 'false'
               asset_map = DataHubAssetMap.from_path('config/datahub-assets.json')
               async with StdioDataHubMcpTransport(settings) as transport:
                   client = RoleBoundDataHubMcpClient(
@@ -281,15 +282,26 @@ jobs:
           assert len(spike['verified_entities']) == 5
           assert spike['read_settings']['mutation_enabled'] is False
           assert spike['write_settings']['mutation_enabled'] is True
+          assert spike['read_settings']['metadata_mutations_enabled'] is False
+          assert spike['write_settings']['metadata_mutations_enabled'] is False
+          assert spike['read_settings']['document_write_enabled'] is False
+          assert spike['write_settings']['document_write_enabled'] is True
           assert 'save_document' not in spike['read_discovered_tools']
           assert 'save_document' in spike['write_discovered_tools']
           assert 'save_document' not in spike['readback_discovered_tools']
           assert spike['decision_document_urn'].startswith('urn:li:document:')
           assert len(spike['report_sha256']) == 64
 
-          mutation_prefixes = ('add_', 'remove_', 'set_', 'update_')
+          mutation_prefixes = (
+              'add_', 'remove_', 'set_', 'update_',
+              'create_', 'delete_', 'upsert_', 'patch_',
+          )
           for tool in spike['read_discovered_tools'] + spike['readback_discovered_tools']:
               assert tool != 'save_document'
+              assert not tool.startswith(mutation_prefixes), tool
+          for tool in spike['write_discovered_tools']:
+              if tool == 'save_document':
+                  continue
               assert not tool.startswith(mutation_prefixes), tool
 
           forbidden = ('password', 'secret', 'http://127.0.0.1:8080')
@@ -303,9 +315,10 @@ jobs:
             'decision_document_urn': spike['decision_document_urn'],
             'lineage_relationship_count': spike['lineage_relationship_count'],
             'independent_readback_verified': True,
-            'read_process_mutation_enabled': False,
-            'write_process_mutation_enabled': True,
-            'readback_process_mutation_enabled': False,
+            'read_process_metadata_mutations_enabled': False,
+            'write_process_metadata_mutations_enabled': False,
+            'write_process_document_write_enabled': True,
+            'readback_process_metadata_mutations_enabled': False,
           }, indent=2))
           PY
 
