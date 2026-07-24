@@ -14,6 +14,15 @@ from toxicjoin.context.fixture import (
     FixtureField,
     load_fixture_catalog,
 )
+from toxicjoin.context.governance import (
+    GovernanceContextBinding,
+    GovernanceContextDriftError,
+    GovernanceContextError,
+    GovernanceContextStaleError,
+    current_governance_binding,
+    require_same_governance_binding,
+    resolve_with_governance_binding,
+)
 from toxicjoin.context.models import ContextResolution, ContextResolver
 
 __all__ = [
@@ -28,5 +37,12 @@ __all__ = [
     "FixtureContextResolver",
     "FixtureDataset",
     "FixtureField",
+    "GovernanceContextBinding",
+    "GovernanceContextDriftError",
+    "GovernanceContextError",
+    "GovernanceContextStaleError",
+    "current_governance_binding",
     "load_fixture_catalog",
+    "require_same_governance_binding",
+    "resolve_with_governance_binding",
 ]

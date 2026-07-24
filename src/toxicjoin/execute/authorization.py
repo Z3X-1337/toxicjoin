@@ -2,9 +2,10 @@
 
 An execution authorization is not a reusable policy decision. It is a single-use,
 HMAC-authenticated capability tied to the exact SQL text, analyzed query plan,
-resolved governance context, policy configuration, resulting ALLOW decision,
-subject key, task purpose, authenticated request identity when present, SQL dialect,
-optional rewrite parent, disclosure commitment when required, and expiry.
+resolved governance context, governance snapshot provenance/freshness when available,
+policy configuration, resulting ALLOW decision, subject key, task purpose,
+authenticated request identity when present, SQL dialect, optional rewrite parent,
+disclosure commitment when required, and expiry.
 """
 
 from __future__ import annotations
@@ -21,6 +22,14 @@ from typing import Any, Protocol
 from pydantic import Field
 
 from toxicjoin.auth import RequestIdentity, current_request_identity
+from toxicjoin.context.governance import (
+    GovernanceContextBinding,
+    GovernanceContextDriftError,
+    GovernanceContextStaleError,
+    current_governance_binding,
+    require_same_governance_binding,
+    resolve_with_governance_binding,
+)
 from toxicjoin.context.models import ContextResolution
 from toxicjoin.disclosure import (
     DisclosureCommitment,
@@ -66,6 +75,7 @@ class ExecutionAuthorization(StrictModel):
     sql_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     query_plan_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     context_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    governance_binding: GovernanceContextBinding | None = None
     policy_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     policy_decision_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     task_purpose_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -139,6 +149,7 @@ class ExecutionAuthorizer:
         dialect: str = SUPPORTED_EXECUTION_DIALECT,
         rewrite_parent_sql: str | None = None,
         disclosure_commitment: DisclosureCommitment | None = None,
+        expected_governance_binding: GovernanceContextBinding | None = None,
     ) -> ExecutionAuthorization:
         """Independently re-evaluate exact SQL and issue only for fully committed ALLOW."""
 
@@ -147,7 +158,11 @@ class ExecutionAuthorizer:
             raise ExecutionAuthorizationError("AUTH_INVALID_TASK_PURPOSE")
 
         query_plan = self._analyze(sql, dialect=dialect)
-        resolution = self._resolve(query_plan)
+        resolution, governance_binding = self._resolve_with_binding(query_plan)
+        self._require_expected_governance_binding(
+            expected_governance_binding,
+            governance_binding,
+        )
         decision = self._evaluate(
             resolution,
             query_plan=query_plan,
@@ -168,6 +183,7 @@ class ExecutionAuthorizer:
             identity=identity,
             dialect=dialect,
         )
+        self._revalidate_governance_binding(governance_binding)
 
         authorization_id = f"tj_auth_{secrets.token_hex(16)}"
         if disclosure_commitment is not None:
@@ -195,6 +211,7 @@ class ExecutionAuthorizer:
             sql_sha256=_sha256_text(sql),
             query_plan_sha256=_hash_query_plan(query_plan),
             context_sha256=_hash_context(resolution),
+            governance_binding=governance_binding,
             policy_sha256=_hash_policy(self._policy_engine),
             policy_decision_sha256=_hash_decision(decision),
             task_purpose_sha256=_sha256_text(task_purpose),
@@ -220,7 +237,7 @@ class ExecutionAuthorizer:
         dialect: str = SUPPORTED_EXECUTION_DIALECT,
         rewrite_parent_sql: str | None = None,
     ) -> QueryPlan:
-        """Verify current policy/privacy state, atomically consume, and return its plan."""
+        """Verify current policy/privacy/governance state, consume, and return its plan."""
 
         _validate_execution_dialect(dialect)
         expected_mac = self._mac(
@@ -258,7 +275,11 @@ class ExecutionAuthorizer:
         if authorization.query_plan_sha256 != _hash_query_plan(query_plan):
             raise ExecutionAuthorizationError("AUTH_QUERY_PLAN_MISMATCH")
 
-        resolution = self._resolve(query_plan)
+        resolution, governance_binding = self._resolve_with_binding(query_plan)
+        self._require_expected_governance_binding(
+            authorization.governance_binding,
+            governance_binding,
+        )
         if authorization.context_sha256 != _hash_context(resolution):
             raise ExecutionAuthorizationError("AUTH_CONTEXT_MISMATCH")
         if authorization.policy_sha256 != _hash_policy(self._policy_engine):
@@ -285,6 +306,7 @@ class ExecutionAuthorizer:
             identity=identity,
             dialect=dialect,
         )
+        self._revalidate_governance_binding(authorization.governance_binding)
         if authorization.disclosure_commitment is not None:
             assert self._disclosure_ledger is not None
             try:
@@ -356,9 +378,40 @@ class ExecutionAuthorizer:
         except SqlAnalysisError as exc:
             raise ExecutionAuthorizationError("AUTH_SQL_ANALYSIS_FAILED") from exc
 
-    def _resolve(self, query_plan: QueryPlan) -> ContextResolution:
+    def _resolve_with_binding(
+        self,
+        query_plan: QueryPlan,
+    ) -> tuple[ContextResolution, GovernanceContextBinding | None]:
         try:
-            return self._context_resolver.resolve(query_plan)
+            return resolve_with_governance_binding(self._context_resolver, query_plan)
+        except GovernanceContextStaleError as exc:
+            raise ExecutionAuthorizationError("AUTH_CONTEXT_STALE") from exc
+        except GovernanceContextDriftError as exc:
+            raise ExecutionAuthorizationError("AUTH_CONTEXT_DRIFT") from exc
+        except Exception as exc:
+            raise ExecutionAuthorizationError("AUTH_CONTEXT_RESOLUTION_FAILED") from exc
+
+    def _require_expected_governance_binding(
+        self,
+        expected: GovernanceContextBinding | None,
+        actual: GovernanceContextBinding | None,
+    ) -> None:
+        try:
+            require_same_governance_binding(expected, actual)
+        except GovernanceContextDriftError as exc:
+            raise ExecutionAuthorizationError("AUTH_CONTEXT_DRIFT") from exc
+
+    def _revalidate_governance_binding(
+        self,
+        expected: GovernanceContextBinding | None,
+    ) -> None:
+        try:
+            actual = current_governance_binding(self._context_resolver)
+            require_same_governance_binding(expected, actual)
+        except GovernanceContextStaleError as exc:
+            raise ExecutionAuthorizationError("AUTH_CONTEXT_STALE") from exc
+        except GovernanceContextDriftError as exc:
+            raise ExecutionAuthorizationError("AUTH_CONTEXT_DRIFT") from exc
         except Exception as exc:
             raise ExecutionAuthorizationError("AUTH_CONTEXT_RESOLUTION_FAILED") from exc
 

@@ -58,6 +58,7 @@ def test_public_health_is_liveness_only_and_fixture_ready_is_detailed(tmp_path) 
         "policy_version": load_policy().version,
         "database_ready": True,
         "receipt_store_ready": True,
+        "governance_ready": True,
     }
 
 

@@ -31,6 +31,7 @@ class HealthResponse(StrictModel):
     policy_version: str
     database_ready: bool
     receipt_store_ready: bool
+    governance_ready: bool
 
 
 class PipelineResponse(StrictModel):
