@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Protocol
 
+from pydantic import model_validator
+
 from toxicjoin.context.fixture import ContextResolution
 from toxicjoin.execute import DuckDBExecutor, ExecutionError, ExecutionResult
 from toxicjoin.models import (
@@ -35,7 +37,25 @@ class VerificationResult(StrictModel):
     policy_decision: PolicyDecision | None
     checks: tuple[VerificationCheck, ...]
     execution: ExecutionResult | None = None
+    execution_attempted: bool = False
+    execution_quarantined: bool = False
     execution_error: str | None = None
+
+    @model_validator(mode="after")
+    def failed_verification_never_releases_rows(self) -> "VerificationResult":
+        if self.execution is not None:
+            if not self.passed:
+                raise ValueError("failed verification cannot release execution rows")
+            if not self.execution_attempted:
+                raise ValueError("released execution requires execution_attempted")
+            if self.execution_quarantined:
+                raise ValueError("released execution cannot also be quarantined")
+        if self.execution_quarantined:
+            if not self.execution_attempted:
+                raise ValueError("quarantined execution requires execution_attempted")
+            if self.passed:
+                raise ValueError("successful verification cannot quarantine execution")
+        return self
 
 
 def verify_and_execute(
@@ -59,7 +79,7 @@ def verify_and_execute(
     dialect: str = "duckdb",
     rewrite_parent_sql: str | None = None,
 ) -> VerificationResult:
-    """Verify final SQL, authorize exact state, execute once, then audit results."""
+    """Verify final SQL, execute into quarantine, and release rows only after all checks."""
 
     checks: list[VerificationCheck] = []
     try:
@@ -195,7 +215,7 @@ def verify_and_execute(
             passed=True,
             detail=(
                 "single-use capability issued for exact SQL, plan, governance context, "
-                "policy, task, subject, and rewrite lineage"
+                "policy, task, subject, and optional rewrite lineage"
             ),
         )
     )
@@ -221,6 +241,7 @@ def verify_and_execute(
             query_plan=query_plan,
             policy_decision=decision,
             checks=checks,
+            execution_attempted=True,
             execution_error=str(exc),
         )
 
@@ -294,6 +315,7 @@ def verify_and_execute(
         policy_decision=decision,
         checks=checks,
         execution=execution,
+        execution_attempted=True,
     )
 
 
@@ -345,13 +367,19 @@ def _result(
     policy_decision: PolicyDecision | None,
     checks: list[VerificationCheck],
     execution: ExecutionResult | None = None,
+    execution_attempted: bool = False,
     execution_error: str | None = None,
 ) -> VerificationResult:
+    passed = bool(checks) and all(check.passed for check in checks)
+    execution_quarantined = bool(execution is not None and not passed)
+    released_execution = execution if passed else None
     return VerificationResult(
-        passed=bool(checks) and all(check.passed for check in checks),
+        passed=passed,
         query_plan=query_plan,
         policy_decision=policy_decision,
         checks=tuple(checks),
-        execution=execution,
+        execution=released_execution,
+        execution_attempted=execution_attempted,
+        execution_quarantined=execution_quarantined,
         execution_error=execution_error,
     )
