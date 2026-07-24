@@ -1,4 +1,4 @@
-version: "0.1.0"
+version: "0.2.0"
 minimum_group_size: 20
 quasi_identifier_threshold: 2
 fail_closed: true
