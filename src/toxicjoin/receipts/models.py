@@ -139,6 +139,8 @@ class DecisionReceipt(StrictModel):
         effective_decision = self.final_decision or self.initial_decision
         if self.mode == ReceiptMode.LIVE and self.identity is None:
             raise ValueError("live receipt requires authenticated request identity")
+        if self.mode == ReceiptMode.LIVE and self.governance is None:
+            raise ValueError("live receipt requires DataHub governance provenance")
         if self.final_decision is None and (self.final_reason_codes or self.final_evidence):
             raise ValueError("final reason codes and evidence require final_decision")
         if (
