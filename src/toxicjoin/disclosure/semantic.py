@@ -430,12 +430,27 @@ def _context_map(values: tuple[ColumnContext, ...]) -> dict[str, ColumnContext]:
     contexts: dict[str, ColumnContext] = {}
     for context in values:
         existing = contexts.get(context.ref.key)
-        if existing is not None and existing != context:
+        if existing is not None and not _same_governance_context(existing, context):
             raise DisclosureSemanticError(
                 f"conflicting governance context for column: {context.ref.key}"
             )
-        contexts[context.ref.key] = context
+        if existing is None:
+            contexts[context.ref.key] = context
     return contexts
+
+
+def _same_governance_context(left: ColumnContext, right: ColumnContext) -> bool:
+    """Compare governed identity while intentionally ignoring SQL alias metadata."""
+
+    return (
+        left.ref.dataset == right.ref.dataset
+        and left.ref.field_path == right.ref.field_path
+        and left.category == right.category
+        and left.datahub_urn == right.datahub_urn
+        and tuple(sorted(left.tags)) == tuple(sorted(right.tags))
+        and tuple(sorted(left.glossary_terms)) == tuple(sorted(right.glossary_terms))
+        and left.resolved == right.resolved
+    )
 
 
 def _dataset_urn(catalog: FixtureCatalog, logical_name: str) -> str:
