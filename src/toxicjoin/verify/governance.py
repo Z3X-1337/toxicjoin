@@ -168,6 +168,7 @@ def verify_and_execute(
     disclosure_ledger: DisclosureLedger | None = None,
     receipt_id: str | None = None,
     require_disclosure_commitment: bool = False,
+    expected_governance_binding: GovernanceContextBinding | None = None,
 ) -> VerificationResult:
     """Verify and execute while pinning one live governance snapshot end-to-end."""
 
@@ -187,6 +188,21 @@ def verify_and_execute(
     }
 
     if not callable(getattr(context_resolver, "resolve_with_governance_binding", None)):
+        if expected_governance_binding is not None:
+            try:
+                query_plan = analyze_sql(sql, dialect=dialect)
+            except SqlAnalysisError:
+                return _verify_and_execute(
+                    sql,
+                    context_resolver=context_resolver,
+                    executor=executor,
+                    **common,
+                )
+            return _governance_failure(
+                query_plan,
+                reason=ReasonCode.DATAHUB_CONTEXT_DRIFT,
+                detail="expected governance provenance is unavailable from the resolver",
+            )
         return _verify_and_execute(
             sql,
             context_resolver=context_resolver,
@@ -213,6 +229,8 @@ def verify_and_execute(
             raise GovernanceContextDriftError(
                 "governance-aware resolver returned no provenance binding"
             )
+        if expected_governance_binding is not None:
+            require_same_governance_binding(expected_governance_binding, binding)
         pinned_resolver = _PinnedGovernanceResolver(
             resolver=context_resolver,
             query_plan=query_plan,
