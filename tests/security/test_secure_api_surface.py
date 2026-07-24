@@ -228,6 +228,41 @@ def test_allowed_hosts_are_strict_and_https_emits_hsts(tmp_path, monkeypatch) ->
         create_app(_pipeline(tmp_path / "wildcard"), authenticator=_authenticator())
 
 
+@pytest.mark.parametrize(
+    "configured_hosts",
+    (
+        "",
+        "https://secure.example",
+        "secure.example/path",
+        "secure example",
+        ",".join(f"host-{index}.example" for index in range(33)),
+    ),
+)
+def test_allowed_hosts_fail_closed_for_invalid_configuration(
+    tmp_path,
+    monkeypatch,
+    configured_hosts: str,
+) -> None:
+    monkeypatch.setenv("TOXICJOIN_ALLOWED_HOSTS", configured_hosts)
+
+    with pytest.raises(ValueError):
+        create_app(_pipeline(tmp_path), authenticator=_authenticator())
+
+
+def test_forwarded_proto_header_does_not_create_https_trust(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("TOXICJOIN_ALLOWED_HOSTS", "secure.example")
+    app = create_app(_pipeline(tmp_path), authenticator=_authenticator())
+
+    with TestClient(app, base_url="http://secure.example") as client:
+        response = client.get(
+            "/api/health",
+            headers={"X-Forwarded-Proto": "https"},
+        )
+
+    assert response.status_code == 200
+    assert "strict-transport-security" not in response.headers
+
+
 def test_csp_has_no_external_script_or_style_origin(tmp_path) -> None:
     app = create_app(_pipeline(tmp_path))
 
@@ -252,7 +287,6 @@ def test_pipeline_failure_returns_stable_code_without_exception_type_or_message(
 ) -> None:
     store = FailingReceiptStore(tmp_path / "receipts")
     app = create_app(_pipeline(tmp_path, receipt_store=store))
-
     with TestClient(app) as client:
         response = client.post("/api/analyze", json=_payload())
 
@@ -275,3 +309,31 @@ def test_restricted_service_root_does_not_disclose_version_or_docs(tmp_path) -> 
     assert response.json() == {"name": "ToxicJoin"}
     assert "version" not in response.text
     assert "/docs" not in response.text
+
+
+def test_restricted_surface_never_serves_explicit_judge_distribution(tmp_path) -> None:
+    marker = "RESTRICTED_JUDGE_ASSET_MUST_NOT_ESCAPE"
+    web_dist = tmp_path / "web-dist"
+    assets = web_dist / "assets"
+    assets.mkdir(parents=True)
+    (web_dist / "index.html").write_text(
+        f"<html><body>{marker}</body></html>",
+        encoding="utf-8",
+    )
+    (assets / "probe.js").write_text(marker, encoding="utf-8")
+
+    app = create_app(
+        _pipeline(tmp_path / "runtime"),
+        web_dist=web_dist,
+        authenticator=_authenticator(),
+    )
+
+    with TestClient(app) as client:
+        root = client.get("/")
+        asset = client.get("/assets/probe.js")
+
+    assert root.status_code == 200
+    assert root.json() == {"name": "ToxicJoin"}
+    assert marker not in root.text
+    assert asset.status_code == 404
+    assert marker not in asset.text
