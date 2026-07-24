@@ -9,12 +9,16 @@ deterministic offline path.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import threading
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from toxicjoin.context.fixture import (
     FixtureCatalog,
@@ -22,12 +26,18 @@ from toxicjoin.context.fixture import (
     FixtureDataset,
     FixtureField,
 )
+from toxicjoin.context.governance import GovernanceContextBinding
+from toxicjoin.context.models import ContextResolution
 from toxicjoin.integrations.datahub_mcp import DataHubMcpClient, DataHubMcpError
-from toxicjoin.models import SensitivityCategory, StrictModel
+from toxicjoin.models import QueryPlan, SensitivityCategory, StrictModel
 
 
 class DataHubMetadataError(DataHubMcpError):
     """Raised when live DataHub metadata cannot be normalized safely."""
+
+
+_DEFAULT_MAX_SNAPSHOT_AGE_SECONDS = 300.0
+_MAX_SNAPSHOT_AGE_SECONDS = 3600.0
 
 
 class DataHubAssetMap(StrictModel):
@@ -78,6 +88,32 @@ class DataHubSnapshot(StrictModel):
     field_counts: dict[str, int]
     lineage_sample: dict[str, Any]
     discovered_tools: tuple[str, ...]
+    observed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_validator("observed_at")
+    @classmethod
+    def normalize_observed_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("DataHub snapshot observed_at must be timezone-aware")
+        return value.astimezone(timezone.utc)
+
+    @property
+    def snapshot_sha256(self) -> str:
+        """Hash governed snapshot content without making wall-clock time part of identity."""
+
+        canonical = json.dumps(
+            {
+                "catalog": self.catalog.model_dump(mode="json"),
+                "verified_entities": sorted(self.verified_entities),
+                "field_counts": self.field_counts,
+                "lineage_sample": self.lineage_sample,
+                "discovered_tools": sorted(self.discovered_tools),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest()
 
 
 class DataHubSnapshotLoader:
@@ -87,9 +123,12 @@ class DataHubSnapshotLoader:
         self,
         client: DataHubMcpClient,
         asset_map: DataHubAssetMap,
+        *,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.client = client
         self.asset_map = asset_map
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
 
     async def load(self, *, require_mutations: bool) -> DataHubSnapshot:
         definitions = await self.client.discover_and_validate(
@@ -150,6 +189,7 @@ class DataHubSnapshotLoader:
                 "DataHub returned no upstream lineage for the configured flagship column"
             )
 
+        observed_at = _utc_datetime(self._clock())
         return DataHubSnapshot(
             catalog=FixtureCatalog(
                 version=f"datahub-mcp:{self.asset_map.version}",
@@ -159,15 +199,84 @@ class DataHubSnapshotLoader:
             field_counts=field_counts,
             lineage_sample=lineage,
             discovered_tools=tuple(sorted(definition.name for definition in definitions)),
+            observed_at=observed_at,
         )
 
 
 class DataHubSnapshotContextResolver(FixtureContextResolver):
-    """Synchronous policy resolver backed by an already verified live snapshot."""
+    """Refreshable policy resolver backed by one freshness-bounded DataHub snapshot."""
 
-    def __init__(self, snapshot: DataHubSnapshot) -> None:
+    def __init__(
+        self,
+        snapshot: DataHubSnapshot,
+        *,
+        max_age_seconds: float = _DEFAULT_MAX_SNAPSHOT_AGE_SECONDS,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        if max_age_seconds <= 0 or max_age_seconds > _MAX_SNAPSHOT_AGE_SECONDS:
+            raise ValueError(
+                f"DataHub snapshot max age must be in (0, {_MAX_SNAPSHOT_AGE_SECONDS:g}] seconds"
+            )
+        self._snapshot_lock = threading.RLock()
+        self._snapshot = snapshot
+        self._max_age_seconds = float(max_age_seconds)
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
         super().__init__(snapshot.catalog)
-        self.snapshot = snapshot
+
+    @property
+    def snapshot(self) -> DataHubSnapshot:
+        with self._snapshot_lock:
+            return self._snapshot
+
+    @property
+    def max_age_seconds(self) -> float:
+        return self._max_age_seconds
+
+    def replace_snapshot(self, snapshot: DataHubSnapshot) -> None:
+        """Atomically install a newly acquired DataHub snapshot for future requests."""
+
+        with self._snapshot_lock:
+            self._snapshot = snapshot
+            self.catalog = snapshot.catalog
+
+    def current_governance_binding(self) -> GovernanceContextBinding:
+        with self._snapshot_lock:
+            return self._binding_for(self._snapshot)
+
+    def is_fresh(self) -> bool:
+        try:
+            self.current_governance_binding()
+        except Exception:
+            return False
+        return True
+
+    def resolve_with_governance_binding(
+        self,
+        query_plan: QueryPlan,
+    ) -> tuple[ContextResolution, GovernanceContextBinding]:
+        """Resolve governed context and provenance from the same snapshot atomically."""
+
+        with self._snapshot_lock:
+            snapshot = self._snapshot
+            binding = self._binding_for(snapshot)
+            resolution = FixtureContextResolver(snapshot.catalog).resolve(query_plan)
+            return resolution, binding
+
+    def resolve(self, query_plan: QueryPlan) -> ContextResolution:
+        resolution, _ = self.resolve_with_governance_binding(query_plan)
+        return resolution
+
+    def _binding_for(self, snapshot: DataHubSnapshot) -> GovernanceContextBinding:
+        binding = GovernanceContextBinding(
+            source="datahub-mcp",
+            snapshot_sha256=snapshot.snapshot_sha256,
+            catalog_version=snapshot.catalog.version,
+            observed_at=snapshot.observed_at,
+            expires_at=snapshot.observed_at
+            + timedelta(seconds=self._max_age_seconds),
+        )
+        binding.assert_fresh(_utc_datetime(self._clock()))
+        return binding
 
 
 _CATEGORY_LABELS: dict[SensitivityCategory, set[str]] = {
@@ -384,3 +493,9 @@ def _first_urn_with_prefix(value: Any, prefix: str) -> str | None:
             if found is not None:
                 return found
     return None
+
+
+def _utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        raise DataHubMetadataError("DataHub snapshot clock must be timezone-aware")
+    return value.astimezone(timezone.utc)
