@@ -7,7 +7,7 @@ on:
       - "research/kernel_v2/run_release_v02.py"
       - "research/kernel_v2/external_catalog.py"
       - "research/kernel_v2/preregistration.json"
-      - "research/agent_baseline/baseline-v1-proposals.json"
+      - "research/kernel_v2/retained-baseline-authoritative-proposals.json"
       - "research/agent_baseline/baseline-v1-summary.json"
       - "research/external_validation/**"
       - "src/toxicjoin/models.py"
@@ -46,6 +46,47 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .
           python -m py_compile research/kernel_v2/run_release_v02.py
+
+      - name: Verify retained baseline input provenance
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          proposals = json.loads(
+              Path('research/kernel_v2/retained-baseline-authoritative-proposals.json').read_text()
+          )
+          tasks = json.loads(
+              Path('research/external_validation/blind_tasks.json').read_text()
+          )
+          prereg = json.loads(
+              Path('research/kernel_v2/preregistration.json').read_text()
+          )
+          baseline = json.loads(
+              Path('research/agent_baseline/baseline-v1-summary.json').read_text()
+          )
+
+          assert proposals['source_artifact_id'] == 8582328298
+          assert proposals['source_artifact_digest'] == 'sha256:43954380c12991cae36243ced4647b4e06c8467d8915d4b4a48b2abfbcc4a560'
+          assert proposals['source_report_sha256'] == '9ccd74e61f69683557e4b5e34bd715ade4e9335c0c56566ebf98198e69b7f1dc'
+          assert proposals['source_report_sha256'] == prereg['input_report_sha256']
+          assert proposals['source_report_sha256'] == baseline['report_sha256']
+
+          by_task = {item['task_id']: item for item in tasks['tasks']}
+          assert len(proposals['proposals']) == 24
+          assert set(by_task) == {f'E{i:02d}' for i in range(1, 25)}
+
+          for proposal in proposals['proposals']:
+              task = by_task[proposal['task_id']]
+              task_sha = hashlib.sha256(task['task'].encode('utf-8')).hexdigest()
+              sql_sha = hashlib.sha256(proposal['sql'].encode('utf-8')).hexdigest()
+              assert task_sha == proposal['task_sha256'], proposal['task_id']
+              assert sql_sha == proposal['sql_sha256'], proposal['task_id']
+              assert task['risk_label'] == proposal['risk_label'], proposal['task_id']
+              assert task['expected_execution_semantics'] == proposal['expected_execution_semantics'], proposal['task_id']
+          PY
 
       - name: Download unchanged official UCI source
         shell: bash
@@ -87,7 +128,7 @@ jobs:
           set -o pipefail
           python -m research.kernel_v2.run_release_v02 \
             --preregistration research/kernel_v2/preregistration.json \
-            --proposals research/agent_baseline/baseline-v1-proposals.json \
+            --proposals research/kernel_v2/retained-baseline-authoritative-proposals.json \
             --tasks research/external_validation/blind_tasks.json \
             --baseline-summary research/agent_baseline/baseline-v1-summary.json \
             --stewardship research/external_validation/stewardship-map.json \
