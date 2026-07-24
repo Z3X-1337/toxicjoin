@@ -72,8 +72,12 @@ def resolve_governed_subject_domain(
         if dataset is None:
             raise DisclosureSemanticError(f"source dataset is not governed: {logical_name}")
         field = dataset.fields.get(subject_key.field_path)
-        if field is None or field.category not in _SUBJECT_CATEGORIES:
+        if field is None:
             continue
+        if field.category not in _SUBJECT_CATEGORIES:
+            raise DisclosureSemanticError(
+                "conflicting governed subject categories across query source datasets"
+            )
         dataset_urns.append(dataset.urn)
         observed_categories.add(field.category)
         if dataset.domain is not None:
