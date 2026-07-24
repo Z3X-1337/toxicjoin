@@ -32,7 +32,7 @@ def test_transformed_subject_identifier_retains_raw_lineage() -> None:
     assert {ref.key for ref in exposure.source_columns} == {"customers.customer_id"}
 
 
-def test_aggregate_operand_is_not_treated_as_raw_identifier_output() -> None:
+def test_count_operand_is_cardinality_only_output() -> None:
     plan = analyze_sql(
         """
         SELECT COUNT(c.customer_id) AS customer_count
@@ -42,6 +42,36 @@ def test_aggregate_operand_is_not_treated_as_raw_identifier_output() -> None:
 
     exposure = _exposure(plan, "customer_count")
     assert exposure.kind == ProjectionExposureKind.AGGREGATE_VALUE
+    assert {ref.key for ref in exposure.source_columns} == {"customers.customer_id"}
+
+
+def test_min_identifier_remains_value_exposing_aggregate_operand() -> None:
+    plan = analyze_sql(
+        """
+        SELECT MIN(c.customer_id) AS min_customer_id
+        FROM customers c
+        """
+    )
+
+    exposure = _exposure(plan, "min_customer_id")
+    assert exposure.kind == ProjectionExposureKind.AGGREGATE_OPERAND
+    assert {ref.key for ref in exposure.source_columns} == {"customers.customer_id"}
+
+
+def test_min_identifier_exposure_survives_cte_boundary() -> None:
+    plan = analyze_sql(
+        """
+        WITH aggregated AS (
+          SELECT MIN(customer_id) AS min_customer_id
+          FROM customers
+        )
+        SELECT aggregated.min_customer_id
+        FROM aggregated
+        """
+    )
+
+    exposure = _exposure(plan, "min_customer_id")
+    assert exposure.kind == ProjectionExposureKind.AGGREGATE_OPERAND
     assert {ref.key for ref in exposure.source_columns} == {"customers.customer_id"}
 
 
