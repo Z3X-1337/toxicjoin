@@ -34,10 +34,15 @@ agent-registry = [
   "acryl-datahub==1.6.0.16rc3",
 ]
 dev = [
-  "pytest>=8,<9",
+  "pytest>=9.1.1,<10",
   "pytest-cov>=5,<6",
   "ruff>=0.9,<1",
   "mypy>=1.13,<2",
+]
+security = [
+  "bandit>=1.9.4,<2",
+  "cyclonedx-bom>=7.2,<8",
+  "pip-audit>=2.9,<3",
 ]
 
 [build-system]
