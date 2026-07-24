@@ -162,7 +162,12 @@ class DisclosureLedger:
             evaluation = evaluate_composition_history(history, bound_event)
             if not evaluation.allowed:
                 connection.rollback()
-                return evaluation
+                return DisclosureCompositionDecision(
+                    allowed=False,
+                    rule=evaluation.rule,
+                    protected_release=evaluation.protected_release,
+                    prior_protected_count=evaluation.prior_protected_count,
+                )
 
             record = self._append_event_connection(
                 connection,
