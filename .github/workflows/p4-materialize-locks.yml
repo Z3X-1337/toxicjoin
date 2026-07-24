@@ -21,7 +21,7 @@ jobs:
 
     steps:
       - name: Check out exact production branch head
-        uses: actions/checkout@11d5960b21737293a21f48cc94acb231d88b3f16 # v4
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
