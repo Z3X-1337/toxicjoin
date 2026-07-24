@@ -8,6 +8,7 @@ from pydantic import Field
 
 from toxicjoin.context.datahub import DataHubSnapshotContextResolver
 from toxicjoin.context.fixture import ContextResolution
+from toxicjoin.disclosure import DisclosureLedger
 from toxicjoin.execute import DuckDBExecutor
 from toxicjoin.models import (
     ColumnContext,
@@ -24,6 +25,7 @@ from toxicjoin.receipts import (
     DecisionReceipt,
     ReceiptMode,
     ReceiptStore,
+    allocate_receipt_id,
     build_receipt,
 )
 from toxicjoin.rewrite import RewriteError, enforce_minimum_group_size
@@ -61,7 +63,7 @@ class PipelineResult(StrictModel):
 
 
 class ToxicJoinPipeline:
-    """Compose analysis, policy, rewrite, execution, verification, and receipts."""
+    """Compose analysis, policy, cumulative privacy, safe execution, and receipts."""
 
     def __init__(
         self,
@@ -71,14 +73,24 @@ class ToxicJoinPipeline:
         receipt_store: ReceiptStore,
         mode: ReceiptMode,
         executor: DuckDBExecutor | None = None,
+        disclosure_ledger: DisclosureLedger | None = None,
+        stateful_privacy_required: bool | None = None,
         include_sanitized_sql: bool = True,
     ) -> None:
         _validate_runtime_mode(mode, context_resolver)
+        if mode == ReceiptMode.LIVE and stateful_privacy_required is False:
+            raise ValueError("LIVE mode cannot disable stateful privacy")
         self.context_resolver = context_resolver
         self.policy_engine = policy_engine
         self.receipt_store = receipt_store
         self.mode = mode
         self.executor = executor
+        self.disclosure_ledger = disclosure_ledger
+        self.stateful_privacy_required = (
+            mode == ReceiptMode.LIVE
+            if stateful_privacy_required is None
+            else bool(stateful_privacy_required)
+        )
         self.include_sanitized_sql = include_sanitized_sql
 
     def analyze(self, request: PipelineRequest) -> PipelineResult:
@@ -88,6 +100,7 @@ class ToxicJoinPipeline:
         return self._run(request, execute=True)
 
     def _run(self, request: PipelineRequest, *, execute: bool) -> PipelineResult:
+        receipt_id = allocate_receipt_id()
         try:
             original_plan = analyze_sql(request.sql, dialect=request.dialect)
         except SqlAnalysisError as exc:
@@ -99,6 +112,7 @@ class ToxicJoinPipeline:
                 error_type=type(exc).__name__,
             )
             return self._finalize(
+                receipt_id=receipt_id,
                 request=request,
                 original_plan=None,
                 initial_context=context,
@@ -117,6 +131,7 @@ class ToxicJoinPipeline:
                 error_type=type(exc).__name__,
             )
             return self._finalize(
+                receipt_id=receipt_id,
                 request=request,
                 original_plan=original_plan,
                 initial_context=initial_context,
@@ -133,6 +148,7 @@ class ToxicJoinPipeline:
 
         if initial_decision.decision == Decision.BLOCK:
             return self._finalize(
+                receipt_id=receipt_id,
                 request=request,
                 original_plan=original_plan,
                 initial_context=initial_context,
@@ -141,6 +157,7 @@ class ToxicJoinPipeline:
 
         if initial_decision.decision == Decision.ALLOW:
             return self._handle_allowed(
+                receipt_id=receipt_id,
                 request=request,
                 original_plan=original_plan,
                 initial_context=initial_context,
@@ -149,6 +166,7 @@ class ToxicJoinPipeline:
             )
 
         return self._handle_rewrite(
+            receipt_id=receipt_id,
             request=request,
             original_plan=original_plan,
             initial_context=initial_context,
@@ -159,6 +177,7 @@ class ToxicJoinPipeline:
     def _handle_allowed(
         self,
         *,
+        receipt_id: str,
         request: PipelineRequest,
         original_plan: QueryPlan,
         initial_context: ContextResolution,
@@ -167,6 +186,7 @@ class ToxicJoinPipeline:
     ) -> PipelineResult:
         if not execute:
             return self._finalize(
+                receipt_id=receipt_id,
                 request=request,
                 original_plan=original_plan,
                 initial_context=initial_context,
@@ -181,6 +201,7 @@ class ToxicJoinPipeline:
                 error_type="ExecutorUnavailable",
             )
             return self._finalize(
+                receipt_id=receipt_id,
                 request=request,
                 original_plan=original_plan,
                 initial_context=initial_context,
@@ -201,6 +222,9 @@ class ToxicJoinPipeline:
                 initial_context,
             ),
             dialect=request.dialect,
+            disclosure_ledger=self.disclosure_ledger,
+            receipt_id=receipt_id,
+            require_disclosure_commitment=self.stateful_privacy_required,
         )
         final_decision = _verification_outcome(
             verification,
@@ -208,6 +232,7 @@ class ToxicJoinPipeline:
             policy_version=initial_decision.policy_version,
         )
         return self._finalize(
+            receipt_id=receipt_id,
             request=request,
             original_plan=original_plan,
             initial_context=initial_context,
@@ -219,6 +244,7 @@ class ToxicJoinPipeline:
     def _handle_rewrite(
         self,
         *,
+        receipt_id: str,
         request: PipelineRequest,
         original_plan: QueryPlan,
         initial_context: ContextResolution,
@@ -240,6 +266,7 @@ class ToxicJoinPipeline:
                 error_type=type(exc).__name__,
             )
             return self._finalize(
+                receipt_id=receipt_id,
                 request=request,
                 original_plan=original_plan,
                 initial_context=initial_context,
@@ -258,6 +285,7 @@ class ToxicJoinPipeline:
                 error_type=type(exc).__name__,
             )
             return self._finalize(
+                receipt_id=receipt_id,
                 request=request,
                 original_plan=original_plan,
                 initial_context=initial_context,
@@ -277,6 +305,7 @@ class ToxicJoinPipeline:
         )
         if final_policy_decision.decision != Decision.ALLOW or not execute:
             return self._finalize(
+                receipt_id=receipt_id,
                 request=request,
                 original_plan=original_plan,
                 initial_context=initial_context,
@@ -295,6 +324,7 @@ class ToxicJoinPipeline:
                 error_type="ExecutorUnavailable",
             )
             return self._finalize(
+                receipt_id=receipt_id,
                 request=request,
                 original_plan=original_plan,
                 initial_context=initial_context,
@@ -315,6 +345,10 @@ class ToxicJoinPipeline:
             required_minimum_group_size=self.policy_engine.config.minimum_group_size,
             require_subject_threshold=True,
             dialect=request.dialect,
+            rewrite_parent_sql=request.sql,
+            disclosure_ledger=self.disclosure_ledger,
+            receipt_id=receipt_id,
+            require_disclosure_commitment=self.stateful_privacy_required,
         )
         final_decision = _verification_outcome(
             verification,
@@ -322,6 +356,7 @@ class ToxicJoinPipeline:
             policy_version=initial_decision.policy_version,
         )
         return self._finalize(
+            receipt_id=receipt_id,
             request=request,
             original_plan=original_plan,
             initial_context=initial_context,
@@ -336,6 +371,7 @@ class ToxicJoinPipeline:
     def _finalize(
         self,
         *,
+        receipt_id: str,
         request: PipelineRequest,
         original_plan: QueryPlan | None,
         initial_context: ContextResolution,
@@ -349,6 +385,7 @@ class ToxicJoinPipeline:
     ) -> PipelineResult:
         receipt_context = _merge_contexts(initial_context, final_context)
         receipt = build_receipt(
+            receipt_id=receipt_id,
             task_purpose=request.task_purpose,
             mode=self.mode,
             original_sql=request.sql,
@@ -422,9 +459,10 @@ def _verification_outcome(
     failed_checks = tuple(
         check.name for check in verification.checks if not check.passed
     )
+    reason_codes = verification.failure_reason_codes or (ReasonCode.VERIFICATION_FAILED,)
     return PolicyDecision(
         decision=Decision.BLOCK,
-        reason_codes=(ReasonCode.VERIFICATION_FAILED,),
+        reason_codes=reason_codes,
         policy_version=policy_version,
         evidence={
             "stage": "verification",
