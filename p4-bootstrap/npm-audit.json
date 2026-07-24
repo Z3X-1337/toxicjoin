@@ -1,219 +1,22 @@
 {
   "auditReportVersion": 2,
-  "vulnerabilities": {
-    "@cyclonedx/cyclonedx-library": {
-      "name": "@cyclonedx/cyclonedx-library",
-      "severity": "high",
-      "isDirect": false,
-      "via": [
-        "libxmljs2"
-      ],
-      "effects": [
-        "@cyclonedx/cyclonedx-npm"
-      ],
-      "range": ">=8.0.0-rc.0",
-      "nodes": [
-        "node_modules/@cyclonedx/cyclonedx-library"
-      ],
-      "fixAvailable": {
-        "name": "@cyclonedx/cyclonedx-npm",
-        "version": "4.0.1",
-        "isSemVerMajor": true
-      }
-    },
-    "@cyclonedx/cyclonedx-npm": {
-      "name": "@cyclonedx/cyclonedx-npm",
-      "severity": "high",
-      "isDirect": true,
-      "via": [
-        "@cyclonedx/cyclonedx-library",
-        "libxmljs2"
-      ],
-      "effects": [],
-      "range": ">=3.0.0",
-      "nodes": [
-        "node_modules/@cyclonedx/cyclonedx-npm"
-      ],
-      "fixAvailable": {
-        "name": "@cyclonedx/cyclonedx-npm",
-        "version": "4.0.1",
-        "isSemVerMajor": true
-      }
-    },
-    "brace-expansion": {
-      "name": "brace-expansion",
-      "severity": "high",
-      "isDirect": false,
-      "via": [
-        {
-          "source": 1124334,
-          "name": "brace-expansion",
-          "dependency": "brace-expansion",
-          "title": "brace-expansion: DoS via unbounded expansion length causing an out-of-memory process crash",
-          "url": "https://github.com/advisories/GHSA-mh99-v99m-4gvg",
-          "severity": "high",
-          "cwe": [
-            "CWE-400",
-            "CWE-770"
-          ],
-          "cvss": {
-            "score": 7.5,
-            "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
-          },
-          "range": "<=5.0.7"
-        }
-      ],
-      "effects": [
-        "minimatch"
-      ],
-      "range": "<=5.0.7",
-      "nodes": [
-        "node_modules/brace-expansion"
-      ],
-      "fixAvailable": {
-        "name": "@cyclonedx/cyclonedx-npm",
-        "version": "4.0.1",
-        "isSemVerMajor": true
-      }
-    },
-    "cacache": {
-      "name": "cacache",
-      "severity": "high",
-      "isDirect": false,
-      "via": [
-        "glob"
-      ],
-      "effects": [
-        "make-fetch-happen"
-      ],
-      "range": "6.1.1 - 19.0.1",
-      "nodes": [
-        "node_modules/cacache"
-      ],
-      "fixAvailable": {
-        "name": "@cyclonedx/cyclonedx-npm",
-        "version": "4.0.1",
-        "isSemVerMajor": true
-      }
-    },
-    "glob": {
-      "name": "glob",
-      "severity": "high",
-      "isDirect": false,
-      "via": [
-        "minimatch"
-      ],
-      "effects": [
-        "cacache"
-      ],
-      "range": "4.3.0 - 10.5.0",
-      "nodes": [
-        "node_modules/glob"
-      ],
-      "fixAvailable": {
-        "name": "@cyclonedx/cyclonedx-npm",
-        "version": "4.0.1",
-        "isSemVerMajor": true
-      }
-    },
-    "libxmljs2": {
-      "name": "libxmljs2",
-      "severity": "high",
-      "isDirect": false,
-      "via": [
-        "node-gyp"
-      ],
-      "effects": [
-        "@cyclonedx/cyclonedx-library",
-        "@cyclonedx/cyclonedx-npm"
-      ],
-      "range": ">=0.35.0",
-      "nodes": [
-        "node_modules/libxmljs2"
-      ],
-      "fixAvailable": {
-        "name": "@cyclonedx/cyclonedx-npm",
-        "version": "4.0.1",
-        "isSemVerMajor": true
-      }
-    },
-    "make-fetch-happen": {
-      "name": "make-fetch-happen",
-      "severity": "high",
-      "isDirect": false,
-      "via": [
-        "cacache"
-      ],
-      "effects": [
-        "node-gyp"
-      ],
-      "range": "<=14.0.3",
-      "nodes": [
-        "node_modules/make-fetch-happen"
-      ],
-      "fixAvailable": {
-        "name": "@cyclonedx/cyclonedx-npm",
-        "version": "4.0.1",
-        "isSemVerMajor": true
-      }
-    },
-    "minimatch": {
-      "name": "minimatch",
-      "severity": "high",
-      "isDirect": false,
-      "via": [
-        "brace-expansion"
-      ],
-      "effects": [
-        "glob"
-      ],
-      "range": "2.0.0 - 10.0.2",
-      "nodes": [
-        "node_modules/minimatch"
-      ],
-      "fixAvailable": {
-        "name": "@cyclonedx/cyclonedx-npm",
-        "version": "4.0.1",
-        "isSemVerMajor": true
-      }
-    },
-    "node-gyp": {
-      "name": "node-gyp",
-      "severity": "high",
-      "isDirect": false,
-      "via": [
-        "make-fetch-happen"
-      ],
-      "effects": [
-        "libxmljs2"
-      ],
-      "range": "8.0.0 - 11.5.0",
-      "nodes": [
-        "node_modules/node-gyp"
-      ],
-      "fixAvailable": {
-        "name": "@cyclonedx/cyclonedx-npm",
-        "version": "4.0.1",
-        "isSemVerMajor": true
-      }
-    }
-  },
+  "vulnerabilities": {},
   "metadata": {
     "vulnerabilities": {
       "info": 0,
       "low": 0,
       "moderate": 0,
-      "high": 9,
+      "high": 0,
       "critical": 0,
-      "total": 9
+      "total": 0
     },
     "dependencies": {
       "prod": 4,
-      "dev": 272,
-      "optional": 202,
+      "dev": 101,
+      "optional": 53,
       "peer": 0,
       "peerOptional": 0,
-      "total": 275
+      "total": 104
     }
   }
 }

@@ -4,107 +4,16 @@
     "python:3.12-slim=python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de"
   ],
   "npm": {
-    "exit_code": 1,
-    "finding_count": 9,
-    "findings": [
-      {
-        "fix_available": {
-          "isSemVerMajor": true,
-          "name": "@cyclonedx/cyclonedx-npm",
-          "version": "4.0.1"
-        },
-        "is_direct": false,
-        "package": "@cyclonedx/cyclonedx-library",
-        "severity": "high"
-      },
-      {
-        "fix_available": {
-          "isSemVerMajor": true,
-          "name": "@cyclonedx/cyclonedx-npm",
-          "version": "4.0.1"
-        },
-        "is_direct": true,
-        "package": "@cyclonedx/cyclonedx-npm",
-        "severity": "high"
-      },
-      {
-        "fix_available": {
-          "isSemVerMajor": true,
-          "name": "@cyclonedx/cyclonedx-npm",
-          "version": "4.0.1"
-        },
-        "is_direct": false,
-        "package": "brace-expansion",
-        "severity": "high"
-      },
-      {
-        "fix_available": {
-          "isSemVerMajor": true,
-          "name": "@cyclonedx/cyclonedx-npm",
-          "version": "4.0.1"
-        },
-        "is_direct": false,
-        "package": "cacache",
-        "severity": "high"
-      },
-      {
-        "fix_available": {
-          "isSemVerMajor": true,
-          "name": "@cyclonedx/cyclonedx-npm",
-          "version": "4.0.1"
-        },
-        "is_direct": false,
-        "package": "glob",
-        "severity": "high"
-      },
-      {
-        "fix_available": {
-          "isSemVerMajor": true,
-          "name": "@cyclonedx/cyclonedx-npm",
-          "version": "4.0.1"
-        },
-        "is_direct": false,
-        "package": "libxmljs2",
-        "severity": "high"
-      },
-      {
-        "fix_available": {
-          "isSemVerMajor": true,
-          "name": "@cyclonedx/cyclonedx-npm",
-          "version": "4.0.1"
-        },
-        "is_direct": false,
-        "package": "make-fetch-happen",
-        "severity": "high"
-      },
-      {
-        "fix_available": {
-          "isSemVerMajor": true,
-          "name": "@cyclonedx/cyclonedx-npm",
-          "version": "4.0.1"
-        },
-        "is_direct": false,
-        "package": "minimatch",
-        "severity": "high"
-      },
-      {
-        "fix_available": {
-          "isSemVerMajor": true,
-          "name": "@cyclonedx/cyclonedx-npm",
-          "version": "4.0.1"
-        },
-        "is_direct": false,
-        "package": "node-gyp",
-        "severity": "high"
-      }
-    ],
+    "exit_code": 0,
+    "finding_count": 0,
+    "findings": [],
     "metadata": {
       "critical": 0,
-      "high": 9,
+      "high": 0,
       "info": 0,
       "low": 0,
       "moderate": 0,
-      "total": 9
+      "total": 0
     }
   },
   "python_agent_registry": {
@@ -135,5 +44,5 @@
       }
     ]
   },
-  "source_head_sha": "526fc227c6090b9df7af40a3d664f887516e703c"
+  "source_head_sha": "b3ee2ceae5f8bab3a086f8d185949a09c08b9b4a"
 }
