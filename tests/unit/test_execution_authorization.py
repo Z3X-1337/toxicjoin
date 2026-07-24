@@ -7,6 +7,7 @@ import pytest
 from toxicjoin.context import FixtureCatalog, FixtureContextResolver
 from toxicjoin.demo import default_fixture_catalog
 from toxicjoin.execute import (
+    DuckDBExecutor,
     ExecutionAuthorizationError,
     ExecutionAuthorizer,
 )
@@ -123,7 +124,10 @@ def test_task_subject_and_rewrite_parent_are_bound() -> None:
             rewrite_parent_sql=parent_sql,
         )
 
-    with pytest.raises(ExecutionAuthorizationError, match="AUTH_REWRITE_PARENT_MISMATCH"):
+    with pytest.raises(
+        ExecutionAuthorizationError,
+        match="AUTH_REWRITE_PARENT_MISMATCH",
+    ):
         authorizer.verify_and_consume(
             authorization,
             SQL,
@@ -148,7 +152,8 @@ def test_governance_context_drift_invalidates_authorization() -> None:
     )
 
     payload = default_fixture_catalog().model_dump(mode="json")
-    payload["datasets"]["customers"]["fields"]["coarse_region"]["category"] = "UNCLASSIFIED"
+    field = payload["datasets"]["customers"]["fields"]["coarse_region"]
+    field["category"] = "UNCLASSIFIED"
     mutable.delegate = FixtureContextResolver(FixtureCatalog.model_validate(payload))
 
     with pytest.raises(ExecutionAuthorizationError, match="AUTH_CONTEXT_MISMATCH"):
@@ -184,6 +189,25 @@ def test_policy_drift_invalidates_authorization() -> None:
             SQL,
             task_purpose=TASK,
             subject_key=SUBJECT,
+        )
+
+
+def test_executor_rejects_authority_substitution() -> None:
+    executor = DuckDBExecutor("unused.duckdb")
+    resolver = _resolver()
+    engine = _engine()
+    executor.bind_authority(context_resolver=resolver, policy_engine=engine)
+
+    with pytest.raises(ValueError, match="does not match verifier authority"):
+        executor.bind_authority(
+            context_resolver=_resolver(),
+            policy_engine=engine,
+        )
+
+    with pytest.raises(ValueError, match="does not match verifier authority"):
+        executor.bind_authority(
+            context_resolver=resolver,
+            policy_engine=_engine(),
         )
 
 
