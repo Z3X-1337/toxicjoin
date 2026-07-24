@@ -85,7 +85,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python research/kernel_v2/run_release_v02.py \
+          python -m research.kernel_v2.run_release_v02 \
             --preregistration research/kernel_v2/preregistration.json \
             --proposals research/agent_baseline/baseline-v1-proposals.json \
             --tasks research/external_validation/blind_tasks.json \
