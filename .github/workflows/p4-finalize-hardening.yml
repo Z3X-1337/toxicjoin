@@ -52,6 +52,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/p4_finalize.py --start-sha "$(cat /tmp/p4-finalize-start-sha)"
+          python3 scripts/p4_fix_workflow_installs.py
 
       - name: Verify locked Python runtime and test suite
         shell: bash
