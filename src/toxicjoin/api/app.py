@@ -16,6 +16,7 @@ from toxicjoin.api.limits import (
     ApiResourceLimits,
     PrincipalTrafficLimiter,
     RequestBodyLimitMiddleware,
+    ResponseBodyLimitMiddleware,
     TrafficLimitError,
 )
 from toxicjoin.api.models import (
@@ -142,6 +143,10 @@ def create_app(
     application.add_middleware(
         RequestBodyLimitMiddleware,
         max_bytes=resolved_limits.max_request_bytes,
+    )
+    application.add_middleware(
+        ResponseBodyLimitMiddleware,
+        max_bytes=resolved_limits.max_response_bytes,
     )
 
     @application.middleware("http")
