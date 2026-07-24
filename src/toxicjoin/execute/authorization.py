@@ -69,12 +69,7 @@ class ExecutionAuthorization(StrictModel):
 
 
 class ExecutionAuthorizer:
-    """Issue and consume exact-query execution capabilities.
-
-    The resolver and policy engine are immutable authority dependencies for the
-    lifetime of this object. The secret is process-local by default and is never
-    written to receipts or returned through the public API.
-    """
+    """Issue and consume exact-query execution capabilities."""
 
     def __init__(
         self,
@@ -96,7 +91,7 @@ class ExecutionAuthorizer:
         self._secret_key = key
         self._ttl_seconds = float(ttl_seconds)
         self._clock = clock
-        self._consumed_ids: set[str] = set()
+        self._consumed_ids: dict[str, float] = {}
         self._consume_lock = threading.Lock()
 
     @property
@@ -114,7 +109,7 @@ class ExecutionAuthorizer:
         task_purpose: str,
         subject_key: ColumnRef,
         dialect: str = "duckdb",
-        rewrite_parent_sha256: str | None = None,
+        rewrite_parent_sql: str | None = None,
     ) -> ExecutionAuthorization:
         """Independently re-evaluate the exact SQL and issue only for ALLOW."""
 
@@ -129,7 +124,7 @@ class ExecutionAuthorizer:
             task_purpose=task_purpose,
             subject_key=subject_key,
         )
-        if decision.decision != Decision.ALLOW:
+        if decision.decision != Decision.ALLOW or decision.rewrite_required:
             raise ExecutionAuthorizationError("AUTH_POLICY_NOT_ALLOW")
 
         now = float(self._clock())
@@ -145,12 +140,14 @@ class ExecutionAuthorizer:
             policy_decision_sha256=_hash_decision(decision),
             task_purpose_sha256=_sha256_text(task_purpose),
             subject_key=subject_key,
-            rewrite_parent_sha256=rewrite_parent_sha256,
+            rewrite_parent_sha256=(
+                _sha256_text(rewrite_parent_sql)
+                if rewrite_parent_sql is not None
+                else None
+            ),
             mac_sha256="0" * 64,
         )
-        return unsigned.model_copy(
-            update={"mac_sha256": self._mac(unsigned)}
-        )
+        return unsigned.model_copy(update={"mac_sha256": self._mac(unsigned)})
 
     def verify_and_consume(
         self,
@@ -160,7 +157,7 @@ class ExecutionAuthorizer:
         task_purpose: str,
         subject_key: ColumnRef,
         dialect: str = "duckdb",
-        rewrite_parent_sha256: str | None = None,
+        rewrite_parent_sql: str | None = None,
     ) -> QueryPlan:
         """Verify current state, atomically consume the capability, and return its plan."""
 
@@ -173,7 +170,7 @@ class ExecutionAuthorizer:
         now = float(self._clock())
         if authorization.issued_at > now + 1.0:
             raise ExecutionAuthorizationError("AUTH_NOT_YET_VALID")
-        if now > authorization.expires_at:
+        if now >= authorization.expires_at:
             raise ExecutionAuthorizationError("AUTH_EXPIRED")
         if authorization.expires_at - authorization.issued_at > self._ttl_seconds + 1e-9:
             raise ExecutionAuthorizationError("AUTH_INVALID_TTL")
@@ -182,7 +179,10 @@ class ExecutionAuthorizer:
             raise ExecutionAuthorizationError("AUTH_DIALECT_MISMATCH")
         if authorization.subject_key != subject_key:
             raise ExecutionAuthorizationError("AUTH_SUBJECT_MISMATCH")
-        if authorization.rewrite_parent_sha256 != rewrite_parent_sha256:
+        expected_parent = (
+            _sha256_text(rewrite_parent_sql) if rewrite_parent_sql is not None else None
+        )
+        if authorization.rewrite_parent_sha256 != expected_parent:
             raise ExecutionAuthorizationError("AUTH_REWRITE_PARENT_MISMATCH")
         if authorization.task_purpose_sha256 != _sha256_text(task_purpose):
             raise ExecutionAuthorizationError("AUTH_TASK_MISMATCH")
@@ -205,15 +205,20 @@ class ExecutionAuthorizer:
             task_purpose=task_purpose,
             subject_key=subject_key,
         )
-        if decision.decision != Decision.ALLOW:
+        if decision.decision != Decision.ALLOW or decision.rewrite_required:
             raise ExecutionAuthorizationError("AUTH_POLICY_NOT_ALLOW")
         if authorization.policy_decision_sha256 != _hash_decision(decision):
             raise ExecutionAuthorizationError("AUTH_DECISION_MISMATCH")
 
         with self._consume_lock:
+            self._consumed_ids = {
+                auth_id: expiry
+                for auth_id, expiry in self._consumed_ids.items()
+                if expiry > now
+            }
             if authorization.authorization_id in self._consumed_ids:
                 raise ExecutionAuthorizationError("AUTH_REPLAYED")
-            self._consumed_ids.add(authorization.authorization_id)
+            self._consumed_ids[authorization.authorization_id] = authorization.expires_at
 
         return query_plan
 
@@ -287,15 +292,11 @@ def _normalized_context(resolution: ContextResolution) -> dict[str, Any]:
         ),
         key=lambda item: item["key"],
     )
-    projected_context = sorted(
-        (item.ref.key for item in resolution.projected_context)
-    )
+    projected_context = sorted(item.ref.key for item in resolution.projected_context)
     return {
         "all_referenced_context": all_context,
         "projected_context_keys": projected_context,
-        "upstream_failures": sorted(
-            reason.value for reason in resolution.upstream_failures
-        ),
+        "failures": sorted(reason.value for reason in resolution.failures),
     }
 
 
