@@ -49,6 +49,14 @@ security = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.uv]
+conflicts = [
+  [
+    { extra = "datahub" },
+    { extra = "agent-registry" },
+  ],
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
