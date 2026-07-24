@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 20
 
     env:
-      RELEASE_CANDIDATE_SHA: 72491cc94dbd57e6cac38efed5e615fa12b6c3b6
+      RELEASE_CANDIDATE_SHA: 08deae9f4bc054cebca264b1eb5eb27028a6e4d2
       RELEASE_DIR: /tmp/toxicjoin-release-candidate
 
     steps:
