@@ -15,6 +15,7 @@ from toxicjoin.context import (
     FixtureContextResolver,
 )
 from toxicjoin.demo import default_fixture_catalog, seed_database
+from toxicjoin.disclosure import DisclosureLedger
 from toxicjoin.execute import DuckDBExecutor
 from toxicjoin.pipeline import ToxicJoinPipeline
 from toxicjoin.policy import PolicyEngine, load_policy
@@ -56,16 +57,20 @@ def _pipeline(
     *,
     database_exists: bool = True,
     receipt_store: ReceiptStore | None = None,
+    stateful: bool = True,
 ) -> ToxicJoinPipeline:
     database = tmp_path / "demo.duckdb"
     if database_exists:
         seed_database(database)
+    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3") if stateful else None
     return ToxicJoinPipeline(
         context_resolver=FixtureContextResolver(default_fixture_catalog()),
         policy_engine=PolicyEngine(load_policy()),
         receipt_store=receipt_store or ReceiptStore(tmp_path / "receipts"),
         mode=ReceiptMode.FIXTURE,
         executor=DuckDBExecutor(database),
+        disclosure_ledger=ledger,
+        stateful_privacy_required=stateful,
         include_sanitized_sql=False,
     )
 
@@ -89,6 +94,8 @@ def _live_pipeline(tmp_path: Path) -> ToxicJoinPipeline:
         receipt_store=ReceiptStore(tmp_path / "live-receipts"),
         mode=ReceiptMode.LIVE,
         executor=DuckDBExecutor(database),
+        disclosure_ledger=DisclosureLedger(tmp_path / "live-disclosures.sqlite3"),
+        stateful_privacy_required=True,
         include_sanitized_sql=False,
     )
 
@@ -161,6 +168,35 @@ def test_live_surface_is_always_restricted(tmp_path) -> None:
     assert benchmark.status_code == 404
 
 
+def test_restricted_surface_requires_enabled_disclosure_ledger(tmp_path) -> None:
+    insecure = _pipeline(tmp_path, stateful=False)
+    with pytest.raises(ValueError, match="stateful privacy disclosure ledger"):
+        create_app(insecure, authenticator=_authenticator())
+
+
+def test_live_pipeline_cannot_disable_stateful_privacy(tmp_path) -> None:
+    catalog = default_fixture_catalog()
+    snapshot = DataHubSnapshot(
+        catalog=catalog,
+        verified_entities=tuple(dataset.urn for dataset in catalog.datasets.values()),
+        field_counts={name: len(dataset.fields) for name, dataset in catalog.datasets.items()},
+        lineage_sample={"relationships": [{"direction": "UPSTREAM"}]},
+        discovered_tools=("get_entities", "get_lineage", "list_schema_fields"),
+    )
+    database = tmp_path / "live.duckdb"
+    seed_database(database)
+    with pytest.raises(ValueError, match="cannot disable stateful privacy"):
+        ToxicJoinPipeline(
+            context_resolver=DataHubSnapshotContextResolver(snapshot),
+            policy_engine=PolicyEngine(load_policy()),
+            receipt_store=ReceiptStore(tmp_path / "receipts"),
+            mode=ReceiptMode.LIVE,
+            executor=DuckDBExecutor(database),
+            disclosure_ledger=DisclosureLedger(tmp_path / "disclosures.sqlite3"),
+            stateful_privacy_required=False,
+        )
+
+
 def test_readiness_requires_explicit_system_scope_when_auth_enabled(tmp_path) -> None:
     app = create_app(_pipeline(tmp_path), authenticator=_authenticator())
 
@@ -182,6 +218,22 @@ def test_readiness_requires_explicit_system_scope_when_auth_enabled(tmp_path) ->
     assert allowed.json()["status"] == "ok"
     assert allowed.json()["mode"] == "fixture"
     assert allowed.json()["database_ready"] is True
+
+
+def test_readiness_degrades_if_stateful_privacy_key_disappears(tmp_path) -> None:
+    pipeline = _pipeline(tmp_path)
+    assert pipeline.disclosure_ledger is not None
+    app = create_app(pipeline, authenticator=_authenticator())
+
+    with TestClient(app) as client:
+        before = client.get("/api/ready", headers=_headers(SYSTEM_KEY))
+        pipeline.disclosure_ledger.cohort_key_path.unlink()
+        after = client.get("/api/ready", headers=_headers(SYSTEM_KEY))
+
+    assert before.status_code == 200
+    assert before.json()["status"] == "ok"
+    assert after.status_code == 503
+    assert after.json()["status"] == "degraded"
 
 
 def test_fixture_judge_keeps_docs_demo_and_benchmark_without_auth(tmp_path) -> None:

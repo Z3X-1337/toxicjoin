@@ -15,6 +15,7 @@ from toxicjoin.auth import (
 )
 from toxicjoin.context import DataHubSnapshot, DataHubSnapshotContextResolver
 from toxicjoin.demo import default_fixture_catalog, seed_database
+from toxicjoin.disclosure import DisclosureLedger
 from toxicjoin.execute import DuckDBExecutor
 from toxicjoin.models import ColumnRef
 from toxicjoin.pipeline import ToxicJoinPipeline
@@ -51,6 +52,7 @@ def _pipeline(tmp_path) -> ToxicJoinPipeline:
         receipt_store=ReceiptStore(tmp_path / "receipts"),
         mode=ReceiptMode.LIVE,
         executor=DuckDBExecutor(database),
+        disclosure_ledger=DisclosureLedger(tmp_path / "disclosures.sqlite3"),
         include_sanitized_sql=False,
     )
 
