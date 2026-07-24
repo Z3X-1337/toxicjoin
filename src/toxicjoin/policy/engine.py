@@ -66,21 +66,32 @@ class PolicyEngine:
         referenced_categories = [
             column.category for column in policy_input.all_referenced_context
         ]
+        effective_projected_categories = _effective_categories(
+            policy_input.projected_context
+        )
+        effective_referenced_categories = _effective_categories(
+            policy_input.all_referenced_context
+        )
 
         unresolved = [
             column.ref.key
             for column in policy_input.all_referenced_context
             if not column.resolved
             or column.category == SensitivityCategory.UNCLASSIFIED
+            or any(
+                source.category == SensitivityCategory.UNCLASSIFIED
+                for source in column.lineage_sources
+            )
         ]
         if unresolved and self.config.fail_closed:
             block_reasons.append(ReasonCode.UNCLASSIFIED_COLUMN)
 
         semantic_context, semantic_mode = _semantic_projected_context(policy_input)
         semantic_categories = [column.category for column in semantic_context]
-        semantic_quasi_count = sum(
-            column.category == SensitivityCategory.QUASI_IDENTIFIER
-            for column in semantic_context
+        effective_semantic_categories = _effective_categories(semantic_context)
+        semantic_quasi_count = _category_count(
+            semantic_context,
+            SensitivityCategory.QUASI_IDENTIFIER,
         )
 
         if (
@@ -93,16 +104,20 @@ class PolicyEngine:
         ):
             block_reasons.append(ReasonCode.UNRESOLVED_COLUMN)
 
-        risk_categories = semantic_categories if semantic_mode else categories
+        risk_categories = (
+            effective_semantic_categories
+            if semantic_mode
+            else effective_projected_categories
+        )
         has_direct = SensitivityCategory.DIRECT_IDENTIFIER in risk_categories
         has_pseudonym = SensitivityCategory.STABLE_PSEUDONYM in risk_categories
         has_sensitive = SensitivityCategory.SENSITIVE_ATTRIBUTE in risk_categories
         quasi_count = (
             semantic_quasi_count
             if semantic_mode
-            else sum(
-                category == SensitivityCategory.QUASI_IDENTIFIER
-                for category in categories
+            else _category_count(
+                policy_input.projected_context,
+                SensitivityCategory.QUASI_IDENTIFIER,
             )
         )
 
@@ -118,26 +133,23 @@ class PolicyEngine:
                 decision=Decision.BLOCK,
                 reason_codes=_deduplicate(block_reasons),
                 policy_version=self.config.version,
-                evidence={
-                    "projected_categories": [category.value for category in categories],
-                    "semantic_projected_categories": [
-                        category.value for category in semantic_categories
-                    ],
-                    "semantic_exposure_mode": semantic_mode,
-                    "projected_exposures": [
-                        exposure.model_dump(mode="json")
-                        for exposure in policy_input.query_plan.projected_exposures
-                    ],
-                    "referenced_categories": [
-                        category.value for category in referenced_categories
-                    ],
-                    "unresolved_columns": unresolved,
-                    "quasi_identifier_count": quasi_count,
-                },
+                evidence=_decision_evidence(
+                    policy_input=policy_input,
+                    categories=categories,
+                    semantic_categories=semantic_categories,
+                    effective_projected_categories=effective_projected_categories,
+                    effective_semantic_categories=effective_semantic_categories,
+                    referenced_categories=referenced_categories,
+                    effective_referenced_categories=effective_referenced_categories,
+                    semantic_mode=semantic_mode,
+                    unresolved=unresolved,
+                    quasi_count=quasi_count,
+                ),
             )
 
         sensitive_anywhere = (
-            SensitivityCategory.SENSITIVE_ATTRIBUTE in referenced_categories
+            SensitivityCategory.SENSITIVE_ATTRIBUTE
+            in effective_referenced_categories
         )
         threshold = policy_input.minimum_group_size_present
         expected_subject = policy_input.subject_key
@@ -172,6 +184,13 @@ class PolicyEngine:
                             exposure.model_dump(mode="json")
                             for exposure in policy_input.query_plan.projected_exposures
                         ],
+                        "lineage_sources": _lineage_evidence(
+                            policy_input.all_referenced_context
+                        ),
+                        "effective_referenced_categories": [
+                            category.value
+                            for category in effective_referenced_categories
+                        ],
                     },
                     rewrite_required=True,
                 )
@@ -185,6 +204,12 @@ class PolicyEngine:
                 "semantic_projected_categories": [
                     category.value for category in semantic_categories
                 ],
+                "effective_projected_categories": [
+                    category.value for category in effective_projected_categories
+                ],
+                "effective_semantic_projected_categories": [
+                    category.value for category in effective_semantic_categories
+                ],
                 "semantic_exposure_mode": semantic_mode,
                 "projected_exposures": [
                     exposure.model_dump(mode="json")
@@ -193,12 +218,57 @@ class PolicyEngine:
                 "referenced_categories": [
                     category.value for category in referenced_categories
                 ],
+                "effective_referenced_categories": [
+                    category.value for category in effective_referenced_categories
+                ],
+                "lineage_sources": _lineage_evidence(
+                    policy_input.all_referenced_context
+                ),
                 "trusted_minimum_group_size": trusted_threshold,
                 "trusted_threshold_subject": (
                     detected_subject.key if threshold_subject_matches else None
                 ),
             },
         )
+
+
+def _decision_evidence(
+    *,
+    policy_input: PolicyInput,
+    categories: list[SensitivityCategory],
+    semantic_categories: list[SensitivityCategory],
+    effective_projected_categories: list[SensitivityCategory],
+    effective_semantic_categories: list[SensitivityCategory],
+    referenced_categories: list[SensitivityCategory],
+    effective_referenced_categories: list[SensitivityCategory],
+    semantic_mode: bool,
+    unresolved: list[str],
+    quasi_count: int,
+) -> dict[str, object]:
+    return {
+        "projected_categories": [category.value for category in categories],
+        "semantic_projected_categories": [
+            category.value for category in semantic_categories
+        ],
+        "effective_projected_categories": [
+            category.value for category in effective_projected_categories
+        ],
+        "effective_semantic_projected_categories": [
+            category.value for category in effective_semantic_categories
+        ],
+        "semantic_exposure_mode": semantic_mode,
+        "projected_exposures": [
+            exposure.model_dump(mode="json")
+            for exposure in policy_input.query_plan.projected_exposures
+        ],
+        "referenced_categories": [category.value for category in referenced_categories],
+        "effective_referenced_categories": [
+            category.value for category in effective_referenced_categories
+        ],
+        "lineage_sources": _lineage_evidence(policy_input.all_referenced_context),
+        "unresolved_columns": unresolved,
+        "quasi_identifier_count": quasi_count,
+    }
 
 
 def _semantic_projected_context(
@@ -226,6 +296,43 @@ def _semantic_projected_context(
         tuple(by_key[key] for key in sorted(exposed_keys) if key in by_key),
         True,
     )
+
+
+def _effective_category_entries(
+    columns: tuple[ColumnContext, ...],
+) -> tuple[tuple[str, SensitivityCategory], ...]:
+    entries: dict[tuple[str, SensitivityCategory], None] = {}
+    for column in columns:
+        entries[(column.ref.key, column.category)] = None
+        for source in column.lineage_sources:
+            entries[(source.ref.key, source.category)] = None
+    return tuple(entries)
+
+
+def _effective_categories(
+    columns: tuple[ColumnContext, ...],
+) -> list[SensitivityCategory]:
+    return [category for _, category in _effective_category_entries(columns)]
+
+
+def _category_count(
+    columns: tuple[ColumnContext, ...],
+    category: SensitivityCategory,
+) -> int:
+    return sum(
+        effective_category == category
+        for _, effective_category in _effective_category_entries(columns)
+    )
+
+
+def _lineage_evidence(
+    columns: tuple[ColumnContext, ...],
+) -> dict[str, list[dict[str, object]]]:
+    return {
+        column.ref.key: [source.model_dump(mode="json") for source in column.lineage_sources]
+        for column in columns
+        if column.lineage_sources
+    }
 
 
 def _deduplicate(values: list[ReasonCode]) -> tuple[ReasonCode, ...]:

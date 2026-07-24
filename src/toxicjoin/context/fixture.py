@@ -16,6 +16,7 @@ from toxicjoin.context.models import ContextResolution
 from toxicjoin.models import (
     ColumnContext,
     ColumnRef,
+    LineageSource,
     QueryPlan,
     ReasonCode,
     SensitivityCategory,
@@ -27,6 +28,7 @@ class FixtureField(StrictModel):
     category: SensitivityCategory
     tags: tuple[str, ...] = ()
     glossary_terms: tuple[str, ...] = ()
+    lineage_sources: tuple[LineageSource, ...] = ()
 
 
 class FixtureDataset(StrictModel):
@@ -133,9 +135,13 @@ class FixtureContextResolver:
             datahub_urn=dataset.urn,
             tags=field.tags,
             glossary_terms=field.glossary_terms,
+            lineage_sources=field.lineage_sources,
             resolved=True,
         )
-        if field.category == SensitivityCategory.UNCLASSIFIED:
+        if field.category == SensitivityCategory.UNCLASSIFIED or any(
+            source.category == SensitivityCategory.UNCLASSIFIED
+            for source in field.lineage_sources
+        ):
             return context, ReasonCode.UNCLASSIFIED_COLUMN
         return context, None
 

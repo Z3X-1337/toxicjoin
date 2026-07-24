@@ -17,6 +17,7 @@ on:
       - "tests/security/test_secure_api_surface.py"
       - "tests/security/test_datahub_edited_governance.py"
       - "tests/security/test_datahub_mcp_least_privilege.py"
+      - "tests/security/test_datahub_lineage_trust.py"
       - "tests/integration/test_datahub_spike.py"
       - "tests/integration/test_datahub_spike_authority.py"
       - "config/datahub-assets.json"
@@ -218,6 +219,24 @@ jobs:
           policy = load_policy()
           assert policy.version == '0.2.0', policy.version
 
+          flagship = snapshot.catalog.datasets['retention_scores'].fields['churn_score']
+          flagship_lineage = {
+              source.ref.key: source.category.value
+              for source in flagship.lineage_sources
+          }
+          assert set(flagship_lineage) == {
+              'location_activity.activity_count',
+              'location_activity.precise_area',
+              'orders.purchase_amount',
+              'support_cases.case_category',
+              'support_cases.sensitivity_level',
+          }, flagship_lineage
+          assert set(flagship_lineage.values()) == {
+              'PUBLIC_OR_LOW_RISK',
+              'QUASI_IDENTIFIER',
+              'SENSITIVE_ATTRIBUTE',
+          }, flagship_lineage
+
           sql = '''
           SELECT c.customer_id, r.churn_score
           FROM customers c
@@ -254,6 +273,7 @@ jobs:
               'live_semantic_reason_codes': [code.value for code in decision.reason_codes],
               'wrapped_output_kind': wrapped.projected_exposures[0].kind.value,
               'snapshot_catalog_version': snapshot.catalog.version,
+              'flagship_lineage': flagship_lineage,
               'read_only_mcp': True,
               'save_document_exposed': False,
           }, indent=2, sort_keys=True))
@@ -270,16 +290,33 @@ jobs:
           spike = json.loads(Path('.toxicjoin/datahub-spike.json').read_text())
 
           assert seed['status'] == 'seeded'
+          assert seed['tag_count'] == 10
+          assert seed['term_count'] == 7
           assert seed['dataset_count'] == 5
           assert seed['field_count'] == 19
           assert seed['lineage_count'] == 4
           assert len(seed['dataset_urns']) == 5
           assert len(seed['report_sha256']) == 64
 
-          assert spike['schema_version'] == '1.2'
+          assert spike['schema_version'] == '1.3'
           assert spike['status'] == 'verified'
           assert spike['independent_readback_verified'] is True
           assert spike['lineage_relationship_count'] == 3
+          assert spike['lineage_bound_field_count'] == 2
+          assert spike['lineage_source_count'] == 6
+          assert spike['unclassified_lineage_source_count'] == 0
+          assert set(spike['flagship_lineage_source_keys']) == {
+              'location_activity.activity_count',
+              'location_activity.precise_area',
+              'orders.purchase_amount',
+              'support_cases.case_category',
+              'support_cases.sensitivity_level',
+          }
+          assert set(spike['flagship_lineage_categories']) == {
+              'PUBLIC_OR_LOW_RISK',
+              'QUASI_IDENTIFIER',
+              'SENSITIVE_ATTRIBUTE',
+          }
           assert len(spike['verified_entities']) == 5
 
           read_settings = spike['read_settings']
@@ -325,6 +362,11 @@ jobs:
             'spike_report_sha256': spike['report_sha256'],
             'decision_document_urn': spike['decision_document_urn'],
             'lineage_relationship_count': spike['lineage_relationship_count'],
+            'lineage_bound_field_count': spike['lineage_bound_field_count'],
+            'lineage_source_count': spike['lineage_source_count'],
+            'flagship_lineage_source_keys': spike['flagship_lineage_source_keys'],
+            'flagship_lineage_categories': spike['flagship_lineage_categories'],
+            'unclassified_lineage_source_count': spike['unclassified_lineage_source_count'],
             'independent_readback_verified': True,
             'read_server_mutation_enabled': False,
             'writer_server_mutation_registration_enabled': True,

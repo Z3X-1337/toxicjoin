@@ -15,7 +15,13 @@ from pydantic import Field, field_validator, model_validator
 
 from toxicjoin.auth import RequestIdentity
 from toxicjoin.context.governance import GovernanceContextBinding
-from toxicjoin.models import Decision, ReasonCode, SensitivityCategory, StrictModel
+from toxicjoin.models import (
+    Decision,
+    LineageSource,
+    ReasonCode,
+    SensitivityCategory,
+    StrictModel,
+)
 
 
 class ReceiptMode(StrEnum):
@@ -51,6 +57,7 @@ class ReceiptColumnEvidence(StrictModel):
     datahub_urn: str | None = None
     tags: tuple[str, ...] = ()
     glossary_terms: tuple[str, ...] = ()
+    lineage_sources: tuple[LineageSource, ...] = ()
     resolved: bool
 
     @property
@@ -106,7 +113,7 @@ class ReceiptWriteback(StrictModel):
 
 
 class DecisionReceipt(StrictModel):
-    schema_version: str = "1.2"
+    schema_version: str = "1.3"
     receipt_id: str = Field(pattern=r"^tj_[0-9a-f]{16}$")
     created_at: datetime
     mode: ReceiptMode

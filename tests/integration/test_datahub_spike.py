@@ -17,6 +17,7 @@ from toxicjoin.integrations.datahub_spike import (
     DataHubSpikeReport,
     run_datahub_spike,
 )
+from toxicjoin.models import SensitivityCategory
 
 
 CUSTOMERS_URN = (
@@ -115,16 +116,18 @@ class FakeTransport:
                 "remainingCount": 0,
             }
         if name == "get_lineage":
-            return {
-                "relationships": [
-                    {
-                        "source": SCORES_URN,
-                        "target": CUSTOMERS_URN,
-                        "degree": 1,
-                    }
-                ],
-                "count": 1,
-            }
+            urn = arguments["urn"]
+            column = arguments["column"]
+            assert arguments["max_hops"] == 3
+            if urn == SCORES_URN and column == "customer_id":
+                return _lineage_payload(
+                    [_lineage_relationship(CUSTOMERS_URN, ["customer_id"])]
+                )
+            if urn == SCORES_URN and column == "churn_score":
+                return _lineage_payload(
+                    [_lineage_relationship(CUSTOMERS_URN, ["coarse_region"])]
+                )
+            return _lineage_payload([])
         raise AssertionError(f"unexpected context-read tool {name}")
 
     def _write_call(self, name: str, arguments: dict[str, Any]) -> Any:
@@ -165,6 +168,30 @@ class FakeTransport:
             "total_matches": 1,
             "documents_with_matches": 1,
         }
+
+
+def _lineage_payload(relationships: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "upstreams": {
+            "searchResults": relationships,
+            "returned": len(relationships),
+            "hasMore": False,
+            "truncatedDueToTokenBudget": False,
+        },
+        "relationships": relationships,
+        "metadata": {
+            "queryType": "column-level-lineage",
+            "groupedBy": "dataset",
+        },
+    }
+
+
+def _lineage_relationship(urn: str, columns: list[str]) -> dict[str, Any]:
+    return {
+        "entity": {"urn": urn, "type": "DATASET"},
+        "lineageColumns": columns,
+        "degree": 1,
+    }
 
 
 def _read_contracts() -> tuple[McpToolDefinition, ...]:
@@ -289,11 +316,18 @@ def test_spike_proves_read_write_and_fresh_session_readback(tmp_path) -> None:
 
     assert factory.created == 3
     assert factory.roles == ["context_read", "write", "readback"]
-    assert report.schema_version == "1.2"
+    assert report.schema_version == "1.3"
     assert report.status == "verified"
     assert report.independent_readback_verified is True
     assert report.decision_document_urn == DOCUMENT_URN
     assert report.lineage_relationship_count == 1
+    assert report.lineage_bound_field_count == 2
+    assert report.lineage_source_count == 2
+    assert report.flagship_lineage_source_keys == ("customers.coarse_region",)
+    assert report.flagship_lineage_categories == (
+        SensitivityCategory.QUASI_IDENTIFIER,
+    )
+    assert report.unclassified_lineage_source_count == 0
     assert report.field_counts == {"customers": 2, "retention_scores": 2}
     assert set(report.verified_entities) == {CUSTOMERS_URN, SCORES_URN}
     assert "save_document" not in report.read_discovered_tools

@@ -66,6 +66,14 @@ class ColumnRef(StrictModel):
         return f"{self.dataset}.{self.field_path}"
 
 
+class LineageSource(StrictModel):
+    """Governed upstream source that contributes to a materialized field."""
+
+    ref: ColumnRef
+    category: SensitivityCategory
+    datahub_urn: str | None = None
+
+
 class ProjectionExposureKind(StrEnum):
     """How a final projected value exposes its governed source lineage."""
 
@@ -93,12 +101,16 @@ class ColumnContext(StrictModel):
     datahub_urn: str | None = None
     tags: tuple[str, ...] = ()
     glossary_terms: tuple[str, ...] = ()
+    lineage_sources: tuple[LineageSource, ...] = ()
     resolved: bool = True
 
     @model_validator(mode="after")
-    def unresolved_columns_are_unclassified(self) -> "ColumnContext":
+    def validate_governed_context(self) -> "ColumnContext":
         if not self.resolved and self.category != SensitivityCategory.UNCLASSIFIED:
             raise ValueError("unresolved columns must use the UNCLASSIFIED category")
+        source_keys = [source.ref.key for source in self.lineage_sources]
+        if len(source_keys) != len(set(source_keys)):
+            raise ValueError("lineage_sources must not contain duplicate governed columns")
         return self
 
 

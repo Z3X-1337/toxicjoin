@@ -97,17 +97,35 @@ class FakeRoleTransport:
             return {
                 "fields": [
                     {
+                        "fieldPath": "source_id",
+                        "tags": {"tags": [{"tag": "urn:li:tag:ToxicJoinDirectIdentifier"}]},
+                    },
+                    {
                         "fieldPath": "customer_id",
                         "tags": {"tags": [{"tag": "urn:li:tag:ToxicJoinDirectIdentifier"}]},
-                    }
+                    },
                 ],
                 "remainingCount": 0,
             }
         if name == "get_lineage":
-            return {
-                "relationships": [
-                    {"source": "upstream", "target": _DATASET_URN, "degree": 1}
+            if arguments["column"] == "customer_id":
+                relationships = [
+                    {
+                        "entity": {"urn": _DATASET_URN, "type": "DATASET"},
+                        "lineageColumns": ["source_id"],
+                        "degree": 1,
+                    }
                 ]
+            else:
+                relationships = []
+            return {
+                "upstreams": {
+                    "searchResults": relationships,
+                    "returned": len(relationships),
+                    "hasMore": False,
+                    "truncatedDueToTokenBudget": False,
+                },
+                "relationships": relationships,
             }
         if name == "save_document":
             return {"document": {"urn": "urn:li:document:isolated-write"}}
@@ -173,10 +191,15 @@ def test_spike_uses_read_then_allowlisted_write_then_fresh_readback(tmp_path: Pa
         "get_entities",
         "list_schema_fields",
         "get_lineage",
+        "get_lineage",
     ]
     assert factory.transports[1].calls == ["save_document"]
     assert factory.transports[2].calls == ["grep_documents"]
-    assert report.schema_version == "1.2"
+    assert report.schema_version == "1.3"
+    assert report.lineage_bound_field_count == 1
+    assert report.lineage_source_count == 1
+    assert report.flagship_lineage_source_keys == ("customers.source_id",)
+    assert report.unclassified_lineage_source_count == 0
     assert report.read_settings["mutation_enabled"] is False
     assert report.write_settings["mutation_enabled"] is True
     assert "save_document" not in report.read_discovered_tools

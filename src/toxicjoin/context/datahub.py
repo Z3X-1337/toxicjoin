@@ -2,9 +2,9 @@
 
 The live adapter never asks the policy engine to understand DataHub-specific response
 shapes. It validates an explicit logical-name-to-URN manifest, reads entities and
-schema fields through the official MCP server, classifies fields from controlled tags
-or glossary terms, and materializes the same ``FixtureCatalog`` model used by the
-deterministic offline path.
+schema fields through the official MCP server, classifies direct field metadata, then
+binds complete column-level upstream lineage into the same governed catalog consumed by
+the deterministic policy engine.
 """
 
 from __future__ import annotations
@@ -29,7 +29,13 @@ from toxicjoin.context.fixture import (
 from toxicjoin.context.governance import GovernanceContextBinding
 from toxicjoin.context.models import ContextResolution
 from toxicjoin.integrations.datahub_mcp import DataHubMcpClient, DataHubMcpError
-from toxicjoin.models import QueryPlan, SensitivityCategory, StrictModel
+from toxicjoin.models import (
+    ColumnRef,
+    LineageSource,
+    QueryPlan,
+    SensitivityCategory,
+    StrictModel,
+)
 
 
 class DataHubMetadataError(DataHubMcpError):
@@ -38,6 +44,8 @@ class DataHubMetadataError(DataHubMcpError):
 
 _DEFAULT_MAX_SNAPSHOT_AGE_SECONDS = 300.0
 _MAX_SNAPSHOT_AGE_SECONDS = 3600.0
+_LINEAGE_MAX_RESULTS = 100
+_LINEAGE_UNLIMITED_HOPS = 3
 
 
 class DataHubAssetMap(StrictModel):
@@ -170,23 +178,58 @@ class DataHubSnapshotLoader:
             )
             field_counts[logical_name] = len(normalized_fields)
 
-        lineage = await self.client.get_lineage(
-            self.asset_map.flagship_urn,
-            column=self.asset_map.flagship_column,
-            upstream=True,
-            max_hops=2,
-            max_results=100,
-        )
-        relationships = lineage.get("relationships")
-        if not isinstance(relationships, list) or not all(
-            isinstance(item, dict) for item in relationships
-        ):
-            raise DataHubMetadataError(
-                "DataHub lineage payload has invalid relationships"
+        urn_to_logical = {urn: logical for logical, urn in self.asset_map.datasets.items()}
+        flagship_lineage: dict[str, Any] | None = None
+
+        for logical_name, dataset in tuple(datasets.items()):
+            updated_fields: dict[str, FixtureField] = {}
+            for field_path, field in dataset.fields.items():
+                lineage = await self.client.get_lineage(
+                    dataset.urn,
+                    column=field_path,
+                    upstream=True,
+                    max_hops=_LINEAGE_UNLIMITED_HOPS,
+                    max_results=_LINEAGE_MAX_RESULTS,
+                )
+                lineage_sources = _normalize_lineage_sources(
+                    lineage,
+                    target=ColumnRef(dataset=logical_name, field_path=field_path),
+                    datasets=datasets,
+                    urn_to_logical=urn_to_logical,
+                )
+                updated_fields[field_path] = field.model_copy(
+                    update={"lineage_sources": lineage_sources}
+                )
+                if (
+                    logical_name == self.asset_map.flagship_dataset
+                    and field_path == self.asset_map.flagship_column
+                ):
+                    flagship_lineage = lineage
+
+            datasets[logical_name] = dataset.model_copy(update={"fields": updated_fields})
+
+        if self.asset_map.flagship_column is None:
+            flagship_lineage = await self.client.get_lineage(
+                self.asset_map.flagship_urn,
+                column=None,
+                upstream=True,
+                max_hops=_LINEAGE_UNLIMITED_HOPS,
+                max_results=_LINEAGE_MAX_RESULTS,
             )
+        elif flagship_lineage is None:
+            raise DataHubMetadataError(
+                "configured flagship column does not exist in the DataHub schema"
+            )
+
+        assert flagship_lineage is not None
+        relationships = _lineage_relationships(flagship_lineage)
         if not relationships:
             raise DataHubMetadataError(
                 "DataHub returned no upstream lineage for the configured flagship column"
+            )
+        if _lineage_payload_incomplete(flagship_lineage):
+            raise DataHubMetadataError(
+                "DataHub flagship lineage is incomplete or truncated"
             )
 
         observed_at = _utc_datetime(self._clock())
@@ -197,7 +240,7 @@ class DataHubSnapshotLoader:
             ),
             verified_entities=verified_entities,
             field_counts=field_counts,
-            lineage_sample=lineage,
+            lineage_sample=flagship_lineage,
             discovered_tools=tuple(sorted(definition.name for definition in definitions)),
             observed_at=observed_at,
         )
@@ -332,6 +375,115 @@ def _normalize_field(field: dict[str, Any]) -> FixtureField:
         category=category,
         tags=tuple(sorted(tags)),
         glossary_terms=tuple(sorted(glossary_terms)),
+    )
+
+
+def _normalize_lineage_sources(
+    payload: dict[str, Any],
+    *,
+    target: ColumnRef,
+    datasets: dict[str, FixtureDataset],
+    urn_to_logical: dict[str, str],
+) -> tuple[LineageSource, ...]:
+    relationships = _lineage_relationships(payload)
+    sources: dict[str, LineageSource] = {}
+    incomplete = _lineage_payload_incomplete(payload)
+
+    for index, relationship in enumerate(relationships):
+        entity = relationship.get("entity")
+        urn = _extract_entity_urn(entity) if isinstance(entity, dict) else None
+        columns = relationship.get("lineageColumns")
+        if (
+            urn is None
+            or not isinstance(columns, list)
+            or not columns
+            or not all(isinstance(column, str) and column.strip() for column in columns)
+        ):
+            incomplete = True
+            unresolved = _unresolved_lineage_source(
+                target=target,
+                discriminator=f"relationship-{index}",
+                datahub_urn=urn,
+            )
+            sources[unresolved.ref.key] = unresolved
+            continue
+
+        logical_name = urn_to_logical.get(urn)
+        upstream_dataset = datasets.get(logical_name) if logical_name is not None else None
+        for column in columns:
+            assert isinstance(column, str)
+            if upstream_dataset is None or column not in upstream_dataset.fields:
+                unresolved = LineageSource(
+                    ref=ColumnRef(
+                        dataset=f"@datahub:{urn}",
+                        field_path=column,
+                    ),
+                    category=SensitivityCategory.UNCLASSIFIED,
+                    datahub_urn=urn,
+                )
+                sources[unresolved.ref.key] = unresolved
+                continue
+
+            ref = ColumnRef(dataset=logical_name, field_path=column)
+            if ref.key == target.key:
+                continue
+            upstream_field = upstream_dataset.fields[column]
+            sources[ref.key] = LineageSource(
+                ref=ref,
+                category=upstream_field.category,
+                datahub_urn=urn,
+            )
+
+    if incomplete:
+        unresolved = _unresolved_lineage_source(
+            target=target,
+            discriminator="incomplete",
+            datahub_urn=None,
+        )
+        sources[unresolved.ref.key] = unresolved
+
+    return tuple(sources[key] for key in sorted(sources))
+
+
+def _lineage_relationships(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    relationships = payload.get("relationships")
+    if not isinstance(relationships, list) or not all(
+        isinstance(item, dict) for item in relationships
+    ):
+        raise DataHubMetadataError("DataHub lineage payload has invalid relationships")
+    return relationships
+
+
+def _lineage_payload_incomplete(payload: dict[str, Any]) -> bool:
+    upstreams = payload.get("upstreams")
+    if isinstance(upstreams, dict):
+        if upstreams.get("hasMore") is True:
+            return True
+        if upstreams.get("truncatedDueToTokenBudget") is True:
+            return True
+
+    for relationship in _lineage_relationships(payload):
+        if relationship.get("truncatedChildren"):
+            return True
+    return False
+
+
+def _unresolved_lineage_source(
+    *,
+    target: ColumnRef,
+    discriminator: str,
+    datahub_urn: str | None,
+) -> LineageSource:
+    digest = hashlib.sha256(
+        f"{target.key}:{discriminator}:{datahub_urn or ''}".encode("utf-8")
+    ).hexdigest()[:16]
+    return LineageSource(
+        ref=ColumnRef(
+            dataset="@datahub-lineage",
+            field_path=f"{target.key}:{digest}",
+        ),
+        category=SensitivityCategory.UNCLASSIFIED,
+        datahub_urn=datahub_urn,
     )
 
 

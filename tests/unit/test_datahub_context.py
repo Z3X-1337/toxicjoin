@@ -153,59 +153,99 @@ def _field(
     }
 
 
+def _empty_lineage() -> dict[str, Any]:
+    return {
+        "upstreams": {
+            "searchResults": [],
+            "returned": 0,
+            "hasMore": False,
+            "truncatedDueToTokenBudget": False,
+        },
+        "relationships": [],
+    }
+
+
+def _lineage(urn: str, columns: list[str]) -> dict[str, Any]:
+    relationships = [
+        {
+            "entity": {"urn": urn, "type": "DATASET"},
+            "lineageColumns": columns,
+            "degree": 1,
+        }
+    ]
+    return {
+        "upstreams": {
+            "searchResults": relationships,
+            "returned": 1,
+            "hasMore": False,
+            "truncatedDueToTokenBudget": False,
+        },
+        "relationships": relationships,
+    }
+
+
 def _transport(
     *,
     customer_fields: list[dict[str, Any]] | None = None,
     score_fields: list[dict[str, Any]] | None = None,
     include_scores_entity: bool = True,
 ) -> FakeTransport:
+    resolved_customer_fields = (
+        customer_fields
+        if customer_fields is not None
+        else [
+            _field(
+                "customer_id",
+                tags=("toxicjoin:stable-pseudonym",),
+            ),
+            _field(
+                "coarse_region",
+                tags=("toxicjoin:quasi-identifier",),
+            ),
+        ]
+    )
+    resolved_score_fields = (
+        score_fields
+        if score_fields is not None
+        else [
+            _field(
+                "customer_id",
+                glossary_terms=("StableCustomerIdentifier",),
+            ),
+            _field(
+                "churn_score",
+                tags=("toxicjoin:model-output",),
+            ),
+        ]
+    )
+
+    lineage_responses: list[dict[str, Any]] = [
+        _empty_lineage() for _ in resolved_customer_fields
+    ]
+    for field in resolved_score_fields:
+        if field["fieldPath"] == "customer_id":
+            lineage_responses.append(_lineage(CUSTOMERS_URN, ["customer_id"]))
+        elif field["fieldPath"] == "churn_score":
+            lineage_responses.append(_lineage(CUSTOMERS_URN, ["coarse_region"]))
+        else:
+            lineage_responses.append(_empty_lineage())
+
     return FakeTransport(
         {
             "get_entities": [_entities(include_scores=include_scores_entity)],
             "list_schema_fields": [
                 {
                     "urn": CUSTOMERS_URN,
-                    "fields": customer_fields
-                    or [
-                        _field(
-                            "customer_id",
-                            tags=("toxicjoin:stable-pseudonym",),
-                        ),
-                        _field(
-                            "coarse_region",
-                            tags=("toxicjoin:quasi-identifier",),
-                        ),
-                    ],
+                    "fields": resolved_customer_fields,
                     "remainingCount": 0,
                 },
                 {
                     "urn": SCORES_URN,
-                    "fields": score_fields
-                    or [
-                        _field(
-                            "customer_id",
-                            glossary_terms=("StableCustomerIdentifier",),
-                        ),
-                        _field(
-                            "churn_score",
-                            tags=("toxicjoin:model-output",),
-                        ),
-                    ],
+                    "fields": resolved_score_fields,
                     "remainingCount": 0,
                 },
             ],
-            "get_lineage": [
-                {
-                    "relationships": [
-                        {
-                            "source": SCORES_URN,
-                            "target": CUSTOMERS_URN,
-                            "degree": 1,
-                        }
-                    ],
-                    "count": 1,
-                }
-            ],
+            "get_lineage": lineage_responses,
         }
     )
 
@@ -239,6 +279,12 @@ def test_snapshot_normalizes_entities_fields_and_lineage() -> None:
         scores.fields["churn_score"].category
         == SensitivityCategory.SENSITIVE_ATTRIBUTE
     )
+    assert [
+        (source.ref.key, source.category)
+        for source in scores.fields["churn_score"].lineage_sources
+    ] == [
+        ("customers.coarse_region", SensitivityCategory.QUASI_IDENTIFIER)
+    ]
 
 
 def test_unclassified_live_field_remains_fail_closed() -> None:
@@ -325,10 +371,11 @@ def test_duplicate_schema_field_paths_are_rejected() -> None:
             ).load(require_mutations=False)
         )
 
+
 def test_empty_live_lineage_fails_closed() -> None:
     transport = _transport()
     transport.responses["get_lineage"] = deque(
-        [{"upstreams": {"searchResults": []}}]
+        [_empty_lineage(), _empty_lineage(), _empty_lineage(), _empty_lineage()]
     )
 
     with pytest.raises(DataHubMetadataError, match="no upstream lineage"):
@@ -338,4 +385,3 @@ def test_empty_live_lineage_fails_closed() -> None:
                 _asset_map(),
             ).load(require_mutations=False)
         )
-
