@@ -106,16 +106,54 @@ The live Decision write/read-back is proven by committed JSON evidence and the l
 - Do not present the public Vercel Replay as a live DataHub session.
 - Keep all values synthetic.
 
+## Verified capture review — July 23, 2026
+
+The exact PR head `6393028ce7b78d11c031b6b46a51773fc42b57f9` passed both normal CI and `Capture DataHub Video Evidence` before this review was recorded.
+
+Capture workflow:
+
+- run: `30030444776`;
+- conclusion: `success`;
+- Artifact: `toxicjoin-real-datahub-video-captures`;
+- Artifact ID: `8573156142`;
+- Artifact digest: `sha256:1b2ff7d4081e8a04b08738ce5663e15fe18fa4353e64ea2b3cb6ab0168bf58cf`;
+- Artifact expiry: August 22, 2026.
+
+Independent visual review of the downloaded Artifact confirmed:
+
+- `01-retention-scores-search.png` is a real loaded DataHub search page, not query text alone; the `ToxicJoin retention_scores` dataset result is selected and `churn_score` is visibly matched;
+- `02-retention-scores-overview.png` is a loaded DataHub Columns view showing exactly `churn_score`, `customer_id`, and `model_timestamp`, with no login page, empty state, loading skeleton, tour, or modal obstruction;
+- `03-retention-scores-lineage-summary.png` is a clean real DataHub Summary-panel crop showing `UPSTREAM — Depends on 4 datasets` and `DOWNSTREAM — Used by 1`, with no skeletal lineage canvas inside the captured region;
+- all three frames preserve the DataHub identity and ToxicJoin dataset title without a fabricated dashboard overlay;
+- no visible real-person data or non-synthetic warehouse content appears in the frames.
+
+File dimensions and SHA-256:
+
+| File | Dimensions | SHA-256 |
+|---|---:|---|
+| `01-retention-scores-search.png` | 1600×1000 | `d3c95efc6b56414ef26f8173e16cd5374872dc60da4a2d665fdaa87c5a784bb9` |
+| `02-retention-scores-overview.png` | 1600×1000 | `994c7ff526d69f023409ee2906de94dcf3ae47daabc8e9194f8e170fae98352f` |
+| `03-retention-scores-lineage-summary.png` | 495×380 | `b898c3ca043abcd4850bc9b73abfbc9ac8d2985dbd83e627a312855d8071f347` |
+| `manifest.json` | — | `03f59ea11fdf181d69a0237c518aec922c7e9b4c0aab05a359b17b0d6b4d9656` |
+
+The accompanying machine evidence was also present in the same Artifact:
+
+- `datahub-agent-registry.json` — `fe7e8fa842dd6e0de08ada1b59d173312b8693c2f2ea563fc19ef50e3cf2bc62`;
+- `datahub-agent-registry-verified.json` — `788311a56367e36f8b8cd9dc06f1699eeb14a68a4c8e9da4c69f4e262d56e566`;
+- `datahub-seed.json` — `03d296796d2069e80a0c056f8b6ddba93aef812c231477b75f5b7395a12f8d9f`.
+
+**Review decision:** frames 1–3 are approved as source media for the final edit. The Agent Registry remains machine-evidence-only, and the lineage canvas limitation remains explicitly disclosed.
+
 ## Acceptance gate
 
 Before the final edit may use this package:
 
-1. The capture workflow must be green.
-2. The Artifact must contain all three PNGs plus `manifest.json` and both Agent Registry reports.
-3. `manifest.json` must report `source: real-datahub-oss-ui`, exactly three captures, zero console errors, zero page errors, and `visual_ui_claimed: false` for Agent Registry preview evidence.
-4. `manifest.json` must report `lineage_evidence.visual_mode: loaded-summary-panel`, `upstream_dataset_count: 4`, and `downstream_usage_count: 1`.
-5. The Dataset search frame must contain a real `/dataset/` result rather than query text alone.
-6. The lineage-summary frame must visibly contain `Depends on 4 datasets` and `Used by 1` and contain no loading skeletons inside the captured region.
-7. The Agent Registry reports must pass the count/dependency assertions in CI.
-8. All three frames must be visually reviewed for clipping, loading states, login pages, tours, or stale search results.
-9. The final Microsoft narration must be synchronized to the actual waveform; screenshot durations are not fixed in advance.
+1. [x] The capture workflow is green.
+2. [x] The Artifact contains all three PNGs plus `manifest.json` and both Agent Registry reports.
+3. [x] `manifest.json` reports `source: real-datahub-oss-ui`, exactly three captures, zero console errors, zero page errors, and `visual_ui_claimed: false` for Agent Registry preview evidence.
+4. [x] `manifest.json` reports `lineage_evidence.visual_mode: loaded-summary-panel`, `upstream_dataset_count: 4`, and `downstream_usage_count: 1`.
+5. [x] The Dataset search frame contains a real `/dataset/` result rather than query text alone.
+6. [x] The lineage-summary frame visibly contains `Depends on 4 datasets` and `Used by 1` and contains no loading skeletons inside the captured region.
+7. [x] The Agent Registry reports passed the count/dependency assertions in CI.
+8. [x] All three frames were visually reviewed for clipping, loading states, login pages, tours, or stale search results.
+9. [ ] The final Microsoft narration must be synchronized to the actual waveform; screenshot durations are not fixed in advance.
