@@ -197,7 +197,7 @@ class DisclosureLedger:
         records = tuple(self._row_to_record(row) for row in rows)
         previous: str | None = None
         for record in records:
-            if record.event.scope != scope:
+            if not _same_privacy_scope(record.event.scope, scope):
                 raise DisclosureLedgerIntegrityError("scope payload does not match index")
             if record.previous_content_sha256 != previous:
                 raise DisclosureLedgerIntegrityError("disclosure scope hash chain is broken")
@@ -242,6 +242,21 @@ class DisclosureLedger:
         if self.path.exists() and self.path.is_symlink():
             raise ValueError("disclosure ledger path must not be a symbolic link")
         self.path.parent.mkdir(parents=True, exist_ok=True)
+
+        if not self.path.exists():
+            try:
+                descriptor = os.open(
+                    self.path,
+                    os.O_RDWR | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                )
+            except FileExistsError:
+                pass
+            else:
+                os.close(descriptor)
+        if self.path.is_symlink():
+            raise ValueError("disclosure ledger path must not be a symbolic link")
+
         connection = self._connect(create=True)
         try:
             current_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
@@ -336,3 +351,16 @@ class DisclosureLedger:
                 "disclosure ledger index fields do not match payload"
             )
         return record
+
+
+def _same_privacy_scope(left: DisclosureScope, right: DisclosureScope) -> bool:
+    """Compare security-partitioning fields while allowing audit dataset/domain rotation."""
+
+    return (
+        left.scope_sha256 == right.scope_sha256
+        and left.principal_id == right.principal_id
+        and left.agent_id == right.agent_id
+        and left.subject.namespace_sha256 == right.subject.namespace_sha256
+        and left.subject.field_path.casefold() == right.subject.field_path.casefold()
+        and left.subject.category == right.subject.category
+    )
