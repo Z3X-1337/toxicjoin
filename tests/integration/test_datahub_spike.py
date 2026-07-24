@@ -33,10 +33,22 @@ class SessionFactory:
         self.preserve_marker = preserve_marker
         self.created = 0
         self.saved_arguments: dict[str, Any] | None = None
+        self.roles: list[str] = []
 
     def __call__(self, settings: DataHubMcpSettings) -> "FakeTransport":
         self.created += 1
-        role = "write" if self.created == 1 else "read"
+        if self.created == 1:
+            role = "context_read"
+            assert settings.mutation_enabled is False
+        elif self.created == 2:
+            role = "write"
+            assert settings.mutation_enabled is True
+        elif self.created == 3:
+            role = "readback"
+            assert settings.mutation_enabled is False
+        else:
+            raise AssertionError("unexpected extra MCP session")
+        self.roles.append(role)
         return FakeTransport(self, role=role)
 
 
@@ -52,17 +64,20 @@ class FakeTransport:
         return None
 
     async def list_tools(self) -> tuple[McpToolDefinition, ...]:
-        contracts = _contracts()
-        if self.role == "read":
-            return contracts + (_grep_documents_contract(),)
-        return contracts
+        if self.role == "write":
+            return (_save_document_contract(),)
+        if self.role == "readback":
+            return _read_contracts() + (_grep_documents_contract(),)
+        return _read_contracts()
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        if self.role == "context_read":
+            return self._context_read_call(name, arguments)
         if self.role == "write":
             return self._write_call(name, arguments)
-        return self._read_call(name, arguments)
+        return self._readback_call(name, arguments)
 
-    def _write_call(self, name: str, arguments: dict[str, Any]) -> Any:
+    def _context_read_call(self, name: str, arguments: dict[str, Any]) -> Any:
         if name == "get_entities":
             return [
                 {"urn": CUSTOMERS_URN},
@@ -107,14 +122,17 @@ class FakeTransport:
                 ],
                 "count": 1,
             }
+        raise AssertionError(f"unexpected context-read tool {name}")
+
+    def _write_call(self, name: str, arguments: dict[str, Any]) -> Any:
         if name == "save_document":
             self.factory.saved_arguments = dict(arguments)
             return {"document": {"urn": DOCUMENT_URN}}
         raise AssertionError(f"unexpected write-session tool {name}")
 
-    def _read_call(self, name: str, arguments: dict[str, Any]) -> Any:
+    def _readback_call(self, name: str, arguments: dict[str, Any]) -> Any:
         if name != "grep_documents":
-            raise AssertionError(f"unexpected read-session tool {name}")
+            raise AssertionError(f"unexpected readback-session tool {name}")
         assert arguments["urns"] == [DOCUMENT_URN]
         marker = str(arguments["pattern"])
         saved = self.factory.saved_arguments or {}
@@ -146,7 +164,7 @@ class FakeTransport:
         }
 
 
-def _contracts() -> tuple[McpToolDefinition, ...]:
+def _read_contracts() -> tuple[McpToolDefinition, ...]:
     return (
         McpToolDefinition(
             name="get_entities",
@@ -174,20 +192,22 @@ def _contracts() -> tuple[McpToolDefinition, ...]:
                 }
             },
         ),
-        McpToolDefinition(
-            name="save_document",
-            input_schema={
-                "properties": {
-                    "title": {},
-                    "content": {},
-                    "document_type": {"enum": ["Decision"]},
-                    "related_assets": {},
-                    "external_url": {},
-                }
-            },
-        ),
     )
 
+
+def _save_document_contract() -> McpToolDefinition:
+    return McpToolDefinition(
+        name="save_document",
+        input_schema={
+            "properties": {
+                "title": {},
+                "content": {},
+                "document_type": {"enum": ["Decision"]},
+                "related_assets": {},
+                "external_url": {},
+            }
+        },
+    )
 
 
 def _grep_documents_contract() -> McpToolDefinition:
@@ -204,6 +224,7 @@ def _grep_documents_contract() -> McpToolDefinition:
         },
     )
 
+
 def _field(path: str, tag: str) -> dict[str, Any]:
     return {
         "fieldPath": path,
@@ -216,12 +237,23 @@ def _field(path: str, tag: str) -> dict[str, Any]:
     }
 
 
-def _settings() -> DataHubMcpSettings:
+def _read_settings() -> DataHubMcpSettings:
     return DataHubMcpSettings(
         gms_url="http://localhost:8080",
-        gms_token=SecretStr("TOP_SECRET_TOKEN"),
+        gms_token=SecretStr("READ_ONLY_SECRET"),
         command="fake-mcp",
         args=("server",),
+        mutation_enabled=False,
+    )
+
+
+def _write_settings() -> DataHubMcpSettings:
+    return DataHubMcpSettings(
+        gms_url="http://localhost:8080",
+        gms_token=SecretStr("WRITE_ONLY_SECRET"),
+        command="fake-mcp",
+        args=("server",),
+        mutation_enabled=True,
     )
 
 
@@ -243,7 +275,8 @@ def test_spike_proves_read_write_and_fresh_session_readback(tmp_path) -> None:
 
     report = asyncio.run(
         run_datahub_spike(
-            settings=_settings(),
+            read_settings=_read_settings(),
+            write_settings=_write_settings(),
             asset_map=_asset_map(),
             output=output,
             external_url="https://example.test/toxicjoin/receipt",
@@ -251,13 +284,18 @@ def test_spike_proves_read_write_and_fresh_session_readback(tmp_path) -> None:
         )
     )
 
-    assert factory.created == 2
+    assert factory.created == 3
+    assert factory.roles == ["context_read", "write", "readback"]
+    assert report.schema_version == "1.1"
     assert report.status == "verified"
     assert report.independent_readback_verified is True
     assert report.decision_document_urn == DOCUMENT_URN
     assert report.lineage_relationship_count == 1
     assert report.field_counts == {"customers": 2, "retention_scores": 2}
     assert set(report.verified_entities) == {CUSTOMERS_URN, SCORES_URN}
+    assert "save_document" not in report.read_discovered_tools
+    assert "save_document" in report.write_discovered_tools
+    assert "save_document" not in report.readback_discovered_tools
     assert factory.saved_arguments is not None
     assert factory.saved_arguments["document_type"] == "Decision"
     assert factory.saved_arguments["related_assets"] == [
@@ -272,10 +310,13 @@ def test_spike_proves_read_write_and_fresh_session_readback(tmp_path) -> None:
     encoded = output.read_text(encoding="utf-8")
     loaded = DataHubSpikeReport.model_validate(json.loads(encoded))
     assert loaded == report
-    assert "TOP_SECRET_TOKEN" not in encoded
+    assert "READ_ONLY_SECRET" not in encoded
+    assert "WRITE_ONLY_SECRET" not in encoded
     assert "customer rows" not in encoded.lower()
-    assert report.settings["token_present"] is True
-    assert "gms_url" not in report.settings
+    assert report.read_settings["token_present"] is True
+    assert report.write_settings["token_present"] is True
+    assert "gms_url" not in report.read_settings
+    assert "gms_url" not in report.write_settings
 
 
 def test_spike_rejects_readback_without_marker_and_writes_no_report(tmp_path) -> None:
@@ -285,12 +326,14 @@ def test_spike_rejects_readback_without_marker_and_writes_no_report(tmp_path) ->
     with pytest.raises(DataHubMcpError, match="verification marker"):
         asyncio.run(
             run_datahub_spike(
-                settings=_settings(),
+                read_settings=_read_settings(),
+                write_settings=_write_settings(),
                 asset_map=_asset_map(),
                 output=output,
                 transport_factory=factory,
             )
         )
 
-    assert factory.created == 2
+    assert factory.created == 3
+    assert factory.roles == ["context_read", "write", "readback"]
     assert not output.exists()
