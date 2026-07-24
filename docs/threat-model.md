@@ -15,6 +15,7 @@
 4. Deterministic policy engine to optional LLM explanation layer.
 5. Live mode to public replay mode.
 6. Verifier/authorizer to the execution boundary.
+7. Post-execution verifier to public result release.
 
 ## Adversaries and failure modes
 - Agent produces an over-broad query unintentionally.
@@ -27,6 +28,7 @@
 - SQL is changed after a safe decision but before execution.
 - Governance metadata or policy configuration changes between authorization and execution.
 - A previously valid execution authorization is replayed, forged, expired, or used for a different task/subject/query.
+- A query executes successfully but post-execution checks fail while preview rows are still returned to the caller.
 
 ## Security invariants
 - No query executes before a deterministic decision.
@@ -39,6 +41,8 @@
 - Safe rewrites are verified after execution before release.
 - Execution requires a short-lived authorization bound to the exact SQL, QueryPlan, governed context, policy configuration, policy decision, task purpose, subject key, and dialect.
 - Execution authorizations are single-use; mutation, authority substitution, expiry, replay, or integrity failure blocks execution.
+- Successful database execution does not imply result release; rows are released only when every post-execution verification check passes.
+- Failed post-execution verification must return no `ExecutionResult` rows and must remain persistable as a normal BLOCK receipt.
 
 ## Initial controls
 - sqlglot AST parsing.
@@ -53,6 +57,7 @@
 - HMAC-authenticated execution capabilities with process-local random key material.
 - Fresh SQL analysis, governance resolution, and deterministic policy evaluation at authorization verification time.
 - Thread-safe one-time executor-to-authority binding and single-use authorization consumption.
+- Quarantined post-execution results with schema-enforced no-release on failed verification.
 
 ## Threat-Model Delta — 2026-07-24: Execution Authorization (C1)
 
@@ -81,3 +86,26 @@ The execution boundary no longer accepts a reusable in-memory `PolicyDecision(AL
 
 ### Residual risk
 This control binds authorization to the deterministic application-level state visible to ToxicJoin. It does not provide a distributed transaction across DataHub and DuckDB; governance could theoretically change after the final re-resolution but before the database statement begins. The remaining window is deliberately minimized, execution remains read-only, and no authorization survives process restart.
+
+## Threat-Model Delta — 2026-07-24: Post-Verification Release (C2)
+
+### Change
+Database rows are now treated as quarantined intermediate data until all post-execution checks complete. `VerificationResult` can expose an `ExecutionResult` only when `passed=True`; otherwise the rows are discarded before the result crosses the verifier boundary. Failed post-checks retain explicit `execution_attempted` and `execution_quarantined` state without retaining row payloads.
+
+### Threats reduced
+- **Unsafe result release:** undersized groups, truncated result sets, missing subject-count evidence, or malformed subject counts cannot be returned merely because DuckDB executed successfully.
+- **Direct-library bypass:** callers of `verify_and_execute` receive no raw execution rows when post-verification fails.
+- **API fail-open-by-error behavior:** the pipeline can persist and return a deterministic BLOCK receipt instead of failing receipt validation because a failed verification still carried an execution payload.
+
+### New attack surface
+- Two boolean lifecycle fields on `VerificationResult`: `execution_attempted` and `execution_quarantined`.
+- Central result-release logic in `_result()`.
+
+### Mitigations and negative tests
+- A model validator rejects any `VerificationResult` that combines `passed=False` with a non-null `execution` payload.
+- `_result()` is the single release gate: execution rows are included only when all checks pass.
+- Security tests inject a deliberately contradictory post-execution group size containing a secret marker and assert that the marker is absent from direct-library and HTTP responses.
+- Pipeline regression verifies that a post-check failure persists a normal BLOCK receipt with no execution summary instead of raising a persistence error.
+
+### Residual risk
+The database query has already executed internally before post-execution checks can inspect its result. C2 controls **release**, not execution side effects; the current DuckDB contract remains read-only, which limits this residual risk. Stateful or mutating backends remain outside the supported execution contract.
