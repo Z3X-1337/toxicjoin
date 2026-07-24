@@ -3,7 +3,8 @@
 An execution authorization is not a reusable policy decision. It is a single-use,
 HMAC-authenticated capability tied to the exact SQL text, analyzed query plan,
 resolved governance context, policy configuration, resulting ALLOW decision,
-subject key, task purpose, SQL dialect, optional rewrite parent, and expiry.
+subject key, task purpose, authenticated request identity when present, SQL dialect,
+optional rewrite parent, and expiry.
 
 The authorizer is bound at construction time to one ContextResolver and one
 PolicyEngine. Callers therefore cannot substitute a weaker policy or alternate
@@ -23,6 +24,7 @@ from typing import Any, Protocol
 
 from pydantic import Field
 
+from toxicjoin.auth import RequestIdentity, current_request_identity
 from toxicjoin.context.models import ContextResolution
 from toxicjoin.models import (
     ColumnRef,
@@ -63,6 +65,10 @@ class ExecutionAuthorization(StrictModel):
     policy_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     policy_decision_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     task_purpose_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    request_identity_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     subject_key: ColumnRef
     rewrite_parent_sha256: str | None = Field(
         default=None,
@@ -132,6 +138,7 @@ class ExecutionAuthorizer:
             raise ExecutionAuthorizationError("AUTH_POLICY_NOT_ALLOW")
 
         now = float(self._clock())
+        identity = current_request_identity()
         unsigned = ExecutionAuthorization(
             authorization_id=f"tj_auth_{secrets.token_hex(16)}",
             issued_at=now,
@@ -143,6 +150,7 @@ class ExecutionAuthorizer:
             policy_sha256=_hash_policy(self._policy_engine),
             policy_decision_sha256=_hash_decision(decision),
             task_purpose_sha256=_sha256_text(task_purpose),
+            request_identity_sha256=_hash_identity(identity),
             subject_key=subject_key,
             rewrite_parent_sha256=(
                 _sha256_text(rewrite_parent_sql)
@@ -184,6 +192,10 @@ class ExecutionAuthorizer:
             raise ExecutionAuthorizationError("AUTH_DIALECT_MISMATCH")
         if authorization.subject_key != subject_key:
             raise ExecutionAuthorizationError("AUTH_SUBJECT_MISMATCH")
+        if authorization.request_identity_sha256 != _hash_identity(
+            current_request_identity()
+        ):
+            raise ExecutionAuthorizationError("AUTH_IDENTITY_MISMATCH")
         expected_parent = (
             _sha256_text(rewrite_parent_sql) if rewrite_parent_sql is not None else None
         )
@@ -285,6 +297,12 @@ def _hash_policy(policy_engine: PolicyEngine) -> str:
 
 def _hash_context(resolution: ContextResolution) -> str:
     return _hash_json(_normalized_context(resolution))
+
+
+def _hash_identity(identity: RequestIdentity | None) -> str | None:
+    if identity is None:
+        return None
+    return _hash_json(identity.model_dump(mode="json"))
 
 
 def _normalized_context(resolution: ContextResolution) -> dict[str, Any]:
