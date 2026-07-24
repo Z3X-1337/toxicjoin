@@ -7,7 +7,14 @@ from typing import Protocol
 
 from pydantic import model_validator
 
+from toxicjoin.auth import current_request_identity
 from toxicjoin.context.fixture import ContextResolution
+from toxicjoin.disclosure import (
+    DisclosureLedger,
+    DisclosureLedgerError,
+    DisclosureSemanticError,
+    build_disclosure_event_from_resolver,
+)
 from toxicjoin.execute import DuckDBExecutor, ExecutionError, ExecutionResult
 from toxicjoin.models import (
     ColumnRef,
@@ -15,6 +22,7 @@ from toxicjoin.models import (
     PolicyDecision,
     ProjectionExposureKind,
     QueryPlan,
+    ReasonCode,
     StrictModel,
 )
 from toxicjoin.policy import PolicyEngine
@@ -40,6 +48,7 @@ class VerificationResult(StrictModel):
     execution_attempted: bool = False
     execution_quarantined: bool = False
     execution_error: str | None = None
+    failure_reason_codes: tuple[ReasonCode, ...] = ()
 
     @model_validator(mode="after")
     def failed_verification_never_releases_rows(self) -> "VerificationResult":
@@ -53,6 +62,8 @@ class VerificationResult(StrictModel):
                 raise ValueError("quarantined execution requires execution_attempted")
             if self.passed:
                 raise ValueError("successful verification cannot quarantine execution")
+        if self.passed and self.failure_reason_codes:
+            raise ValueError("successful verification cannot carry failure reason codes")
         return self
 
 
@@ -76,8 +87,11 @@ def verify_and_execute(
     ),
     dialect: str = "duckdb",
     rewrite_parent_sql: str | None = None,
+    disclosure_ledger: DisclosureLedger | None = None,
+    receipt_id: str | None = None,
+    require_disclosure_commitment: bool = False,
 ) -> VerificationResult:
-    """Verify final SQL, execute into quarantine, and release rows only after all checks."""
+    """Verify final SQL, commit privacy state, execute in quarantine, then release rows."""
 
     checks: list[VerificationCheck] = []
     try:
@@ -164,10 +178,90 @@ def verify_and_execute(
             checks=checks,
         )
 
+    disclosure_commitment = None
+    if disclosure_ledger is not None or require_disclosure_commitment:
+        identity = current_request_identity()
+        if disclosure_ledger is None or receipt_id is None or identity is None:
+            checks.append(
+                VerificationCheck(
+                    name="cumulative_disclosure",
+                    passed=False,
+                    detail="required disclosure ledger, receipt identity, or request identity is unavailable",
+                )
+            )
+            return _result(
+                query_plan=query_plan,
+                policy_decision=decision,
+                checks=checks,
+                failure_reason_codes=(ReasonCode.DISCLOSURE_STATE_UNAVAILABLE,),
+            )
+
+        try:
+            disclosure_event = build_disclosure_event_from_resolver(
+                identity=identity,
+                resolver=context_resolver,
+                resolution=resolution,
+                query_plan=query_plan,
+                subject_key=subject_key,
+                receipt_id=receipt_id,
+                policy_version=decision.policy_version,
+            )
+            composition = disclosure_ledger.evaluate_and_commit(
+                disclosure_event,
+                sql=sql,
+                dialect=dialect,
+            )
+        except (DisclosureLedgerError, DisclosureSemanticError, ValueError):
+            checks.append(
+                VerificationCheck(
+                    name="cumulative_disclosure",
+                    passed=False,
+                    detail="cumulative disclosure state could not be validated safely",
+                )
+            )
+            return _result(
+                query_plan=query_plan,
+                policy_decision=decision,
+                checks=checks,
+                failure_reason_codes=(ReasonCode.DISCLOSURE_STATE_UNAVAILABLE,),
+            )
+
+        if not composition.allowed or composition.commitment is None:
+            checks.append(
+                VerificationCheck(
+                    name="cumulative_disclosure",
+                    passed=False,
+                    detail=(
+                        f"blocked by {composition.rule.value}; "
+                        f"prior protected releases={composition.prior_protected_count}"
+                    ),
+                )
+            )
+            return _result(
+                query_plan=query_plan,
+                policy_decision=decision,
+                checks=checks,
+                failure_reason_codes=(ReasonCode.CUMULATIVE_DISCLOSURE_RISK,),
+            )
+
+        disclosure_commitment = composition.commitment
+        checks.append(
+            VerificationCheck(
+                name="cumulative_disclosure",
+                passed=True,
+                detail=(
+                    f"release committed by {composition.rule.value}; "
+                    f"prior protected releases={composition.prior_protected_count}"
+                ),
+            )
+        )
+
     try:
         executor.bind_authority(
             context_resolver=context_resolver,
             policy_engine=policy_engine,
+            disclosure_ledger=disclosure_ledger,
+            require_disclosure_commitment=require_disclosure_commitment,
         )
     except ValueError as exc:
         checks.append(
@@ -191,6 +285,7 @@ def verify_and_execute(
             subject_key=subject_key,
             dialect=dialect,
             rewrite_parent_sql=rewrite_parent_sql,
+            disclosure_commitment=disclosure_commitment,
         )
     except ExecutionError as exc:
         checks.append(
@@ -205,6 +300,7 @@ def verify_and_execute(
             policy_decision=decision,
             checks=checks,
             execution_error=str(exc),
+            failure_reason_codes=(exc.reason_code,),
         )
 
     checks.append(
@@ -213,7 +309,12 @@ def verify_and_execute(
             passed=True,
             detail=(
                 "single-use capability issued for exact SQL, plan, governance context, "
-                "policy, task, subject, and optional rewrite lineage"
+                "policy, task, subject, identity, rewrite lineage, and disclosure commitment"
+                if disclosure_commitment is not None
+                else (
+                    "single-use capability issued for exact SQL, plan, governance context, "
+                    "policy, task, subject, identity, and optional rewrite lineage"
+                )
             ),
         )
     )
@@ -241,6 +342,7 @@ def verify_and_execute(
             checks=checks,
             execution_attempted=True,
             execution_error=str(exc),
+            failure_reason_codes=(exc.reason_code,),
         )
 
     if require_subject_threshold:
@@ -367,6 +469,7 @@ def _result(
     execution: ExecutionResult | None = None,
     execution_attempted: bool = False,
     execution_error: str | None = None,
+    failure_reason_codes: tuple[ReasonCode, ...] = (),
 ) -> VerificationResult:
     passed = bool(checks) and all(check.passed for check in checks)
     execution_quarantined = bool(execution is not None and not passed)
@@ -380,4 +483,5 @@ def _result(
         execution_attempted=execution_attempted,
         execution_quarantined=execution_quarantined,
         execution_error=execution_error,
+        failure_reason_codes=failure_reason_codes,
     )
