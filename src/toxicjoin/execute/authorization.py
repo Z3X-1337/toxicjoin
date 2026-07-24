@@ -4,11 +4,7 @@ An execution authorization is not a reusable policy decision. It is a single-use
 HMAC-authenticated capability tied to the exact SQL text, analyzed query plan,
 resolved governance context, policy configuration, resulting ALLOW decision,
 subject key, task purpose, authenticated request identity when present, SQL dialect,
-optional rewrite parent, and expiry.
-
-The authorizer is bound at construction time to one ContextResolver and one
-PolicyEngine. Callers therefore cannot substitute a weaker policy or alternate
-metadata resolver at execution time.
+optional rewrite parent, disclosure commitment when required, and expiry.
 """
 
 from __future__ import annotations
@@ -26,6 +22,13 @@ from pydantic import Field
 
 from toxicjoin.auth import RequestIdentity, current_request_identity
 from toxicjoin.context.models import ContextResolution
+from toxicjoin.disclosure import (
+    DisclosureCommitment,
+    DisclosureLedger,
+    DisclosureLedgerError,
+    DisclosureSemanticError,
+    build_disclosure_event_from_resolver,
+)
 from toxicjoin.models import (
     ColumnRef,
     Decision,
@@ -74,6 +77,7 @@ class ExecutionAuthorization(StrictModel):
         default=None,
         pattern=r"^[0-9a-f]{64}$",
     )
+    disclosure_commitment: DisclosureCommitment | None = None
     mac_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
@@ -85,18 +89,24 @@ class ExecutionAuthorizer:
         *,
         context_resolver: ContextResolver,
         policy_engine: PolicyEngine,
+        disclosure_ledger: DisclosureLedger | None = None,
+        require_disclosure_commitment: bool = False,
         secret_key: bytes | None = None,
         ttl_seconds: float = 5.0,
         clock: Callable[[], float] = time.time,
     ) -> None:
         if ttl_seconds <= 0 or ttl_seconds > 60:
             raise ValueError("execution authorization ttl must be in (0, 60] seconds")
+        if require_disclosure_commitment and disclosure_ledger is None:
+            raise ValueError("required disclosure commitment needs a disclosure ledger")
         key = secrets.token_bytes(32) if secret_key is None else bytes(secret_key)
         if len(key) < 32:
             raise ValueError("execution authorization key must be at least 32 bytes")
 
         self._context_resolver = context_resolver
         self._policy_engine = policy_engine
+        self._disclosure_ledger = disclosure_ledger
+        self._require_disclosure_commitment = bool(require_disclosure_commitment)
         self._secret_key = key
         self._ttl_seconds = float(ttl_seconds)
         self._clock = clock
@@ -111,6 +121,14 @@ class ExecutionAuthorizer:
     def policy_engine(self) -> PolicyEngine:
         return self._policy_engine
 
+    @property
+    def disclosure_ledger(self) -> DisclosureLedger | None:
+        return self._disclosure_ledger
+
+    @property
+    def require_disclosure_commitment(self) -> bool:
+        return self._require_disclosure_commitment
+
     def issue(
         self,
         sql: str,
@@ -119,8 +137,9 @@ class ExecutionAuthorizer:
         subject_key: ColumnRef,
         dialect: str = SUPPORTED_EXECUTION_DIALECT,
         rewrite_parent_sql: str | None = None,
+        disclosure_commitment: DisclosureCommitment | None = None,
     ) -> ExecutionAuthorization:
-        """Independently re-evaluate the exact SQL and issue only for ALLOW."""
+        """Independently re-evaluate exact SQL and issue only for fully committed ALLOW."""
 
         _validate_execution_dialect(dialect)
         if not task_purpose.strip():
@@ -137,8 +156,19 @@ class ExecutionAuthorizer:
         if decision.decision != Decision.ALLOW or decision.rewrite_required:
             raise ExecutionAuthorizationError("AUTH_POLICY_NOT_ALLOW")
 
-        now = float(self._clock())
         identity = current_request_identity()
+        self._verify_disclosure_commitment(
+            disclosure_commitment,
+            sql=sql,
+            query_plan=query_plan,
+            resolution=resolution,
+            decision=decision,
+            subject_key=subject_key,
+            identity=identity,
+            dialect=dialect,
+        )
+
+        now = float(self._clock())
         unsigned = ExecutionAuthorization(
             authorization_id=f"tj_auth_{secrets.token_hex(16)}",
             issued_at=now,
@@ -157,6 +187,7 @@ class ExecutionAuthorizer:
                 if rewrite_parent_sql is not None
                 else None
             ),
+            disclosure_commitment=disclosure_commitment,
             mac_sha256="0" * 64,
         )
         return unsigned.model_copy(update={"mac_sha256": self._mac(unsigned)})
@@ -171,7 +202,7 @@ class ExecutionAuthorizer:
         dialect: str = SUPPORTED_EXECUTION_DIALECT,
         rewrite_parent_sql: str | None = None,
     ) -> QueryPlan:
-        """Verify current state, atomically consume the capability, and return its plan."""
+        """Verify current policy/privacy state, atomically consume, and return its plan."""
 
         _validate_execution_dialect(dialect)
         expected_mac = self._mac(
@@ -192,9 +223,8 @@ class ExecutionAuthorizer:
             raise ExecutionAuthorizationError("AUTH_DIALECT_MISMATCH")
         if authorization.subject_key != subject_key:
             raise ExecutionAuthorizationError("AUTH_SUBJECT_MISMATCH")
-        if authorization.request_identity_sha256 != _hash_identity(
-            current_request_identity()
-        ):
+        identity = current_request_identity()
+        if authorization.request_identity_sha256 != _hash_identity(identity):
             raise ExecutionAuthorizationError("AUTH_IDENTITY_MISMATCH")
         expected_parent = (
             _sha256_text(rewrite_parent_sql) if rewrite_parent_sql is not None else None
@@ -227,6 +257,17 @@ class ExecutionAuthorizer:
         if authorization.policy_decision_sha256 != _hash_decision(decision):
             raise ExecutionAuthorizationError("AUTH_DECISION_MISMATCH")
 
+        self._verify_disclosure_commitment(
+            authorization.disclosure_commitment,
+            sql=sql,
+            query_plan=query_plan,
+            resolution=resolution,
+            decision=decision,
+            subject_key=subject_key,
+            identity=identity,
+            dialect=dialect,
+        )
+
         with self._consume_lock:
             self._consumed_ids = {
                 auth_id: expiry
@@ -238,6 +279,47 @@ class ExecutionAuthorizer:
             self._consumed_ids[authorization.authorization_id] = authorization.expires_at
 
         return query_plan
+
+    def _verify_disclosure_commitment(
+        self,
+        commitment: DisclosureCommitment | None,
+        *,
+        sql: str,
+        query_plan: QueryPlan,
+        resolution: ContextResolution,
+        decision: PolicyDecision,
+        subject_key: ColumnRef,
+        identity: RequestIdentity | None,
+        dialect: str,
+    ) -> None:
+        if commitment is None:
+            if self._require_disclosure_commitment:
+                raise ExecutionAuthorizationError("AUTH_DISCLOSURE_COMMITMENT_REQUIRED")
+            return
+        if self._disclosure_ledger is None:
+            raise ExecutionAuthorizationError("AUTH_DISCLOSURE_LEDGER_UNAVAILABLE")
+        if identity is None:
+            raise ExecutionAuthorizationError("AUTH_DISCLOSURE_IDENTITY_REQUIRED")
+        try:
+            event = build_disclosure_event_from_resolver(
+                identity=identity,
+                resolver=self._context_resolver,
+                resolution=resolution,
+                query_plan=query_plan,
+                subject_key=subject_key,
+                receipt_id=commitment.receipt_id,
+                policy_version=decision.policy_version,
+            )
+            self._disclosure_ledger.verify_commitment(
+                commitment,
+                event,
+                sql=sql,
+                dialect=dialect,
+            )
+        except (DisclosureLedgerError, DisclosureSemanticError, ValueError) as exc:
+            raise ExecutionAuthorizationError(
+                "AUTH_DISCLOSURE_COMMITMENT_INVALID"
+            ) from exc
 
     def _analyze(self, sql: str, *, dialect: str) -> QueryPlan:
         try:
