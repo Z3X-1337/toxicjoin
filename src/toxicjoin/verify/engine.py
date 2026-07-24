@@ -244,15 +244,16 @@ def _semantic_forbidden_outputs(
     *,
     forbidden: set[str],
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    raw_like_kinds = {
+    value_exposing_kinds = {
         ProjectionExposureKind.RAW_VALUE,
         ProjectionExposureKind.TRANSFORMED_RAW_VALUE,
         ProjectionExposureKind.GROUP_KEY,
+        ProjectionExposureKind.AGGREGATE_OPERAND,
     }
     leaked_fields = {
         ref.field_path.lower()
         for exposure in query_plan.projected_exposures
-        if exposure.kind in raw_like_kinds
+        if exposure.kind in value_exposing_kinds
         for ref in exposure.source_columns
         if ref.field_path.lower() in forbidden
     }
