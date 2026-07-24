@@ -1,0 +1,179 @@
+name: Capture DataHub Video Evidence
+
+on:
+  pull_request:
+    paths:
+      - "scripts/capture_datahub_video.mjs"
+      - ".github/workflows/capture-datahub-video.yml"
+      - "src/toxicjoin/integrations/datahub_agent_registry.py"
+      - "src/toxicjoin/integrations/datahub_agent_registry_verify.py"
+      - "skills/compositional-risk-review/**"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: datahub-video-captures-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DATAHUB_GMS_URL: http://localhost:8080
+      DATAHUB_UI_URL: http://127.0.0.1:9002
+      DATAHUB_UI_USERNAME: datahub
+      DATAHUB_UI_PASSWORD: datahub
+      DATAHUB_CAPTURE_DIR: .toxicjoin/video-captures
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Agent Registry preview dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet --upgrade pip wheel setuptools
+          python -m pip install --quiet -e '.[agent-registry]'
+          python - <<'PY'
+          from importlib.metadata import version
+          assert version('acryl-datahub') == '1.6.0.16rc3'
+          PY
+
+      - name: Start coordinated DataHub development quickstart
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .toxicjoin/video-captures
+          datahub docker quickstart --version quickstart --accept-version-default
+          curl --fail --silent --show-error http://localhost:8080/health
+          for attempt in $(seq 1 90); do
+            status=$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:9002 || true)
+            if [[ "$status" == "200" || "$status" == "302" ]]; then
+              echo "DataHub UI reachable after $attempt attempt(s): HTTP $status"
+              break
+            fi
+            sleep 2
+          done
+          status=$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:9002 || true)
+          [[ "$status" == "200" || "$status" == "302" ]]
+
+      - name: Seed governed ToxicJoin datasets
+        shell: bash
+        run: |
+          set -euo pipefail
+          toxicjoin-datahub-seed --yes --output .toxicjoin/datahub-seed.json
+
+      - name: Register and independently verify Agent Skill graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          toxicjoin-datahub-agent-registry \
+            --yes \
+            --output .toxicjoin/datahub-agent-registry.json \
+            --skill-path skills/compositional-risk-review/SKILL.md
+          toxicjoin-datahub-agent-registry-verify \
+            --registry-report .toxicjoin/datahub-agent-registry.json \
+            --output .toxicjoin/datahub-agent-registry-verified.json
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.16.0"
+
+      - name: Install pinned browser client
+        run: npm install --no-save --no-audit --no-fund playwright-core@1.54.1
+
+      - name: Discover runner Chrome
+        id: browser
+        shell: bash
+        run: |
+          set -euo pipefail
+          browser_path=""
+          for command_name in google-chrome google-chrome-stable chromium chromium-browser microsoft-edge microsoft-edge-stable; do
+            candidate=$(command -v "$command_name" || true)
+            if [[ -n "$candidate" && -x "$candidate" ]]; then
+              browser_path="$candidate"
+              break
+            fi
+          done
+          if [[ -z "$browser_path" ]]; then
+            browser_path=$(find /usr/bin /opt -maxdepth 4 -type f \
+              \( -name 'google-chrome*' -o -name 'chromium*' -o -name 'microsoft-edge*' \) \
+              -perm -111 2>/dev/null | head -n 1 || true)
+          fi
+          test -n "$browser_path"
+          echo "path=$browser_path" >> "$GITHUB_OUTPUT"
+          "$browser_path" --version
+
+      - name: Capture mature OSS DataHub UI footage frames
+        env:
+          BROWSER_EXECUTABLE: ${{ steps.browser.outputs.path }}
+        run: node scripts/capture_datahub_video.mjs
+
+      - name: Enforce capture manifest and Agent Registry evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path('.toxicjoin/video-captures')
+          manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
+          assert manifest['source'] == 'real-datahub-oss-ui'
+          assert manifest['capture_count'] == 3
+          assert manifest['console_error_count'] == 0
+          assert manifest['page_error_count'] == 0
+          assert manifest['agent_registry_evidence']['visual_ui_claimed'] is False
+          assert manifest['lineage_evidence']['visual_mode'] == 'loaded-summary-panel'
+          assert manifest['lineage_evidence']['upstream_dataset_count'] == 4
+          assert manifest['lineage_evidence']['downstream_usage_count'] == 1
+
+          expected = {
+              '01-retention-scores-search.png': 20_000,
+              '02-retention-scores-overview.png': 20_000,
+              '03-retention-scores-lineage-summary.png': 10_000,
+          }
+          actual = {path.name for path in root.glob('*.png')}
+          assert set(expected) <= actual, (set(expected), actual)
+          for name, minimum_size in expected.items():
+              path = root / name
+              assert path.stat().st_size >= minimum_size, (name, path.stat().st_size)
+
+          registry = json.loads(Path('.toxicjoin/datahub-agent-registry.json').read_text())
+          verified = json.loads(Path('.toxicjoin/datahub-agent-registry-verified.json').read_text())
+          assert registry['status'] == 'registered'
+          assert registry['tool_count'] == 5
+          assert registry['skill_count'] == 1
+          assert registry['agent_count'] == 1
+          assert verified['status'] == 'verified'
+          assert verified['dependency_skill_count'] == 1
+          assert verified['dependency_tool_count'] == 5
+          assert verified['consumed_dataset_count'] == 5
+
+          print(json.dumps(manifest, indent=2))
+          PY
+
+      - name: Upload real DataHub video capture package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-real-datahub-video-captures
+          path: |
+            .toxicjoin/video-captures/
+            .toxicjoin/datahub-seed.json
+            .toxicjoin/datahub-agent-registry.json
+            .toxicjoin/datahub-agent-registry-verified.json
+          if-no-files-found: warn
+          retention-days: 30
