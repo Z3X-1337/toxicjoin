@@ -9,7 +9,11 @@ from toxicjoin.api import create_app
 from toxicjoin.api.models import DEFAULT_SUBJECT_KEY
 from toxicjoin.api.scenarios import FLAGSHIP_REWRITE_SQL
 from toxicjoin.auth import ApiKeyAuthenticator, ApiKeyCredentialConfig, AuthScope
-from toxicjoin.context import FixtureContextResolver
+from toxicjoin.context import (
+    DataHubSnapshot,
+    DataHubSnapshotContextResolver,
+    FixtureContextResolver,
+)
 from toxicjoin.demo import default_fixture_catalog, seed_database
 from toxicjoin.execute import DuckDBExecutor
 from toxicjoin.pipeline import ToxicJoinPipeline
@@ -66,6 +70,29 @@ def _pipeline(
     )
 
 
+def _live_pipeline(tmp_path: Path) -> ToxicJoinPipeline:
+    catalog = default_fixture_catalog()
+    snapshot = DataHubSnapshot(
+        catalog=catalog,
+        verified_entities=tuple(dataset.urn for dataset in catalog.datasets.values()),
+        field_counts={
+            name: len(dataset.fields) for name, dataset in catalog.datasets.items()
+        },
+        lineage_sample={"relationships": [{"direction": "UPSTREAM"}]},
+        discovered_tools=("get_entities", "get_lineage", "list_schema_fields"),
+    )
+    database = tmp_path / "live.duckdb"
+    seed_database(database)
+    return ToxicJoinPipeline(
+        context_resolver=DataHubSnapshotContextResolver(snapshot),
+        policy_engine=PolicyEngine(load_policy()),
+        receipt_store=ReceiptStore(tmp_path / "live-receipts"),
+        mode=ReceiptMode.LIVE,
+        executor=DuckDBExecutor(database),
+        include_sanitized_sql=False,
+    )
+
+
 def _payload() -> dict:
     return {
         "task_purpose": "Secure API surface regression",
@@ -111,6 +138,27 @@ def test_authenticated_surface_removes_docs_demo_and_benchmark(tmp_path) -> None
     assert health.status_code == 200
     assert health.json() == {"status": "ok"}
     assert all(response.status_code == 404 for response in responses.values())
+
+
+def test_live_surface_is_always_restricted(tmp_path) -> None:
+    app = create_app(_live_pipeline(tmp_path), authenticator=_authenticator())
+
+    with TestClient(app) as client:
+        health = client.get("/api/health")
+        ready = client.get("/api/ready", headers=_headers(SYSTEM_KEY))
+        docs = client.get("/docs")
+        openapi = client.get("/openapi.json")
+        demo = client.get("/api/demo/scenarios")
+        benchmark = client.get("/api/benchmark/summary")
+
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok"}
+    assert ready.status_code == 200
+    assert ready.json()["mode"] == "live"
+    assert docs.status_code == 404
+    assert openapi.status_code == 404
+    assert demo.status_code == 404
+    assert benchmark.status_code == 404
 
 
 def test_readiness_requires_explicit_system_scope_when_auth_enabled(tmp_path) -> None:
