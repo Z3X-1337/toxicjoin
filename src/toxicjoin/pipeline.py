@@ -81,13 +81,29 @@ class ToxicJoinPipeline:
         self.executor = executor
         self.include_sanitized_sql = include_sanitized_sql
 
-    def analyze(self, request: PipelineRequest) -> PipelineResult:
-        return self._run(request, execute=False)
+    def analyze(
+        self,
+        request: PipelineRequest,
+        *,
+        principal_id: str = "local-library",
+    ) -> PipelineResult:
+        return self._run(request, execute=False, principal_id=principal_id)
 
-    def execute_safe(self, request: PipelineRequest) -> PipelineResult:
-        return self._run(request, execute=True)
+    def execute_safe(
+        self,
+        request: PipelineRequest,
+        *,
+        principal_id: str = "local-library",
+    ) -> PipelineResult:
+        return self._run(request, execute=True, principal_id=principal_id)
 
-    def _run(self, request: PipelineRequest, *, execute: bool) -> PipelineResult:
+    def _run(
+        self,
+        request: PipelineRequest,
+        *,
+        execute: bool,
+        principal_id: str,
+    ) -> PipelineResult:
         try:
             original_plan = analyze_sql(request.sql, dialect=request.dialect)
         except SqlAnalysisError as exc:
@@ -100,6 +116,7 @@ class ToxicJoinPipeline:
             )
             return self._finalize(
                 request=request,
+                principal_id=principal_id,
                 original_plan=None,
                 initial_context=context,
                 initial_decision=initial_decision,
@@ -118,6 +135,7 @@ class ToxicJoinPipeline:
             )
             return self._finalize(
                 request=request,
+                principal_id=principal_id,
                 original_plan=original_plan,
                 initial_context=initial_context,
                 initial_decision=initial_decision,
@@ -134,6 +152,7 @@ class ToxicJoinPipeline:
         if initial_decision.decision == Decision.BLOCK:
             return self._finalize(
                 request=request,
+                principal_id=principal_id,
                 original_plan=original_plan,
                 initial_context=initial_context,
                 initial_decision=initial_decision,
@@ -142,6 +161,7 @@ class ToxicJoinPipeline:
         if initial_decision.decision == Decision.ALLOW:
             return self._handle_allowed(
                 request=request,
+                principal_id=principal_id,
                 original_plan=original_plan,
                 initial_context=initial_context,
                 initial_decision=initial_decision,
@@ -150,6 +170,7 @@ class ToxicJoinPipeline:
 
         return self._handle_rewrite(
             request=request,
+            principal_id=principal_id,
             original_plan=original_plan,
             initial_context=initial_context,
             initial_decision=initial_decision,
@@ -160,6 +181,7 @@ class ToxicJoinPipeline:
         self,
         *,
         request: PipelineRequest,
+        principal_id: str,
         original_plan: QueryPlan,
         initial_context: ContextResolution,
         initial_decision: PolicyDecision,
@@ -168,6 +190,7 @@ class ToxicJoinPipeline:
         if not execute:
             return self._finalize(
                 request=request,
+                principal_id=principal_id,
                 original_plan=original_plan,
                 initial_context=initial_context,
                 initial_decision=initial_decision,
@@ -182,6 +205,7 @@ class ToxicJoinPipeline:
             )
             return self._finalize(
                 request=request,
+                principal_id=principal_id,
                 original_plan=original_plan,
                 initial_context=initial_context,
                 initial_decision=initial_decision,
@@ -209,6 +233,7 @@ class ToxicJoinPipeline:
         )
         return self._finalize(
             request=request,
+            principal_id=principal_id,
             original_plan=original_plan,
             initial_context=initial_context,
             initial_decision=initial_decision,
@@ -220,6 +245,7 @@ class ToxicJoinPipeline:
         self,
         *,
         request: PipelineRequest,
+        principal_id: str,
         original_plan: QueryPlan,
         initial_context: ContextResolution,
         initial_decision: PolicyDecision,
@@ -241,6 +267,7 @@ class ToxicJoinPipeline:
             )
             return self._finalize(
                 request=request,
+                principal_id=principal_id,
                 original_plan=original_plan,
                 initial_context=initial_context,
                 initial_decision=initial_decision,
@@ -259,6 +286,7 @@ class ToxicJoinPipeline:
             )
             return self._finalize(
                 request=request,
+                principal_id=principal_id,
                 original_plan=original_plan,
                 initial_context=initial_context,
                 initial_decision=initial_decision,
@@ -278,6 +306,7 @@ class ToxicJoinPipeline:
         if final_policy_decision.decision != Decision.ALLOW or not execute:
             return self._finalize(
                 request=request,
+                principal_id=principal_id,
                 original_plan=original_plan,
                 initial_context=initial_context,
                 initial_decision=initial_decision,
@@ -296,6 +325,7 @@ class ToxicJoinPipeline:
             )
             return self._finalize(
                 request=request,
+                principal_id=principal_id,
                 original_plan=original_plan,
                 initial_context=initial_context,
                 initial_decision=initial_decision,
@@ -323,6 +353,7 @@ class ToxicJoinPipeline:
         )
         return self._finalize(
             request=request,
+            principal_id=principal_id,
             original_plan=original_plan,
             initial_context=initial_context,
             initial_decision=initial_decision,
@@ -337,6 +368,7 @@ class ToxicJoinPipeline:
         self,
         *,
         request: PipelineRequest,
+        principal_id: str,
         original_plan: QueryPlan | None,
         initial_context: ContextResolution,
         initial_decision: PolicyDecision,
@@ -351,6 +383,7 @@ class ToxicJoinPipeline:
         receipt = build_receipt(
             task_purpose=request.task_purpose,
             mode=self.mode,
+            principal_id=principal_id,
             original_sql=request.sql,
             safe_sql=safe_sql,
             initial_decision=initial_decision,
