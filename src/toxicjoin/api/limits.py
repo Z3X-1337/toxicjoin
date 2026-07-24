@@ -20,6 +20,7 @@ from toxicjoin.models import StrictModel
 
 
 MAX_REQUEST_BYTES_ENV = "TOXICJOIN_MAX_REQUEST_BYTES"
+MAX_RESPONSE_BYTES_ENV = "TOXICJOIN_MAX_RESPONSE_BYTES"
 RATE_LIMIT_REQUESTS_ENV = "TOXICJOIN_RATE_LIMIT_REQUESTS"
 RATE_LIMIT_WINDOW_SECONDS_ENV = "TOXICJOIN_RATE_LIMIT_WINDOW_SECONDS"
 MAX_CONCURRENT_PER_PRINCIPAL_ENV = "TOXICJOIN_MAX_CONCURRENT_PER_PRINCIPAL"
@@ -29,6 +30,7 @@ class ApiResourceLimits(StrictModel):
     """Bound API memory/traffic consumption with conservative defaults."""
 
     max_request_bytes: int = Field(default=128 * 1024, ge=1024, le=1024 * 1024)
+    max_response_bytes: int = Field(default=1024 * 1024, ge=4096, le=8 * 1024 * 1024)
     rate_limit_requests: int = Field(default=60, ge=1, le=100_000)
     rate_limit_window_seconds: float = Field(default=60.0, ge=1.0, le=3600.0)
     max_concurrent_per_principal: int = Field(default=2, ge=1, le=64)
@@ -42,6 +44,7 @@ class ApiResourceLimits(StrictModel):
         values: dict[str, Any] = {}
         mapping = {
             MAX_REQUEST_BYTES_ENV: ("max_request_bytes", int),
+            MAX_RESPONSE_BYTES_ENV: ("max_response_bytes", int),
             RATE_LIMIT_REQUESTS_ENV: ("rate_limit_requests", int),
             RATE_LIMIT_WINDOW_SECONDS_ENV: ("rate_limit_window_seconds", float),
             MAX_CONCURRENT_PER_PRINCIPAL_ENV: ("max_concurrent_per_principal", int),
@@ -108,6 +111,65 @@ class RequestBodyLimitMiddleware:
             return {"type": "http.request", "body": b"", "more_body": False}
 
         await self.app(scope, replay_receive, send)
+
+
+class ResponseBodyLimitMiddleware:
+    """Buffer API responses and release them only when the final body fits budget."""
+
+    def __init__(self, app: ASGIApp, *, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("type") != "http" or not str(scope.get("path", "")).startswith(
+            "/api/"
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        response_start: Message | None = None
+        response_bodies: list[Message] = []
+        total = 0
+        overflow = False
+
+        async def capture_send(message: Message) -> None:
+            nonlocal response_start, total, overflow
+            message_type = message.get("type")
+            if message_type == "http.response.start":
+                response_start = message
+                return
+            if message_type != "http.response.body":
+                return
+
+            body = message.get("body", b"")
+            total += len(body)
+            if total > self.max_bytes:
+                overflow = True
+                response_bodies.clear()
+                return
+            if not overflow:
+                response_bodies.append(message)
+
+        await self.app(scope, receive, capture_send)
+
+        if overflow:
+            response = JSONResponse(
+                status_code=422,
+                content={
+                    "detail": {
+                        "code": "RESPONSE_SIZE_LIMIT_EXCEEDED",
+                        "max_bytes": self.max_bytes,
+                    }
+                },
+            )
+            await response(scope, receive, send)
+            return
+
+        if response_start is None:
+            raise RuntimeError("API response completed without http.response.start")
+        await send(response_start)
+        for message in response_bodies:
+            await send(message)
 
 
 def _content_length(scope: Scope) -> int | None:
