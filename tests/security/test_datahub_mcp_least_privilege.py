@@ -12,6 +12,7 @@ from toxicjoin.integrations.datahub_authority import (
     RoleBoundDataHubMcpClient,
     mutation_settings_from_env,
     read_only_settings_from_env,
+    writer_allowlisted_transport,
 )
 from toxicjoin.integrations.datahub_mcp import (
     DataHubMcpContractError,
@@ -122,8 +123,8 @@ def test_read_and_write_roles_use_distinct_credentials_and_child_capabilities(mo
     _configure_common_env(monkeypatch)
     monkeypatch.setenv("DATAHUB_GMS_READ_TOKEN", "READ_ONLY_TOKEN")
     monkeypatch.setenv("DATAHUB_GMS_WRITE_TOKEN", "WRITE_ONLY_TOKEN")
-    monkeypatch.setenv("TOOLS_IS_MUTATION_ENABLED", "true")
-    monkeypatch.setenv("SAVE_DOCUMENT_TOOL_ENABLED", "true")
+    monkeypatch.setenv("TOOLS_IS_MUTATION_ENABLED", "false")
+    monkeypatch.setenv("SAVE_DOCUMENT_TOOL_ENABLED", "false")
 
     read_settings = read_only_settings_from_env()
     write_settings = mutation_settings_from_env()
@@ -135,7 +136,7 @@ def test_read_and_write_roles_use_distinct_credentials_and_child_capabilities(mo
     assert read_env["DATAHUB_GMS_TOKEN"] == "READ_ONLY_TOKEN"
     assert write_env["DATAHUB_GMS_TOKEN"] == "WRITE_ONLY_TOKEN"
     assert read_env["TOOLS_IS_MUTATION_ENABLED"] == "false"
-    assert write_env["TOOLS_IS_MUTATION_ENABLED"] == "false"
+    assert write_env["TOOLS_IS_MUTATION_ENABLED"] == "true"
     assert read_env["SAVE_DOCUMENT_TOOL_ENABLED"] == "false"
     assert write_env["SAVE_DOCUMENT_TOOL_ENABLED"] == "true"
     assert read_env["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] == "false"
@@ -145,10 +146,10 @@ def test_read_and_write_roles_use_distinct_credentials_and_child_capabilities(mo
     write_summary = write_settings.redacted_summary()
     assert read_summary["role"] == "read_only"
     assert write_summary["role"] == "mutation"
-    assert read_summary["metadata_mutations_enabled"] is False
-    assert write_summary["metadata_mutations_enabled"] is False
     assert read_summary["document_write_enabled"] is False
     assert write_summary["document_write_enabled"] is True
+    assert read_summary["writer_transport_allowlist"] == []
+    assert write_summary["writer_transport_allowlist"] == ["save_document"]
     assert "WRITE_ONLY_TOKEN" not in repr(read_summary)
     assert "READ_ONLY_TOKEN" not in repr(write_summary)
 
@@ -192,15 +193,19 @@ def test_read_only_client_cannot_request_or_call_mutation_authority() -> None:
     assert transport.calls == []
 
 
-def test_mutation_client_validates_document_write_only_and_cannot_acquire_context() -> None:
-    transport = FakeTransport(
-        tools=(_save_document_tool(),),
+def test_writer_allowlist_hides_raw_mutations_and_blocks_direct_calls() -> None:
+    raw = FakeTransport(
+        tools=(
+            _save_document_tool(),
+            McpToolDefinition(name="add_tags", input_schema={}),
+        ),
         responses={
             "save_document": [
                 {"document": {"urn": "urn:li:document:isolated-writer"}}
             ]
         },
     )
+    transport = writer_allowlisted_transport(raw)
     client = RoleBoundDataHubMcpClient(transport, role=DataHubMcpRole.MUTATION)
 
     definitions = asyncio.run(client.discover_and_validate(require_mutations=True))
@@ -213,13 +218,16 @@ def test_mutation_client_validates_document_write_only_and_cannot_acquire_contex
     )
 
     assert [definition.name for definition in definitions] == ["save_document"]
+    assert transport.raw_tool_names == ("add_tags", "save_document")
     assert urn == "urn:li:document:isolated-writer"
+    with pytest.raises(DataHubMcpContractError, match="outside the writer transport allowlist"):
+        asyncio.run(transport.call_tool("add_tags", {"urn": "urn:li:dataset:test"}))
     with pytest.raises(DataHubMcpContractError, match="cannot acquire governed read context"):
         asyncio.run(client.get_entities(("urn:li:dataset:test",)))
-    assert [name for name, _ in transport.calls] == ["save_document"]
+    assert [name for name, _ in raw.calls] == ["save_document"]
 
 
-def test_mutation_client_rejects_unnecessary_metadata_mutation_tools() -> None:
+def test_writer_client_fails_closed_without_mandatory_allowlist() -> None:
     client = RoleBoundDataHubMcpClient(
         FakeTransport(
             tools=(
@@ -230,7 +238,7 @@ def test_mutation_client_rejects_unnecessary_metadata_mutation_tools() -> None:
         role=DataHubMcpRole.MUTATION,
     )
 
-    with pytest.raises(DataHubMcpContractError, match="unnecessary metadata mutation tools"):
+    with pytest.raises(DataHubMcpContractError, match="outside allowlist"):
         asyncio.run(client.discover_and_validate(require_mutations=True))
 
 
