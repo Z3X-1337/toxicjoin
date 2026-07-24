@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - ".github/workflows/p4-materialize-locks.yml"
+      - "pyproject.toml"
+      - "apps/web/package.json"
+      - "Dockerfile"
   workflow_dispatch:
 
 permissions:
