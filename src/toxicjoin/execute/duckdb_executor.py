@@ -76,6 +76,36 @@ class DuckDBExecutor:
             raise ValueError("executor is already bound to a different execution authorizer")
         self._authorizer = authorizer
 
+    def issue_authorization(
+        self,
+        sql: str,
+        *,
+        task_purpose: str,
+        subject_key: ColumnRef,
+        dialect: str = "duckdb",
+        rewrite_parent_sql: str | None = None,
+    ) -> ExecutionAuthorization:
+        """Issue from the same authority that the execution boundary will verify."""
+
+        if self._authorizer is None:
+            raise ExecutionError(
+                ReasonCode.VERIFICATION_FAILED,
+                "executor has no execution authorizer bound",
+            )
+        try:
+            return self._authorizer.issue(
+                sql,
+                task_purpose=task_purpose,
+                subject_key=subject_key,
+                dialect=dialect,
+                rewrite_parent_sql=rewrite_parent_sql,
+            )
+        except ExecutionAuthorizationError as exc:
+            raise ExecutionError(
+                ReasonCode.VERIFICATION_FAILED,
+                f"execution authorization issuance rejected: {exc.code}",
+            ) from exc
+
     def execute_authorized(
         self,
         sql: str,
