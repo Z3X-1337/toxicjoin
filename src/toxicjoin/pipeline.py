@@ -85,11 +85,13 @@ class ToxicJoinPipeline:
         self.receipt_store = receipt_store
         self.mode = mode
         self.executor = executor
-        self.disclosure_ledger = disclosure_ledger
         self.stateful_privacy_required = (
             mode == ReceiptMode.LIVE
             if stateful_privacy_required is None
             else bool(stateful_privacy_required)
+        )
+        self.disclosure_ledger = (
+            disclosure_ledger if self.stateful_privacy_required else None
         )
         self.include_sanitized_sql = include_sanitized_sql
 
