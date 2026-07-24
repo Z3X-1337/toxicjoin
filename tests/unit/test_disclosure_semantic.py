@@ -95,7 +95,17 @@ def test_subject_key_must_be_governed_identifier_and_participate_in_query() -> N
         )
 
 
-def test_conflicting_subject_categories_across_sources_fail_closed() -> None:
+@pytest.mark.parametrize(
+    "conflicting_category",
+    (
+        "DIRECT_IDENTIFIER",
+        "SENSITIVE_ATTRIBUTE",
+        "UNCLASSIFIED",
+    ),
+)
+def test_conflicting_or_non_identifier_subject_governance_fails_closed(
+    conflicting_category: str,
+) -> None:
     catalog = FixtureCatalog.model_validate(
         {
             "version": "test",
@@ -109,7 +119,7 @@ def test_conflicting_subject_categories_across_sources_fail_closed() -> None:
                 "b": {
                     "urn": "urn:li:dataset:b",
                     "fields": {
-                        "person_id": {"category": "DIRECT_IDENTIFIER"},
+                        "person_id": {"category": conflicting_category},
                     },
                 },
             },
