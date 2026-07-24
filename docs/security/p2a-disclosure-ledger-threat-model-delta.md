@@ -42,7 +42,9 @@ The subject key must:
 - belong to a query source dataset;
 - exist in the governed catalog;
 - be classified as `DIRECT_IDENTIFIER` or `STABLE_PSEUDONYM`;
-- have no conflicting identifier category across participating source datasets.
+- have no conflicting, non-identifier, or unclassified category for the same subject field across participating source datasets.
+
+If a participating dataset contains the same subject field name with a non-identifier or unclassified category, subject-domain derivation fails closed rather than silently ignoring that governance conflict.
 
 This is intentionally conservative and can over-compose identically named identifier fields. False-positive composition is safer than history partitioning.
 
@@ -87,6 +89,7 @@ The serialized writer transaction is intentionally chosen so P2-B can perform hi
 - **Credential rotation bypass:** credential IDs do not partition privacy history.
 - **Session rotation bypass:** session IDs do not partition privacy history and are not persisted.
 - **Dataset/domain rotation bypass for the same governed identifier name:** dataset/domain audit metadata does not partition the subject namespace.
+- **Governance ambiguity bypass:** a same-named subject field with conflicting, non-identifier, or unclassified governance causes subject-domain derivation to fail closed.
 - **Alias-based semantic identity/storage bypass:** output aliases are neither fingerprint inputs nor persisted metadata.
 - **Low-entropy raw-query hash guessing:** the disclosure ledger contains no raw-SQL-derived hash.
 - **Caller-controlled record identity/time:** record IDs and timestamps are generated only inside the ledger.
@@ -106,7 +109,7 @@ Coverage includes:
 - different principal or agent producing a distinct scope;
 - non-identifier subject keys failing closed;
 - subject keys outside query sources failing closed;
-- conflicting governed subject categories failing closed;
+- conflicting identifier, non-identifier, and unclassified subject governance failing closed;
 - alias changes preserving semantic identity while aliases remain absent from persisted content;
 - governed sensitive/group/join/reference metadata being captured;
 - disclosure events excluding raw SQL hash, alias, and session metadata;
