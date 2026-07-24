@@ -6,72 +6,94 @@ Date: 2026-07-24
 
 P3-A closes TJ-SEC-016 for ToxicJoin's official DataHub MCP execution paths. Before this change, the same mutation-capable MCP settings/process were used to acquire governed context, write the verification Decision, and perform fresh-process read-back. A compromise or prompt/tool-routing defect in a context-acquisition path therefore inherited unnecessary DataHub mutation capability.
 
-This change separates DataHub MCP authority by process, credential variable, upstream tool exposure, and application capability:
+P3-A separates DataHub MCP authority by process, credential variable, upstream tool exposure, transport capability, and application client role:
 
-1. governed context acquisition runs in a read-only MCP child;
-2. Decision write-back runs in a distinct document-write MCP child;
-3. persisted-content verification runs in a fresh read-only MCP child.
+1. governed context acquisition runs in a server-level read-only MCP child;
+2. Decision write-back runs in a distinct isolated writer MCP child behind a mandatory `save_document`-only transport allowlist;
+3. persisted-content verification runs in a fresh server-level read-only MCP child.
 
-The change affects DataHub credentials, MCP process configuration, tool discovery, live evidence, and write-back. It requires negative security tests and the normal security-sensitive merge gates, including Live DataHub Evidence.
+The change affects DataHub credentials, MCP process configuration, tool discovery, live evidence, and write-back. It therefore requires negative security tests and the normal security-sensitive merge gates, including Live DataHub Evidence.
 
 ## Security objective
 
-A process whose job is to resolve DataHub metadata for policy or to verify persisted evidence must not be able to mutate DataHub through ToxicJoin. The short-lived writer must expose only the specific document-write mutation ToxicJoin needs; broad metadata-mutation tools are unnecessary and must remain disabled.
+A process whose job is to resolve DataHub metadata for policy or to verify persisted evidence must not be able to mutate DataHub through ToxicJoin. The write path must use a distinct credential/process and ToxicJoin must not expose or invoke DataHub mutation tools other than the single `save_document` operation required for the verification Decision.
 
 ## Credential separation
 
 Secure MCP roles use distinct environment variables:
 
 - `DATAHUB_GMS_READ_TOKEN` for read-only context acquisition and fresh read-back;
-- `DATAHUB_GMS_WRITE_TOKEN` for the isolated document-write process.
+- `DATAHUB_GMS_WRITE_TOKEN` for the isolated Decision writer.
 
 Both roles share the configured GMS URL, MCP command, arguments, and timeout, but each child receives only its selected token as `DATAHUB_GMS_TOKEN` through the existing minimal child environment.
 
-The legacy `DATAHUB_GMS_TOKEN` remains used by DataHub SDK seed/bootstrap tooling and by low-level compatibility code. It is not accepted as an implicit fallback by the new role-specific MCP factories. Missing role-specific tokens therefore fail closed rather than silently collapsing read and write authority.
+The legacy `DATAHUB_GMS_TOKEN` remains used by DataHub SDK seed/bootstrap tooling and low-level compatibility code. It is not accepted as an implicit fallback by the role-specific MCP factories. Missing role-specific tokens fail closed rather than silently collapsing read and write authority.
 
-The local CI quickstart has DataHub authentication disabled, so its read/write token values are placeholders and may be identical. The evidence still proves process, upstream-tool, and application-capability separation. A real secure deployment must provision separately scoped DataHub credentials; CI cannot prove external identity-provider or server-side token policy.
+The local CI quickstart has DataHub authentication disabled, so its read/write token values are placeholders and may be identical. The evidence proves process, tool-boundary, and application-capability separation; it cannot prove production IAM scopes. A real secure deployment must provision separately scoped DataHub credentials.
 
 ## Process separation
 
-`toxicjoin-datahub-spike` now executes three independent MCP sessions:
+`toxicjoin-datahub-spike` executes three independent MCP sessions:
 
-1. **Read-only snapshot process** — broad metadata mutations disabled and document writes disabled; resolves entities, schema fields, and lineage.
-2. **Document-write process** — broad metadata mutations remain disabled; only `save_document` is enabled for one sanitized Decision write.
-3. **Fresh read-only verification process** — broad metadata mutations and document writes disabled; verifies the persisted marker independently.
+1. **Read-only snapshot process** — `TOOLS_IS_MUTATION_ENABLED=false` and `SAVE_DOCUMENT_TOOL_ENABLED=false`; resolves entities, schema fields, and lineage.
+2. **Isolated writer process** — uses the write credential and the upstream mutation-registration path required to make `save_document` exist; ToxicJoin immediately wraps this raw transport in a `save_document`-only allowlist before a writer client can discover or call tools.
+3. **Fresh read-only verification process** — mutations and document writes disabled; verifies the persisted marker independently.
 
-The governed snapshot is never acquired through the writer client. The writer session's response is never treated as proof of persistence.
+The governed snapshot is never acquired through the writer client. The writer response is never treated as proof of persistence.
 
-## Upstream MCP tool minimization
+## Verified upstream constraint
 
-The official DataHub MCP server controls broad metadata mutation tools and `save_document` independently. P3-A therefore does not enable the broad mutation family in the writer merely to obtain document write capability.
+The first Live DataHub attempt under this PR deliberately tried the stronger configuration `TOOLS_IS_MUTATION_ENABLED=false` plus `SAVE_DOCUMENT_TOOL_ENABLED=true` for the writer. The run reached DataHub startup, service health, warehouse creation, metadata seed, and document bootstrap successfully, but failed at the role-separated MCP step with `missing tool save_document`.
 
-Role-bound child environments force:
+That failure is retained as evidence rather than hidden. Source review of the pinned `mcp-server-datahub 0.6.x` implementation confirmed why: `save_document` is registered from inside `register_mutation_tools()`, and that function returns before all mutation registration when `TOOLS_IS_MUTATION_ENABLED` is false. The independent `SAVE_DOCUMENT_TOOL_ENABLED` flag is evaluated only after the general mutation-registration gate has already passed.
 
-| Role | `TOOLS_IS_MUTATION_ENABLED` | `SAVE_DOCUMENT_TOOL_ENABLED` |
-|---|---|---|
-| read-only snapshot | `false` | `false` |
-| isolated document writer | `false` | `true` |
-| fresh read-back | `false` | `false` |
+Therefore P3-A does **not** claim that the raw writer MCP server can expose only `save_document` under this upstream version.
 
-Document tools remain globally available so read-only verification can use `grep_documents`, while the independent document-write switch remains disabled in read roles.
+## Mandatory writer transport allowlist
 
-This is materially narrower than an application-only denylist: even if a caller escapes ToxicJoin's intended method routing, the writer child should not advertise add/remove/set/update/create/delete/upsert/patch metadata-mutation tools.
+Because the pinned upstream server couples `save_document` registration to its broad mutation-registration path, ToxicJoin inserts `ToolAllowlistTransport` between the raw writer process and all ToxicJoin writer code.
+
+The wrapper:
+
+- records the complete raw upstream writer tool inventory for evidence;
+- returns only `save_document` from `list_tools()`;
+- rejects every non-allowlisted `call_tool()` before the underlying transport is invoked;
+- uses an immutable allowlist containing exactly `save_document`.
+
+The role-bound writer client independently verifies that its effective transport surface contains no tool other than `save_document`, validates the required Decision schema, and rejects governed read/context methods.
+
+This gives two distinct evidence fields:
+
+- `write_server_discovered_tools` — the honest raw upstream server inventory;
+- `write_discovered_tools` — the effective ToxicJoin writer surface after the mandatory allowlist.
+
+Broad mutation tools may exist in the **raw** writer inventory because of the upstream registration constraint. Their presence in the **effective** writer inventory is a security failure.
+
+## Read-only boundary
+
+Read-only context acquisition and fresh read-back do not require the upstream mutation-registration path. Their child environments force:
+
+- `TOOLS_IS_MUTATION_ENABLED=false`;
+- `DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED=false` so document reads remain available;
+- `SAVE_DOCUMENT_TOOL_ENABLED=false`.
+
+`RoleBoundDataHubMcpClient` additionally rejects mutation validation, rejects `save_decision()` before transport invocation, and fails closed if mutation-shaped tools appear in read-only discovery.
 
 ## Application-level capability boundary
 
-Upstream process configuration is not trusted as the only control. `RoleBoundDataHubMcpClient` adds a second enforcement layer:
+Upstream process configuration is not trusted as the sole control.
 
-- `READ_ONLY` rejects requests for mutation validation and rejects `save_decision()` before a tool call;
-- `READ_ONLY` fails closed if mutation-shaped tools are exposed by the upstream MCP process;
-- `MUTATION` validates the `save_document` contract independently;
-- `MUTATION` fails closed if unnecessary broad metadata-mutation tools are exposed;
-- `MUTATION` rejects ToxicJoin context-acquisition/read APIs.
+- `READ_ONLY` rejects mutation validation and mutation calls.
+- `READ_ONLY` rejects mutation-shaped discovered tools.
+- `MUTATION` must sit behind the save-only transport and validates only the `save_document` Decision contract.
+- `MUTATION` rejects governed context/read APIs.
+- Constructing a writer client directly on an unfiltered broad raw transport fails closed because tools outside the writer allowlist remain visible.
 
-This prevents an internal caller from converting a read client into a writer merely by changing `require_mutations=True`, prevents the writer client from becoming the source of policy context, and treats unexpected upstream capability expansion as a security failure.
+This prevents internal code from converting a read client into a writer by changing `require_mutations=True`, prevents the writer from becoming the source of policy context, and makes bypassing the allowlist observable and testable.
 
 ## Mutation-shaped tool policy
 
-ToxicJoin treats the following as mutation-shaped for least-privilege validation:
+For read-role exposure checks ToxicJoin treats the following as mutation-shaped:
 
 - `save_document`;
 - tools prefixed by `add_`;
@@ -83,25 +105,19 @@ ToxicJoin treats the following as mutation-shaped for least-privilege validation
 - `upsert_`;
 - `patch_`.
 
-Read-only sessions reject all of them. The document writer permits `save_document` only and rejects the broad mutation prefixes.
+Read-only sessions reject all of them. The effective writer transport permits exactly `save_document` regardless of the broader raw inventory.
 
-This name-based exposure check is defense-in-depth around the upstream server contract; ToxicJoin still exposes only the explicit methods defined by the role-bound client.
+## Live evidence contract
 
-## Write authority
+Live DataHub Evidence must prove all of the following on the exact release-candidate SHA:
 
-The writer validates only the required `save_document` contract used by ToxicJoin. It does not require read contracts and its application-level client rejects governed read/context calls. Broad metadata mutation discovery causes fail-closed startup for that writer session.
-
-This does **not** prove that the underlying DataHub write credential is incapable of other mutations when used outside the MCP child. Server-side least privilege remains a deployment requirement. Where DataHub supports narrower token permissions, the write credential should be restricted to the minimum document write operation required by the release workflow.
-
-## Live evidence changes
-
-Live DataHub Evidence now fails unless all of the following hold:
-
-- read settings report the read-only role, metadata mutations disabled, and document writes disabled;
-- writer settings report the write role, metadata mutations disabled, and document writes enabled;
-- read snapshot discovery does not expose `save_document` or broad mutation-shaped tools;
-- writer discovery exposes `save_document` but no broad metadata-mutation tool;
-- fresh read-back discovery does not expose `save_document` or broad mutation-shaped tools;
+- read settings identify the read-only role and document writes are disabled;
+- writer settings identify the mutation/write role and the configured ToxicJoin transport allowlist is exactly `save_document`;
+- read snapshot discovery does not expose `save_document` or mutation-shaped tools;
+- `write_server_discovered_tools` preserves the raw upstream writer inventory without pretending it is narrow;
+- `write_discovered_tools` is exactly `save_document`;
+- the effective writer inventory is a subset of the raw inventory;
+- fresh read-back discovery does not expose `save_document` or mutation-shaped tools;
 - the live semantic policy test acquires its snapshot through the read-only role;
 - the persisted Decision marker is verified from the fresh read-only process;
 - sanitized artifacts contain no credential value, local GMS endpoint, raw warehouse row, or application secret.
@@ -112,24 +128,25 @@ Coverage includes:
 
 - read and write role factories requiring separate token variables;
 - the legacy ambiguous token not satisfying either role-specific credential requirement;
-- read child environment forcing both broad metadata mutations and `save_document` off even if the parent environment enables them;
-- writer child environment keeping broad metadata mutations off while enabling only `save_document`;
-- read client rejecting an upstream process that exposes mutation tools;
-- read client rejecting mutation contract validation;
-- read client rejecting `save_decision()` before transport invocation;
-- writer client accepting the document-write contract but rejecting governed context reads;
-- writer client rejecting unnecessary broad metadata mutation exposure;
-- the integration spike proving process order `read-only -> document-write -> fresh read-only` and tool-call separation;
-- report hashing remaining stable under the role-separated evidence schema;
+- read child environment forcing mutation registration and document writes off;
+- writer child environment enabling the upstream path required by `save_document` while keeping it isolated to the write credential/process;
+- read client rejecting mutation-tool exposure and mutation calls;
+- writer allowlist hiding raw broad mutations from client discovery;
+- direct calls to a non-allowlisted writer tool being rejected before the delegate transport is invoked;
+- writer client rejecting governed context reads;
+- writer client constructed without the mandatory filtering layer failing closed on broad tool exposure;
+- the integration spike proving process order `read-only -> allowlisted writer -> fresh read-only` and tool-call separation;
+- raw and effective writer inventories being included in the report hash;
 - production source scanning preventing reuse of the ambiguous legacy MCP settings factory.
 
 ## Residual risk and explicit non-goals
 
-- **DataHub server-side token scopes are deployment-owned.** ToxicJoin cannot prove that two supplied tokens have distinct privileges merely from their secret values.
-- **CI quickstart is auth-disabled.** The CI gate proves MCP process flags, discovered tools, ToxicJoin client capabilities, and process separation, not production IAM configuration.
-- **The document-write process still holds the write credential for its short lifetime.** Compromise outside ToxicJoin's client API may exercise whatever permissions that credential has at the DataHub server. Server-side token scoping remains necessary.
-- **This PR does not yet solve DataHub freshness/expiry.** Context fingerprint freshness metadata, freshness SLA, and drift rejection are the next P3 subphase (TJ-SEC-013).
-- **This PR does not replace OS/process isolation.** Child environment minimization remains defense-in-depth; host compromise is outside this application boundary.
+- **The raw writer child remains mutation-capable under `mcp-server-datahub 0.6.x`.** This is an upstream registration constraint, not hidden by P3-A. ToxicJoin limits its own reachable tool surface with process isolation, a distinct credential, a mandatory transport allowlist, and a role-bound client.
+- **Server-side write-token scope is still required.** A compromise inside the raw writer process or outside ToxicJoin's allowlisted transport may exercise whatever permissions the write credential has. Production should restrict that credential to the narrowest document-write permission DataHub supports.
+- **DataHub server-side token scopes are deployment-owned.** ToxicJoin cannot prove two supplied secrets have distinct privileges merely from their values.
+- **CI quickstart is authentication-disabled.** The live gate proves child settings, discovered raw/effective tools, process separation, and ToxicJoin enforcement, not production IAM configuration.
+- **This PR does not solve DataHub freshness/expiry.** Context fingerprint freshness metadata, freshness SLA, and drift rejection are the next P3 subphase (TJ-SEC-013).
+- **This PR does not replace OS/process isolation.** Host or raw-child compromise is outside the application transport guarantee.
 
 ## Definition-of-Done impact
 
