@@ -10,6 +10,7 @@ from toxicjoin.execute.duckdb_executor import (
     ExecutionError,
     ExecutionResult,
 )
+from toxicjoin.execute.limits import ExecutionOutputLimits
 
 __all__ = [
     "DuckDBExecutor",
@@ -17,5 +18,6 @@ __all__ = [
     "ExecutionAuthorizationError",
     "ExecutionAuthorizer",
     "ExecutionError",
+    "ExecutionOutputLimits",
     "ExecutionResult",
 ]
