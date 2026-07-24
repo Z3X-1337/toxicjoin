@@ -15,6 +15,7 @@ from uuid import UUID
 import duckdb
 from pydantic import Field
 
+from toxicjoin.context.governance import GovernanceContextBinding
 from toxicjoin.disclosure import DisclosureCommitment, DisclosureLedger
 from toxicjoin.execute.authorization import (
     ExecutionAuthorization,
@@ -125,6 +126,7 @@ class DuckDBExecutor:
         dialect: str = "duckdb",
         rewrite_parent_sql: str | None = None,
         disclosure_commitment: DisclosureCommitment | None = None,
+        expected_governance_binding: GovernanceContextBinding | None = None,
     ) -> ExecutionAuthorization:
         """Issue from the same authority that the execution boundary will verify."""
 
@@ -141,6 +143,7 @@ class DuckDBExecutor:
                 dialect=dialect,
                 rewrite_parent_sql=rewrite_parent_sql,
                 disclosure_commitment=disclosure_commitment,
+                expected_governance_binding=expected_governance_binding,
             )
         except ExecutionAuthorizationError as exc:
             raise ExecutionError(
@@ -319,6 +322,12 @@ class _CellNestingError(ValueError):
 def _authorization_failure_reason(code: str) -> ReasonCode:
     if code.startswith("AUTH_DISCLOSURE_"):
         return ReasonCode.DISCLOSURE_STATE_UNAVAILABLE
+    if code == "AUTH_CONTEXT_STALE":
+        return ReasonCode.DATAHUB_CONTEXT_STALE
+    if code == "AUTH_CONTEXT_DRIFT":
+        return ReasonCode.DATAHUB_CONTEXT_DRIFT
+    if code == "AUTH_CONTEXT_RESOLUTION_FAILED":
+        return ReasonCode.DATAHUB_UNAVAILABLE
     return ReasonCode.VERIFICATION_FAILED
 
 
