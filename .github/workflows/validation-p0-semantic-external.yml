@@ -1,4 +1,4 @@
-name: Validation P0 Semantic External Replay
+name: Validation P0 External Replay
 
 on:
   pull_request:
@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: validation-p0-semantic-external-${{ github.event.pull_request.number || github.ref }}
+  group: validation-p0-external-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 20
 
     env:
-      RELEASE_CANDIDATE_SHA: f3970161b245d36bd35e0e8eb2ecd4338f56d3c5
+      RELEASE_CANDIDATE_SHA: b026e01c355f5511b8824ec00b9dba7e402a2b71
       RELEASE_DIR: /tmp/toxicjoin-release-candidate
 
     steps:
@@ -207,7 +207,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: toxicjoin-p0-semantic-external-replay
+          name: toxicjoin-p0-external-replay
           path: |
             validation-artifacts/p0-semantic-external/release-candidate-sha.txt
             validation-artifacts/p0-semantic-external/warehouse-profile.json
