@@ -16,6 +16,8 @@ on:
       - "src/toxicjoin/pipeline.py"
       - "tests/security/test_secure_api_surface.py"
       - "tests/security/test_datahub_edited_governance.py"
+      - "tests/security/test_datahub_mcp_least_privilege.py"
+      - "tests/integration/test_datahub_spike_authority.py"
       - "config/datahub-assets.json"
       - "pyproject.toml"
   workflow_dispatch:
@@ -34,11 +36,15 @@ jobs:
 
     env:
       DATAHUB_GMS_URL: http://127.0.0.1:8080
+      # The SDK seed/bootstrap still uses DataHub's conventional token variable.
       DATAHUB_GMS_TOKEN: local-quickstart-auth-disabled
+      # MCP roles are explicit even though local quickstart has authentication disabled.
+      # Real secure deployments must provide separately scoped credentials here.
+      DATAHUB_GMS_READ_TOKEN: local-quickstart-auth-disabled
+      DATAHUB_GMS_WRITE_TOKEN: local-quickstart-auth-disabled
       DATAHUB_MCP_COMMAND: uvx
       DATAHUB_MCP_ARGS: --from mcp-server-datahub==0.6.0 mcp-server-datahub
       DATAHUB_MCP_TIMEOUT_SECONDS: "90"
-      TOOLS_IS_MUTATION_ENABLED: "true"
       DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED: "false"
       SAVE_DOCUMENT_TOOL_ENABLED: "true"
 
@@ -162,13 +168,13 @@ jobs:
               )
           PY
 
-      - name: Verify MCP read-write-readback protocol
+      - name: Verify role-separated MCP read-write-readback protocol
         shell: bash
         run: |
           set -o pipefail
           toxicjoin-datahub-spike --verify 2>&1 | tee datahub-spike.log
 
-      - name: Verify live semantic policy decision
+      - name: Verify live semantic policy decision through read-only MCP
         shell: bash
         run: |
           set -euo pipefail
@@ -181,25 +187,31 @@ jobs:
               DataHubSnapshotContextResolver,
               DataHubSnapshotLoader,
           )
-          from toxicjoin.integrations.datahub_mcp import (
-              DataHubMcpClient,
-              DataHubMcpSettings,
-              StdioDataHubMcpTransport,
+          from toxicjoin.integrations.datahub_authority import (
+              DataHubMcpRole,
+              RoleBoundDataHubMcpClient,
+              read_only_settings_from_env,
           )
+          from toxicjoin.integrations.datahub_mcp import StdioDataHubMcpTransport
           from toxicjoin.models import ColumnRef, Decision, ProjectionExposureKind, ReasonCode
           from toxicjoin.policy import PolicyEngine, load_policy
           from toxicjoin.sql import analyze_sql
 
           async def load_snapshot():
-              settings = DataHubMcpSettings.from_env()
+              settings = read_only_settings_from_env()
+              assert settings.mutation_enabled is False
               asset_map = DataHubAssetMap.from_path('config/datahub-assets.json')
               async with StdioDataHubMcpTransport(settings) as transport:
-                  client = DataHubMcpClient(transport)
+                  client = RoleBoundDataHubMcpClient(
+                      transport,
+                      role=DataHubMcpRole.READ_ONLY,
+                  )
                   return await DataHubSnapshotLoader(client, asset_map).load(
                       require_mutations=False
                   )
 
           snapshot = asyncio.run(load_snapshot())
+          assert 'save_document' not in snapshot.discovered_tools
           resolver = DataHubSnapshotContextResolver(snapshot)
           policy = load_policy()
           assert policy.version == '0.2.0', policy.version
@@ -214,7 +226,7 @@ jobs:
           context = resolver.resolve(plan)
           decision = PolicyEngine(policy).evaluate(
               context.to_policy_input(
-                  task_purpose='Live DataHub P0 semantic exposure gate',
+                  task_purpose='Live DataHub P3 least-privilege semantic gate',
                   query_plan=plan,
                   subject_key=ColumnRef(
                       dataset='customers',
@@ -240,10 +252,12 @@ jobs:
               'live_semantic_reason_codes': [code.value for code in decision.reason_codes],
               'wrapped_output_kind': wrapped.projected_exposures[0].kind.value,
               'snapshot_catalog_version': snapshot.catalog.version,
+              'read_only_mcp': True,
+              'save_document_exposed': False,
           }, indent=2, sort_keys=True))
           PY
 
-      - name: Validate sanitized evidence gates
+      - name: Validate sanitized evidence and least-privilege gates
         shell: bash
         run: |
           python - <<'PY'
@@ -260,13 +274,23 @@ jobs:
           assert len(seed['dataset_urns']) == 5
           assert len(seed['report_sha256']) == 64
 
+          assert spike['schema_version'] == '1.1'
           assert spike['status'] == 'verified'
           assert spike['independent_readback_verified'] is True
           assert spike['lineage_relationship_count'] == 3
           assert len(spike['verified_entities']) == 5
-          assert 'save_document' in spike['discovered_tools']
+          assert spike['read_settings']['mutation_enabled'] is False
+          assert spike['write_settings']['mutation_enabled'] is True
+          assert 'save_document' not in spike['read_discovered_tools']
+          assert 'save_document' in spike['write_discovered_tools']
+          assert 'save_document' not in spike['readback_discovered_tools']
           assert spike['decision_document_urn'].startswith('urn:li:document:')
           assert len(spike['report_sha256']) == 64
+
+          mutation_prefixes = ('add_', 'remove_', 'set_', 'update_')
+          for tool in spike['read_discovered_tools'] + spike['readback_discovered_tools']:
+              assert tool != 'save_document'
+              assert not tool.startswith(mutation_prefixes), tool
 
           forbidden = ('password', 'secret', 'http://127.0.0.1:8080')
           raw = Path('.toxicjoin/datahub-spike.json').read_text().lower()
@@ -279,6 +303,9 @@ jobs:
             'decision_document_urn': spike['decision_document_urn'],
             'lineage_relationship_count': spike['lineage_relationship_count'],
             'independent_readback_verified': True,
+            'read_process_mutation_enabled': False,
+            'write_process_mutation_enabled': True,
+            'readback_process_mutation_enabled': False,
           }, indent=2))
           PY
 
