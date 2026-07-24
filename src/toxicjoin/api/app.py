@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Iterator
 
 from fastapi import FastAPI, HTTPException, Path as ApiPath, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from toxicjoin.api.limits import (
+    ApiResourceLimits,
+    PrincipalTrafficLimiter,
+    RequestBodyLimitMiddleware,
+    TrafficLimitError,
+)
 from toxicjoin.api.models import (
     DemoScenarioList,
     HealthResponse,
@@ -83,6 +89,8 @@ def create_app(
     *,
     web_dist: str | Path | None = None,
     authenticator: ApiKeyAuthenticator | None = None,
+    resource_limits: ApiResourceLimits | None = None,
+    traffic_limiter: PrincipalTrafficLimiter | None = None,
 ) -> FastAPI:
     """Build the API and optionally serve a prebuilt judge interface."""
 
@@ -91,6 +99,10 @@ def create_app(
         authenticator
         if authenticator is not None
         else ApiKeyAuthenticator.from_environment()
+    )
+    resolved_limits = resource_limits or ApiResourceLimits.from_environment()
+    resolved_traffic_limiter = traffic_limiter or PrincipalTrafficLimiter(
+        resolved_limits
     )
     if (
         pipeline is not None
@@ -125,6 +137,12 @@ def create_app(
 
     application.state.web_dist = resolved_web_dist
     application.state.authenticator = resolved_authenticator
+    application.state.resource_limits = resolved_limits
+    application.state.traffic_limiter = resolved_traffic_limiter
+    application.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_bytes=resolved_limits.max_request_bytes,
+    )
 
     @application.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -180,23 +198,25 @@ def create_app(
     @application.post("/api/analyze", response_model=PipelineResponse)
     def analyze(payload: PipelineRequest, request: Request) -> PipelineResponse:
         authenticated = _require_scope(request, AuthScope.ANALYZE)
-        result = _run_pipeline(
-            request,
-            payload,
-            execute=False,
-            identity=authenticated.identity,
-        )
+        with _traffic_slot(request, authenticated.identity.principal_id):
+            result = _run_pipeline(
+                request,
+                payload,
+                execute=False,
+                identity=authenticated.identity,
+            )
         return PipelineResponse.from_result(result)
 
     @application.post("/api/execute-safe", response_model=PipelineResponse)
     def execute_safe(payload: PipelineRequest, request: Request) -> PipelineResponse:
         authenticated = _require_scope(request, AuthScope.EXECUTE)
-        result = _run_pipeline(
-            request,
-            payload,
-            execute=True,
-            identity=authenticated.identity,
-        )
+        with _traffic_slot(request, authenticated.identity.principal_id):
+            result = _run_pipeline(
+                request,
+                payload,
+                execute=True,
+                identity=authenticated.identity,
+            )
         return PipelineResponse.from_result(result)
 
     @application.get(
@@ -211,25 +231,26 @@ def create_app(
         request: Request,
     ) -> DecisionReceipt:
         authenticated = _require_scope(request, AuthScope.RECEIPTS_READ)
-        try:
-            receipt = _pipeline(request).receipt_store.read(receipt_id)
-        except FileNotFoundError as exc:
-            raise HTTPException(
-                status_code=404,
-                detail={"code": "RECEIPT_NOT_FOUND"},
-            ) from exc
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "RECEIPT_INTEGRITY_FAILURE"},
-            ) from exc
+        with _traffic_slot(request, authenticated.identity.principal_id):
+            try:
+                receipt = _pipeline(request).receipt_store.read(receipt_id)
+            except FileNotFoundError as exc:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"code": "RECEIPT_NOT_FOUND"},
+                ) from exc
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "RECEIPT_INTEGRITY_FAILURE"},
+                ) from exc
 
-        if not _receipt_visible_to(receipt, authenticated, request=request):
-            raise HTTPException(
-                status_code=404,
-                detail={"code": "RECEIPT_NOT_FOUND"},
-            )
-        return receipt
+            if not _receipt_visible_to(receipt, authenticated, request=request):
+                raise HTTPException(
+                    status_code=404,
+                    detail={"code": "RECEIPT_NOT_FOUND"},
+                )
+            return receipt
 
     @application.get("/api/demo/scenarios", response_model=DemoScenarioList)
     def demo_scenarios() -> DemoScenarioList:
@@ -337,6 +358,25 @@ def _require_scope(request: Request, scope: AuthScope) -> AuthenticatedRequest:
         raise HTTPException(
             status_code=403,
             detail={"code": exc.code, "required_scope": scope.value},
+        ) from exc
+
+
+@contextmanager
+def _traffic_slot(request: Request, principal_id: str) -> Iterator[None]:
+    limiter = getattr(request.app.state, "traffic_limiter", None)
+    if limiter is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "TRAFFIC_LIMITER_NOT_READY"},
+        )
+    try:
+        with limiter.acquire(principal_id):
+            yield
+    except TrafficLimitError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={"code": exc.code},
+            headers={"Retry-After": str(exc.retry_after_seconds)},
         ) from exc
 
 
