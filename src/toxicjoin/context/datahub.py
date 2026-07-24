@@ -265,42 +265,68 @@ def _field_path(field: dict[str, Any]) -> str:
 
 
 def _extract_tag_names(field: dict[str, Any]) -> tuple[str, ...]:
-    container = field.get("tags")
-    if isinstance(container, dict):
-        items = container.get("tags", [])
-    elif isinstance(container, list):
-        items = container
-    else:
-        items = []
-
-    names: set[str] = set()
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        tag = item.get("tag", item)
-        name = _name_or_urn(tag)
-        if name:
-            names.add(name)
-    return tuple(sorted(names))
+    return _extract_association_names(
+        field,
+        keys=("tags", "editedTags", "edited_tags"),
+        list_key="tags",
+        association_key="tag",
+    )
 
 
 def _extract_glossary_names(field: dict[str, Any]) -> tuple[str, ...]:
-    container = field.get("glossaryTerms", field.get("glossary_terms"))
-    if isinstance(container, dict):
-        items = container.get("terms", [])
-    elif isinstance(container, list):
-        items = container
-    else:
-        items = []
+    return _extract_association_names(
+        field,
+        keys=(
+            "glossaryTerms",
+            "glossary_terms",
+            "editedGlossaryTerms",
+            "edited_glossary_terms",
+        ),
+        list_key="terms",
+        association_key="term",
+    )
+
+
+def _extract_association_names(
+    field: dict[str, Any],
+    *,
+    keys: tuple[str, ...],
+    list_key: str,
+    association_key: str,
+) -> tuple[str, ...]:
+    """Merge raw GraphQL and cleaned MCP association representations.
+
+    DataHub MCP can surface system metadata as ``tags`` / ``glossaryTerms`` and
+    user-curated editable schema metadata as ``editedTags`` /
+    ``editedGlossaryTerms``. Both forms are governance input and therefore must be
+    considered together. Conflicting sensitivity labels are deliberately left for
+    ``_normalize_field`` to reject fail-closed.
+    """
 
     names: set[str] = set()
-    for item in items:
-        if not isinstance(item, dict):
+    for key in keys:
+        container = field.get(key)
+        if isinstance(container, dict):
+            items: Any = container.get(list_key, [])
+        elif isinstance(container, (list, tuple)):
+            items = container
+        elif isinstance(container, str):
+            items = (container,)
+        else:
+            items = ()
+
+        if not isinstance(items, (list, tuple)):
             continue
-        term = item.get("term", item)
-        name = _name_or_urn(term)
-        if name:
-            names.add(name)
+        for item in items:
+            name: str | None = None
+            if isinstance(item, str):
+                name = item
+            elif isinstance(item, dict):
+                association = item.get(association_key, item)
+                name = _name_or_urn(association)
+            if isinstance(name, str) and name.strip():
+                names.add(name)
+
     return tuple(sorted(names))
 
 
