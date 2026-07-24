@@ -1,15 +1,9 @@
-"""Build governed, alias-insensitive disclosure semantics from analyzed SQL."""
+"""Build governed, caller-name-insensitive disclosure semantics from analyzed SQL."""
 
 from __future__ import annotations
 
 from toxicjoin.auth import RequestIdentity
 from toxicjoin.context.fixture import FixtureCatalog
-from toxicjoin.models import (
-    ColumnRef,
-    ProjectionExposure,
-    QueryPlan,
-    SensitivityCategory,
-)
 from toxicjoin.disclosure.models import (
     DisclosureAuditIdentity,
     DisclosureEvent,
@@ -22,6 +16,12 @@ from toxicjoin.disclosure.models import (
     compute_semantic_sha256,
     compute_subject_namespace_sha256,
 )
+from toxicjoin.models import (
+    ColumnRef,
+    ProjectionExposure,
+    QueryPlan,
+    SensitivityCategory,
+)
 
 
 _SUBJECT_CATEGORIES = {
@@ -32,7 +32,6 @@ _SUBJECT_CATEGORIES = {
 
 class DisclosureSemanticError(ValueError):
     """Raised when governed disclosure semantics cannot be derived safely."""
-
 
 
 def resolve_governed_subject_domain(
@@ -121,7 +120,7 @@ def build_semantic_release(
     catalog: FixtureCatalog,
     query_plan: QueryPlan,
 ) -> DisclosureSemanticRelease:
-    """Build governed release metadata without SQL text or literal values."""
+    """Build governed release metadata without SQL text, hashes, literals, or aliases."""
 
     source_dataset_urns = tuple(
         sorted(_dataset_urn(catalog, name) for name in set(query_plan.source_datasets))
@@ -166,7 +165,6 @@ def build_disclosure_event(
     query_plan: QueryPlan,
     subject_key: ColumnRef,
     receipt_id: str,
-    query_sha256: str,
     policy_version: str,
 ) -> DisclosureEvent:
     subject = resolve_governed_subject_domain(
@@ -178,10 +176,8 @@ def build_disclosure_event(
         scope=build_disclosure_scope(identity, subject),
         audit_identity=DisclosureAuditIdentity(
             credential_id=identity.credential_id,
-            session_id=identity.session_id,
         ),
         receipt_id=receipt_id,
-        query_sha256=query_sha256,
         policy_version=policy_version,
         semantic=build_semantic_release(catalog, query_plan),
     )
@@ -192,7 +188,6 @@ def _semantic_output(
     exposure: ProjectionExposure,
 ) -> SemanticOutput:
     return SemanticOutput(
-        output_name=exposure.output_name,
         kind=exposure.kind,
         sources=_governed_columns(catalog, exposure.source_columns),
     )
@@ -202,7 +197,10 @@ def _governed_columns(
     catalog: FixtureCatalog,
     refs: tuple[ColumnRef, ...],
 ) -> tuple[GovernedColumn, ...]:
-    columns = {_governed_column(catalog, ref).key: _governed_column(catalog, ref) for ref in refs}
+    columns: dict[str, GovernedColumn] = {}
+    for ref in refs:
+        column = _governed_column(catalog, ref)
+        columns[column.key] = column
     return tuple(columns[key] for key in sorted(columns))
 
 
