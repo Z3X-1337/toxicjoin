@@ -41,6 +41,8 @@ class FakeRoleTransport:
                         }
                     },
                 ),
+                McpToolDefinition(name="add_tags", input_schema={}),
+                McpToolDefinition(name="remove_tags", input_schema={}),
             )
         tools = [
             McpToolDefinition(
@@ -145,7 +147,7 @@ def _settings(*, mutation_enabled: bool, token: str) -> DataHubMcpSettings:
     )
 
 
-def test_spike_uses_read_then_write_then_fresh_readback_processes(tmp_path: Path) -> None:
+def test_spike_uses_read_then_allowlisted_write_then_fresh_readback(tmp_path: Path) -> None:
     factory = RecordingFactory()
     report = asyncio.run(
         run_datahub_spike(
@@ -174,10 +176,15 @@ def test_spike_uses_read_then_write_then_fresh_readback_processes(tmp_path: Path
     ]
     assert factory.transports[1].calls == ["save_document"]
     assert factory.transports[2].calls == ["grep_documents"]
-    assert report.schema_version == "1.1"
+    assert report.schema_version == "1.2"
     assert report.read_settings["mutation_enabled"] is False
     assert report.write_settings["mutation_enabled"] is True
     assert "save_document" not in report.read_discovered_tools
-    assert "save_document" in report.write_discovered_tools
+    assert set(report.write_server_discovered_tools) == {
+        "add_tags",
+        "remove_tags",
+        "save_document",
+    }
+    assert report.write_discovered_tools == ("save_document",)
     assert "save_document" not in report.readback_discovered_tools
     assert report.independent_readback_verified is True
