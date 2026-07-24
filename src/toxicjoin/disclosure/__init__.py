@@ -8,6 +8,7 @@ from toxicjoin.disclosure.composition import (
     is_protected_release,
 )
 from toxicjoin.disclosure.ledger import (
+    DisclosureCommitmentReplay,
     DisclosureLedger,
     DisclosureLedgerConflict,
     DisclosureLedgerError,
@@ -42,6 +43,7 @@ __all__ = [
     "CompositionRule",
     "DisclosureAuditIdentity",
     "DisclosureCommitment",
+    "DisclosureCommitmentReplay",
     "DisclosureComposition",
     "DisclosureCompositionDecision",
     "DisclosureCompositionError",
