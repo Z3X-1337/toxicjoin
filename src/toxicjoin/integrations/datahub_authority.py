@@ -1,9 +1,11 @@
-"""Least-privilege DataHub MCP settings and role-bound clients.
+"""Least-privilege DataHub MCP settings, transports, and role-bound clients.
 
 Secure/live ToxicJoin paths must not use an ambiguous MCP process that can both acquire
 policy context and mutate DataHub. Read-only and mutation roles use distinct credential
-environment variables and application-level capabilities in addition to upstream MCP
-server controls.
+environment variables and application-level capabilities. The upstream DataHub MCP 0.6.x
+server registers ``save_document`` inside its general mutation registration path, so the
+isolated writer must start that path but ToxicJoin places a transport-level allowlist in
+front of it and exposes only ``save_document`` to the writer client.
 """
 
 from __future__ import annotations
@@ -49,31 +51,39 @@ _REQUIRED_SAVE_DOCUMENT_PROPERTIES = {
     "document_type",
     "related_assets",
 }
+_WRITER_ALLOWED_TOOLS = frozenset({"save_document"})
 
 
 class RoleBoundDataHubMcpSettings(DataHubMcpSettings):
-    """MCP settings that force server-side tool exposure for one authority role."""
+    """MCP settings that force upstream tool registration for one authority role."""
 
     role: DataHubMcpRole
 
     def child_environment(self) -> dict[str, str]:
         environment = super().child_environment()
-        # ToxicJoin never needs DataHub's broad metadata-mutation tool family in either
-        # role. The writer requires only save_document, which upstream controls with an
-        # independent flag. Keeping the broad mutation switch off reduces the child
-        # process attack surface even if the write credential itself is overprivileged.
-        environment["TOOLS_IS_MUTATION_ENABLED"] = "false"
-        environment["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] = "false"
-        environment["SAVE_DOCUMENT_TOOL_ENABLED"] = (
-            "true" if self.role == DataHubMcpRole.MUTATION else "false"
-        )
+        if self.role == DataHubMcpRole.READ_ONLY:
+            environment["TOOLS_IS_MUTATION_ENABLED"] = "false"
+            environment["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] = "false"
+            environment["SAVE_DOCUMENT_TOOL_ENABLED"] = "false"
+        else:
+            # mcp-server-datahub 0.6.x only registers save_document from inside
+            # register_mutation_tools(), so this switch must be true for the isolated
+            # writer child. ToolAllowlistTransport is mandatory at the ToxicJoin
+            # boundary and permits save_document only.
+            environment["TOOLS_IS_MUTATION_ENABLED"] = "true"
+            environment["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] = "false"
+            environment["SAVE_DOCUMENT_TOOL_ENABLED"] = "true"
         return environment
 
     def redacted_summary(self) -> dict[str, Any]:
         summary = super().redacted_summary()
         summary["role"] = self.role.value
-        summary["metadata_mutations_enabled"] = False
         summary["document_write_enabled"] = self.role == DataHubMcpRole.MUTATION
+        summary["writer_transport_allowlist"] = (
+            sorted(_WRITER_ALLOWED_TOOLS)
+            if self.role == DataHubMcpRole.MUTATION
+            else []
+        )
         return summary
 
 
@@ -87,7 +97,7 @@ def read_only_settings_from_env() -> RoleBoundDataHubMcpSettings:
 
 
 def mutation_settings_from_env() -> RoleBoundDataHubMcpSettings:
-    """Build settings for the isolated Decision write-back process."""
+    """Build settings for the isolated Decision writer process."""
 
     return _settings_from_env(
         token_env=_WRITE_TOKEN_ENV,
@@ -121,12 +131,51 @@ def _settings_from_env(
         command=command,
         args=args,
         timeout_seconds=timeout,
-        # This field describes the application role for compatibility with existing
-        # callers. child_environment() intentionally narrows the upstream server's broad
-        # metadata mutation switch in both roles.
         mutation_enabled=role == DataHubMcpRole.MUTATION,
         role=role,
     )
+
+
+class ToolAllowlistTransport:
+    """Filter MCP discovery and calls before a privileged child reaches ToxicJoin code.
+
+    The raw server inventory is retained for evidence so an allowlist cannot make the
+    upstream capability set appear narrower than it really is.
+    """
+
+    def __init__(
+        self,
+        delegate: DataHubMcpTransport,
+        *,
+        allowed_tools: frozenset[str],
+    ) -> None:
+        if not allowed_tools:
+            raise ValueError("MCP tool allowlist must not be empty")
+        self._delegate = delegate
+        self.allowed_tools = allowed_tools
+        self.raw_tool_names: tuple[str, ...] = ()
+
+    async def list_tools(self) -> tuple[McpToolDefinition, ...]:
+        definitions = await self._delegate.list_tools()
+        self.raw_tool_names = tuple(sorted(definition.name for definition in definitions))
+        return tuple(
+            definition
+            for definition in definitions
+            if definition.name in self.allowed_tools
+        )
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        if name not in self.allowed_tools:
+            raise DataHubMcpContractError(
+                f"DataHub MCP tool {name} is outside the writer transport allowlist"
+            )
+        return await self._delegate.call_tool(name, arguments)
+
+
+def writer_allowlisted_transport(delegate: DataHubMcpTransport) -> ToolAllowlistTransport:
+    """Return the mandatory save_document-only transport for the writer role."""
+
+    return ToolAllowlistTransport(delegate, allowed_tools=_WRITER_ALLOWED_TOOLS)
 
 
 class RoleBoundDataHubMcpClient(DataHubMcpClient):
@@ -163,18 +212,14 @@ class RoleBoundDataHubMcpClient(DataHubMcpClient):
 
         definitions = await self.transport.list_tools()
         tools = {definition.name: definition for definition in definitions}
+        unexpected = sorted(set(tools) - _WRITER_ALLOWED_TOOLS)
+        if unexpected:
+            raise DataHubMcpContractError(
+                "writer transport exposed tools outside allowlist: "
+                + ", ".join(unexpected)
+            )
         save_document = tools.get("save_document")
         failures: list[str] = []
-        broad_mutations = sorted(
-            definition.name
-            for definition in definitions
-            if definition.name != "save_document" and _looks_mutating(definition.name)
-        )
-        if broad_mutations:
-            failures.append(
-                "writer exposed unnecessary metadata mutation tools: "
-                + ", ".join(broad_mutations)
-            )
         if save_document is None:
             failures.append("missing tool save_document")
         else:
