@@ -272,14 +272,20 @@ def _extract_tag_names(field: dict[str, Any]) -> tuple[str, ...]:
             source_key=source_key,
             collection_key="tags",
         ):
-            if not isinstance(item, dict):
+            if isinstance(item, str):
+                name = item
+            elif isinstance(item, dict):
+                tag = item.get("tag", item)
+                name = _name_or_urn(tag)
+            else:
                 raise DataHubMetadataError(
-                    f"DataHub field {_field_path(field)} has a non-object tag entry"
+                    f"DataHub field {_field_path(field)} has an invalid tag entry"
                 )
-            tag = item.get("tag", item)
-            name = _name_or_urn(tag)
-            if name:
-                names.add(name)
+            if not isinstance(name, str) or not name.strip():
+                raise DataHubMetadataError(
+                    f"DataHub field {_field_path(field)} has an unresolvable tag entry"
+                )
+            names.add(name)
     return tuple(sorted(names))
 
 
@@ -296,14 +302,20 @@ def _extract_glossary_names(field: dict[str, Any]) -> tuple[str, ...]:
             source_key=source_key,
             collection_key="terms",
         ):
-            if not isinstance(item, dict):
+            if isinstance(item, str):
+                name = item
+            elif isinstance(item, dict):
+                term = item.get("term", item)
+                name = _name_or_urn(term)
+            else:
                 raise DataHubMetadataError(
-                    f"DataHub field {_field_path(field)} has a non-object glossary entry"
+                    f"DataHub field {_field_path(field)} has an invalid glossary entry"
                 )
-            term = item.get("term", item)
-            name = _name_or_urn(term)
-            if name:
-                names.add(name)
+            if not isinstance(name, str) or not name.strip():
+                raise DataHubMetadataError(
+                    f"DataHub field {_field_path(field)} has an unresolvable glossary entry"
+                )
+            names.add(name)
     return tuple(sorted(names))
 
 
