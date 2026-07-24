@@ -1,6 +1,6 @@
 """Strict models for persistent cross-request disclosure history.
 
-The ledger records governed semantic metadata only. Raw rows, SQL text, SQL-derived
+The ledger records governed semantic metadata only. Raw rows, SQL text, raw-query
 hashes, literal values, API keys, task prompts, output aliases, and caller-controlled
 session identifiers do not belong in this layer.
 """
@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -25,6 +26,15 @@ _SUBJECT_CATEGORIES = {
     SensitivityCategory.DIRECT_IDENTIFIER,
     SensitivityCategory.STABLE_PSEUDONYM,
 }
+
+
+class CompositionRule(StrEnum):
+    UNPROTECTED_RELEASE = "UNPROTECTED_RELEASE"
+    FIRST_PROTECTED_RELEASE = "FIRST_PROTECTED_RELEASE"
+    REPEAT_IDENTICAL_RELEASE = "REPEAT_IDENTICAL_RELEASE"
+    IDEMPOTENT_REPLAY = "IDEMPOTENT_REPLAY"
+    CUMULATIVE_VARIATION_BLOCK = "CUMULATIVE_VARIATION_BLOCK"
+    LEGACY_HISTORY_BLOCK = "LEGACY_HISTORY_BLOCK"
 
 
 class GovernedColumn(StrictModel):
@@ -137,6 +147,14 @@ class DisclosureSemanticRelease(StrictModel):
         return self
 
 
+class DisclosureComposition(StrictModel):
+    """Keyed cohort identity and semantic family used by the cumulative-release gate."""
+
+    protected_release: bool
+    release_family_sha256: str = Field(pattern=_HASH_PATTERN)
+    cohort_hmac_sha256: str = Field(pattern=_HASH_PATTERN)
+
+
 class DisclosureEvent(StrictModel):
     """Minimal governed payload eligible for append-only persistence."""
 
@@ -145,12 +163,22 @@ class DisclosureEvent(StrictModel):
     receipt_id: str = Field(pattern=_RECEIPT_ID_PATTERN)
     policy_version: str = Field(min_length=1, max_length=128)
     semantic: DisclosureSemanticRelease
+    composition: DisclosureComposition | None = None
+
+    @model_validator(mode="after")
+    def composition_matches_semantic_family(self) -> "DisclosureEvent":
+        if (
+            self.composition is not None
+            and self.composition.release_family_sha256 != self.semantic.semantic_sha256
+        ):
+            raise ValueError("composition release family must match semantic release hash")
+        return self
 
 
 class DisclosureRecord(StrictModel):
     """Persisted append-only ledger record with per-scope hash chaining."""
 
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["1.0", "1.1"] = "1.1"
     record_id: str = Field(pattern=_RECORD_ID_PATTERN)
     sequence: int = Field(ge=1)
     created_at: datetime
@@ -172,6 +200,32 @@ class DisclosureRecord(StrictModel):
             raise ValueError("disclosure event hash mismatch")
         if self.content_sha256 != compute_record_sha256(self):
             raise ValueError("disclosure record content hash mismatch")
+        return self
+
+
+class DisclosureCommitment(StrictModel):
+    """Opaque proof that one exact governed release was committed before execution."""
+
+    record_id: str = Field(pattern=_RECORD_ID_PATTERN)
+    receipt_id: str = Field(pattern=_RECEIPT_ID_PATTERN)
+    scope_sha256: str = Field(pattern=_HASH_PATTERN)
+    event_sha256: str = Field(pattern=_HASH_PATTERN)
+    content_sha256: str = Field(pattern=_HASH_PATTERN)
+
+
+class DisclosureCompositionDecision(StrictModel):
+    """Result of atomic cumulative-history evaluation and optional append."""
+
+    allowed: bool
+    rule: CompositionRule
+    protected_release: bool
+    prior_protected_count: int = Field(ge=0)
+    commitment: DisclosureCommitment | None = None
+
+    @model_validator(mode="after")
+    def commitment_matches_allow_state(self) -> "DisclosureCompositionDecision":
+        if self.allowed != (self.commitment is not None):
+            raise ValueError("allowed composition decisions require exactly one commitment")
         return self
 
 
