@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "exceptions": [
+    {
+      "id": "CVE-2026-59890",
+      "aliases": [
+        "PYSEC-2026-3447",
+        "GHSA-h35f-9h28-mq5c"
+      ],
+      "package": "setuptools",
+      "affected_range": "<83.0.0",
+      "fixed_version": "83.0.0",
+      "scope": [
+        "datahub",
+        "agent-registry"
+      ],
+      "upstream_constraint": "acryl-datahub requires setuptools<82.0.0 because its runtime still depends on pkg_resources, which setuptools 82 removed",
+      "applicability": "The advisory concerns MANIFEST.in exclusion bypass when creating source distributions on macOS APFS/HFS+ with Unicode-normalization differences. ToxicJoin release CI and production containers are Linux-based, consume locked artifacts, do not create source distributions from untrusted trees, and the production application container does not install the DataHub extras.",
+      "required_controls": [
+        "Linux-only release CI for DataHub profiles",
+        "No source-distribution publishing in the ToxicJoin release workflow",
+        "Locked dependency graph with hashes/provenance retained",
+        "Any Python audit finding other than this exact setuptools advisory fails the gate",
+        "Re-evaluate immediately when acryl-datahub removes setuptools<82.0.0"
+      ],
+      "accepted_on": "2026-07-25",
+      "expires_on": "2026-08-15",
+      "owner": "ToxicJoin security release gate",
+      "status": "temporary_upstream_blocked"
+    }
+  ]
+}
