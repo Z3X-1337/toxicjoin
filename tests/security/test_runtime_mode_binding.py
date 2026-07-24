@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from toxicjoin.api.server import create_default_pipeline
+from toxicjoin.api import create_default_pipeline
 from toxicjoin.context import (
     ContextResolution,
     DataHubSnapshot,
