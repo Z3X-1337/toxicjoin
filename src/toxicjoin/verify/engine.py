@@ -57,8 +57,9 @@ def verify_and_execute(
         "precise_area",
     ),
     dialect: str = "duckdb",
+    rewrite_parent_sql: str | None = None,
 ) -> VerificationResult:
-    """Verify final SQL, execute only after preconditions pass, then audit results."""
+    """Verify final SQL, authorize exact state, execute once, then audit results."""
 
     checks: list[VerificationCheck] = []
     try:
@@ -146,10 +147,67 @@ def verify_and_execute(
         )
 
     try:
-        execution = executor.execute_allowed(
-            sql,
+        executor.bind_authority(
+            context_resolver=context_resolver,
+            policy_engine=policy_engine,
+        )
+    except ValueError as exc:
+        checks.append(
+            VerificationCheck(
+                name="execution_authorization",
+                passed=False,
+                detail=str(exc),
+            )
+        )
+        return _result(
+            query_plan=query_plan,
             policy_decision=decision,
+            checks=checks,
+            execution_error=str(exc),
+        )
+
+    try:
+        authorization = executor.issue_authorization(
+            sql,
+            task_purpose=task_purpose,
+            subject_key=subject_key,
             dialect=dialect,
+            rewrite_parent_sql=rewrite_parent_sql,
+        )
+    except ExecutionError as exc:
+        checks.append(
+            VerificationCheck(
+                name="execution_authorization",
+                passed=False,
+                detail=str(exc),
+            )
+        )
+        return _result(
+            query_plan=query_plan,
+            policy_decision=decision,
+            checks=checks,
+            execution_error=str(exc),
+        )
+
+    checks.append(
+        VerificationCheck(
+            name="execution_authorization",
+            passed=True,
+            detail=(
+                "single-use capability issued for exact SQL, plan, governance context, "
+                "policy, task, subject, and rewrite lineage"
+            ),
+        )
+    )
+
+    try:
+        execution = executor.execute_authorized(
+            sql,
+            authorization=authorization,
+            task_purpose=task_purpose,
+            subject_key=subject_key,
+            dialect=dialect,
+            rewrite_parent_sql=rewrite_parent_sql,
         )
     except ExecutionError as exc:
         checks.append(

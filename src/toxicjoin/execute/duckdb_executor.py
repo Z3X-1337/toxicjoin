@@ -1,4 +1,4 @@
-"""Policy-gated, read-only DuckDB execution with bounded previews."""
+"""Authorization-bound, read-only DuckDB execution with bounded previews."""
 
 from __future__ import annotations
 
@@ -14,8 +14,12 @@ from uuid import UUID
 import duckdb
 from pydantic import Field
 
-from toxicjoin.models import Decision, PolicyDecision, QueryPlan, ReasonCode, StrictModel
-from toxicjoin.sql import SqlAnalysisError, analyze_sql
+from toxicjoin.execute.authorization import (
+    ExecutionAuthorization,
+    ExecutionAuthorizationError,
+    ExecutionAuthorizer,
+)
+from toxicjoin.models import ColumnRef, QueryPlan, ReasonCode, StrictModel
 
 
 class ExecutionError(ValueError):
@@ -28,6 +32,7 @@ class ExecutionError(ValueError):
 
 
 class ExecutionResult(StrictModel):
+    authorization_id: str = Field(pattern=r"^tj_auth_[0-9a-f]{32}$")
     query_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     query_plan: QueryPlan
     columns: tuple[str, ...]
@@ -38,7 +43,7 @@ class ExecutionResult(StrictModel):
 
 
 class DuckDBExecutor:
-    """Execute only policy-approved SELECT statements against a database file.
+    """Execute only short-lived, independently revalidated capabilities.
 
     The connection is opened read-only. External access, extension auto-loading,
     and community extensions are disabled before the configuration is locked.
@@ -58,36 +63,106 @@ class DuckDBExecutor:
             raise ValueError("timeout_seconds must be positive")
         self.max_preview_rows = max_preview_rows
         self.timeout_seconds = timeout_seconds
+        self._authorizer: ExecutionAuthorizer | None = None
+        self._authority_lock = threading.Lock()
 
-    def execute_allowed(
+    @property
+    def authorization_bound(self) -> bool:
+        return self._authorizer is not None
+
+    def bind_authorizer(self, authorizer: ExecutionAuthorizer) -> None:
+        """Bind one execution authority; rebinding to a different authority is forbidden."""
+
+        with self._authority_lock:
+            if self._authorizer is not None and self._authorizer is not authorizer:
+                raise ValueError(
+                    "executor is already bound to a different execution authorizer"
+                )
+            self._authorizer = authorizer
+
+    def bind_authority(self, *, context_resolver: Any, policy_engine: Any) -> None:
+        """Bind verifier authority once and reject later authority substitution."""
+
+        with self._authority_lock:
+            if self._authorizer is None:
+                self._authorizer = ExecutionAuthorizer(
+                    context_resolver=context_resolver,
+                    policy_engine=policy_engine,
+                )
+                return
+            if (
+                self._authorizer.context_resolver is not context_resolver
+                or self._authorizer.policy_engine is not policy_engine
+            ):
+                raise ValueError("executor authority does not match verifier authority")
+
+    def issue_authorization(
         self,
         sql: str,
         *,
-        policy_decision: PolicyDecision,
+        task_purpose: str,
+        subject_key: ColumnRef,
         dialect: str = "duckdb",
-    ) -> ExecutionResult:
-        """Execute SQL only when the supplied deterministic decision is ALLOW."""
+        rewrite_parent_sql: str | None = None,
+    ) -> ExecutionAuthorization:
+        """Issue from the same authority that the execution boundary will verify."""
 
-        if policy_decision.decision != Decision.ALLOW:
+        if self._authorizer is None:
             raise ExecutionError(
                 ReasonCode.VERIFICATION_FAILED,
-                f"execution requires ALLOW, received {policy_decision.decision.value}",
+                "executor has no execution authorizer bound",
             )
-        if policy_decision.rewrite_required:
+        try:
+            return self._authorizer.issue(
+                sql,
+                task_purpose=task_purpose,
+                subject_key=subject_key,
+                dialect=dialect,
+                rewrite_parent_sql=rewrite_parent_sql,
+            )
+        except ExecutionAuthorizationError as exc:
             raise ExecutionError(
                 ReasonCode.VERIFICATION_FAILED,
-                "execution cannot proceed while a rewrite remains required",
-            )
+                f"execution authorization issuance rejected: {exc.code}",
+            ) from exc
+
+    def execute_authorized(
+        self,
+        sql: str,
+        *,
+        authorization: ExecutionAuthorization,
+        task_purpose: str,
+        subject_key: ColumnRef,
+        dialect: str = "duckdb",
+        rewrite_parent_sql: str | None = None,
+    ) -> ExecutionResult:
+        """Consume a matching capability and execute its exact SQL once."""
+
         if not self.database.is_file():
             raise ExecutionError(
                 ReasonCode.VERIFICATION_FAILED,
                 f"database file does not exist: {self.database}",
             )
+        if self._authorizer is None:
+            raise ExecutionError(
+                ReasonCode.VERIFICATION_FAILED,
+                "executor has no execution authorizer bound",
+            )
 
         try:
-            query_plan = analyze_sql(sql, dialect=dialect)
-        except SqlAnalysisError as exc:
-            raise ExecutionError(exc.reason_code, exc.detail) from exc
+            query_plan = self._authorizer.verify_and_consume(
+                authorization,
+                sql,
+                task_purpose=task_purpose,
+                subject_key=subject_key,
+                dialect=dialect,
+                rewrite_parent_sql=rewrite_parent_sql,
+            )
+        except ExecutionAuthorizationError as exc:
+            raise ExecutionError(
+                ReasonCode.VERIFICATION_FAILED,
+                f"execution authorization rejected: {exc.code}",
+            ) from exc
 
         if query_plan.contains_wildcard:
             raise ExecutionError(
@@ -103,8 +178,6 @@ class DuckDBExecutor:
             try:
                 connection.interrupt()
             except Exception:
-                # The main thread reports the original execution error. The timer must
-                # never mask it with a secondary interrupt failure.
                 pass
 
         timer = threading.Timer(self.timeout_seconds, interrupt_query)
@@ -124,7 +197,7 @@ class DuckDBExecutor:
                 ) from exc
             raise ExecutionError(
                 ReasonCode.VERIFICATION_FAILED,
-                f"DuckDB rejected the approved query: {exc}",
+                f"DuckDB rejected the authorized query: {exc}",
             ) from exc
         finally:
             timer.cancel()
@@ -139,6 +212,7 @@ class DuckDBExecutor:
         )
 
         return ExecutionResult(
+            authorization_id=authorization.authorization_id,
             query_sha256=hashlib.sha256(sql.encode("utf-8")).hexdigest(),
             query_plan=query_plan,
             columns=columns,
