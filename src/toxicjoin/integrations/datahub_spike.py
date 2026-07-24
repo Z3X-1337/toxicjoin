@@ -1,4 +1,4 @@
-"""Executable DataHub MCP read → write → independent read-back verification."""
+"""Executable DataHub MCP read-only → isolated write → read-only verification."""
 
 from __future__ import annotations
 
@@ -18,8 +18,13 @@ from uuid import uuid4
 from pydantic import Field, field_validator
 
 from toxicjoin.context.datahub import DataHubAssetMap, DataHubSnapshotLoader
+from toxicjoin.integrations.datahub_authority import (
+    DataHubMcpRole,
+    RoleBoundDataHubMcpClient,
+    mutation_settings_from_env,
+    read_only_settings_from_env,
+)
 from toxicjoin.integrations.datahub_mcp import (
-    DataHubMcpClient,
     DataHubMcpError,
     DataHubMcpSettings,
     DataHubMcpTransport,
@@ -32,11 +37,14 @@ TransportFactory = Callable[[DataHubMcpSettings], DataHubMcpTransport]
 
 
 class DataHubSpikeReport(StrictModel):
-    schema_version: str = "1.0"
+    schema_version: str = "1.1"
     created_at: datetime
     status: str = Field(pattern=r"^verified$")
-    settings: dict[str, Any]
-    discovered_tools: tuple[str, ...]
+    read_settings: dict[str, Any]
+    write_settings: dict[str, Any]
+    read_discovered_tools: tuple[str, ...]
+    write_discovered_tools: tuple[str, ...]
+    readback_discovered_tools: tuple[str, ...]
     verified_entities: tuple[str, ...]
     field_counts: dict[str, int]
     lineage_relationship_count: int = Field(ge=1)
@@ -56,23 +64,45 @@ class DataHubSpikeReport(StrictModel):
 
 async def run_datahub_spike(
     *,
-    settings: DataHubMcpSettings,
+    read_settings: DataHubMcpSettings,
+    write_settings: DataHubMcpSettings,
     asset_map: DataHubAssetMap,
     output: str | Path,
     external_url: str | None = None,
     transport_factory: TransportFactory = StdioDataHubMcpTransport,
 ) -> DataHubSpikeReport:
-    """Run the live verification and persist a sanitized evidence report."""
+    """Run a role-separated live verification and persist sanitized evidence."""
+
+    if read_settings.mutation_enabled:
+        raise DataHubMcpError("read DataHub MCP settings must disable mutations")
+    if not write_settings.mutation_enabled:
+        raise DataHubMcpError("write DataHub MCP settings must enable mutations")
 
     marker = f"TOXICJOIN_MCP_{uuid4().hex}"
     created_at = datetime.now(timezone.utc)
 
-    async with transport_factory(settings) as write_transport:
-        write_client = DataHubMcpClient(write_transport)
+    # Context acquisition has no mutation capability. This snapshot is the only source
+    # of governed read evidence used to prepare the write-back payload.
+    async with transport_factory(read_settings) as read_transport:
+        read_client = RoleBoundDataHubMcpClient(
+            read_transport,
+            role=DataHubMcpRole.READ_ONLY,
+        )
         snapshot = await DataHubSnapshotLoader(
-            write_client,
+            read_client,
             asset_map,
-        ).load(require_mutations=True)
+        ).load(require_mutations=False)
+
+    # Write-back is isolated in a separate MCP child and client role. The mutation
+    # client cannot call ToxicJoin's context-acquisition APIs.
+    async with transport_factory(write_settings) as write_transport:
+        write_client = RoleBoundDataHubMcpClient(
+            write_transport,
+            role=DataHubMcpRole.MUTATION,
+        )
+        write_definitions = await write_client.discover_and_validate(
+            require_mutations=True
+        )
         document_urn = await write_client.save_decision(
             title="ToxicJoin MCP integration verification",
             content=_decision_content(
@@ -88,19 +118,31 @@ async def run_datahub_spike(
             external_url=external_url,
         )
 
-    # A fresh stdio process and MCP session is intentional. Read-back cannot rely on
-    # the session that performed the write or an in-memory response object.
-    async with transport_factory(settings) as read_transport:
-        read_client = DataHubMcpClient(read_transport)
-        await read_client.discover_and_validate(require_mutations=False)
-        await read_client.verify_document_marker(document_urn, marker)
+    # A third, fresh read-only stdio process proves persistence without trusting the
+    # mutation session's response or in-memory state.
+    async with transport_factory(read_settings) as readback_transport:
+        readback_client = RoleBoundDataHubMcpClient(
+            readback_transport,
+            role=DataHubMcpRole.READ_ONLY,
+        )
+        readback_definitions = await readback_client.discover_and_validate(
+            require_mutations=False
+        )
+        await readback_client.verify_document_marker(document_urn, marker)
 
     payload: dict[str, Any] = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "created_at": created_at,
         "status": "verified",
-        "settings": settings.redacted_summary(),
-        "discovered_tools": snapshot.discovered_tools,
+        "read_settings": read_settings.redacted_summary(),
+        "write_settings": write_settings.redacted_summary(),
+        "read_discovered_tools": snapshot.discovered_tools,
+        "write_discovered_tools": tuple(
+            sorted(definition.name for definition in write_definitions)
+        ),
+        "readback_discovered_tools": tuple(
+            sorted(definition.name for definition in readback_definitions)
+        ),
         "verified_entities": snapshot.verified_entities,
         "field_counts": snapshot.field_counts,
         "lineage_relationship_count": len(
@@ -136,10 +178,9 @@ def _decision_content(
             f"Verification marker: `{marker}`",
             f"Verified at: {created_at.astimezone(timezone.utc).isoformat()}",
             "",
-            "This Decision proves that ToxicJoin used the official DataHub MCP server ",
-            "to read configured assets and governed schema metadata, inspect lineage, ",
-            "write a Decision document, and independently read it back from a fresh ",
-            "MCP session.",
+            "This Decision proves that ToxicJoin used a read-only DataHub MCP process ",
+            "to acquire governed context, an isolated mutation process to write the ",
+            "Decision, and a fresh read-only process to verify persisted content.",
             "",
             f"Configured assets verified: {entity_count}",
             f"Governed schema fields: {rendered_counts}",
@@ -209,7 +250,7 @@ def _json_compatible(value: Any) -> Any:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Verify ToxicJoin DataHub MCP read/write/read-back integration"
+        description="Verify role-separated ToxicJoin DataHub MCP read/write/read-back integration"
     )
     parser.add_argument(
         "--asset-map",
@@ -239,7 +280,8 @@ def main() -> None:
     try:
         report = asyncio.run(
             run_datahub_spike(
-                settings=DataHubMcpSettings.from_env(),
+                read_settings=read_only_settings_from_env(),
+                write_settings=mutation_settings_from_env(),
                 asset_map=DataHubAssetMap.from_path(args.asset_map),
                 output=args.output,
                 external_url=args.external_url,
