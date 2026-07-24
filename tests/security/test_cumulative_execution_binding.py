@@ -206,8 +206,8 @@ def _committed_authorizer(tmp_path: Path):
     return authorizer, ledger, sql, composition.commitment
 
 
-def test_direct_authorizer_cannot_bypass_required_commitment(tmp_path: Path) -> None:
-    authorizer, _, sql, commitment = _committed_authorizer(tmp_path)
+def test_direct_authorizer_cannot_bypass_or_replay_required_commitment(tmp_path: Path) -> None:
+    authorizer, ledger, sql, commitment = _committed_authorizer(tmp_path)
 
     with bind_request_identity(_identity()):
         with pytest.raises(
@@ -222,8 +222,21 @@ def test_direct_authorizer_cannot_bypass_required_commitment(tmp_path: Path) -> 
             subject_key=_SUBJECT,
             disclosure_commitment=commitment,
         )
+        ledger.verify_authorization_claim(commitment, authorization.authorization_id)
+
+        with pytest.raises(
+            ExecutionAuthorizationError,
+            match="AUTH_DISCLOSURE_COMMITMENT_REPLAYED",
+        ):
+            authorizer.issue(
+                sql,
+                task_purpose=_TASK,
+                subject_key=_SUBJECT,
+                disclosure_commitment=commitment,
+            )
 
     assert authorization.disclosure_commitment == commitment
+    assert ledger.verify_all() == 1
 
 
 def test_commitment_for_different_sql_or_forged_hash_is_rejected(tmp_path: Path) -> None:
