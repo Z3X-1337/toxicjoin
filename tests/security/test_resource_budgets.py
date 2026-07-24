@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlglot import exp
 
 from toxicjoin.api import create_app
 from toxicjoin.api.limits import (
@@ -21,7 +22,12 @@ from toxicjoin.pipeline import ToxicJoinPipeline
 from toxicjoin.policy import PolicyEngine, load_policy
 from toxicjoin.receipts import ReceiptMode, ReceiptStore
 from toxicjoin.sql import SqlAnalysisError, analyze_sql
-from toxicjoin.sql.budget import MAX_SQL_AST_DEPTH, MAX_SQL_TEXT_BYTES
+from toxicjoin.sql.budget import (
+    MAX_SQL_AST_DEPTH,
+    MAX_SQL_AST_NODES,
+    MAX_SQL_TEXT_BYTES,
+    _count_bounded,
+)
 
 
 SUBJECT = ColumnRef(dataset="customers", field_path="customer_id", alias="c")
@@ -137,26 +143,41 @@ def test_sql_text_budget_fails_before_analysis() -> None:
     assert "byte budget" in captured.value.detail
 
 
-def test_sql_ast_node_budget_rejects_wide_predicate_bomb() -> None:
-    conditions = " OR ".join(
-        f"c.coarse_region = '{index}'" for index in range(800)
-    )
-    sql = f"SELECT c.coarse_region FROM customers c WHERE {conditions}"
+def test_sql_ast_node_budget_rejects_wide_projection_bomb() -> None:
+    # Keep the tree shallow so the node budget, not the depth budget, is the first
+    # deterministic guard reached.
+    expressions = ", ".join(str(index) for index in range(MAX_SQL_AST_NODES + 100))
 
     with pytest.raises(SqlAnalysisError) as captured:
-        analyze_sql(sql)
+        analyze_sql(f"SELECT {expressions}")
 
     assert captured.value.reason_code == ReasonCode.QUERY_COMPLEXITY_LIMIT
     assert "node budget" in captured.value.detail
 
 
-def test_sql_ast_depth_budget_rejects_nested_expression_bomb() -> None:
+def test_sql_nested_expression_bomb_fails_closed() -> None:
     expression = "1"
     for _ in range(MAX_SQL_AST_DEPTH + 8):
         expression = f"COALESCE({expression}, 0)"
 
     with pytest.raises(SqlAnalysisError) as captured:
         analyze_sql(f"SELECT {expression}")
+
+    assert captured.value.reason_code == ReasonCode.QUERY_COMPLEXITY_LIMIT
+    assert any(
+        marker in captured.value.detail
+        for marker in ("depth budget", "parser recursion budget")
+    )
+
+
+def test_ast_depth_counter_rejects_deep_tree_when_parser_can_materialize_it() -> None:
+    node: exp.Expression = exp.Literal.number(1)
+    for _ in range(MAX_SQL_AST_DEPTH + 1):
+        node = exp.Paren(this=node)
+    root = exp.Select(expressions=[node])
+
+    with pytest.raises(SqlAnalysisError) as captured:
+        _count_bounded(root, initial_count=0)
 
     assert captured.value.reason_code == ReasonCode.QUERY_COMPLEXITY_LIMIT
     assert "depth budget" in captured.value.detail
