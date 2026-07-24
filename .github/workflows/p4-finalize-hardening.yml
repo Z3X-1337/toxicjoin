@@ -1,0 +1,522 @@
+name: P4 Finalize Supply Chain Hardening
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/p4-finalize-hardening.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: p4-finalize-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out exact P4 head
+        uses: actions/checkout@11d5960b21737293a21f48cc94acb231d88b3f16 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+
+      - name: Capture immutable starting head
+        shell: bash
+        run: |
+          set -euo pipefail
+          START_SHA="$(git rev-parse HEAD)"
+          test "$START_SHA" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          printf '%s\n' "$START_SHA" > /tmp/p4-finalize-start-sha
+
+      - name: Refuse unresolved dependency findings
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          summary = json.loads(Path('p4-bootstrap/summary.json').read_text())
+          failures = []
+          for profile in ('python_datahub', 'python_agent_registry'):
+              item = summary[profile]
+              if item['exit_code'] != 0 or item['finding_count'] != 0:
+                  failures.append({profile: item})
+          npm = summary['npm']
+          if npm['exit_code'] != 0 or npm['finding_count'] != 0:
+              failures.append({'npm': npm})
+          if failures:
+              raise SystemExit(
+                  'P4 bootstrap found unresolved dependency vulnerabilities: '
+                  + json.dumps(failures, sort_keys=True)
+              )
+          print('Bootstrap audits are clean for both Python profiles and npm.')
+          PY
+
+      - name: Resolve immutable action pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import re
+          import subprocess
+          from pathlib import Path
+
+          repos = {
+              'actions/checkout': 'v4',
+              'actions/setup-python': 'v5',
+              'actions/setup-node': 'v4',
+              'actions/upload-artifact': 'v4',
+              'actions/dependency-review-action': 'v4',
+              'github/codeql-action': 'v4',
+          }
+
+          def resolve(repo: str, tag: str) -> str:
+              output = subprocess.check_output(
+                  ['git', 'ls-remote', f'https://github.com/{repo}.git', f'refs/tags/{tag}'],
+                  text=True,
+              ).strip()
+              if not output:
+                  raise SystemExit(f'cannot resolve {repo}@{tag}')
+              sha = output.split()[0]
+              if not re.fullmatch(r'[0-9a-f]{40}', sha):
+                  raise SystemExit(f'invalid action SHA for {repo}@{tag}: {sha}')
+              return sha
+
+          pins = {repo: {'tag': tag, 'sha': resolve(repo, tag)} for repo, tag in repos.items()}
+          Path('/tmp/p4-action-pins.json').write_text(json.dumps(pins, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(pins, indent=2, sort_keys=True))
+          PY
+
+      - name: Apply repository-wide locked-install and immutable-pin policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          root = Path('.')
+          pins = json.loads(Path('/tmp/p4-action-pins.json').read_text())
+
+          # Preserve concise bootstrap provenance before deleting temporary generation files.
+          bootstrap = json.loads(Path('p4-bootstrap/summary.json').read_text())
+          evidence = {
+              'bootstrap_source_head_sha': bootstrap['source_head_sha'],
+              'python_datahub_audit': bootstrap['python_datahub'],
+              'python_agent_registry_audit': bootstrap['python_agent_registry'],
+              'npm_audit': bootstrap['npm'],
+              'docker_base_images': bootstrap['docker_base_images'],
+              'action_pins': pins,
+          }
+          evidence_path = Path('docs/security/p4-supply-chain-bootstrap-evidence.json')
+          evidence_path.parent.mkdir(parents=True, exist_ok=True)
+          evidence_path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + '\n')
+
+          # Rewrite Dockerfile using digests resolved by the audited bootstrap run.
+          docker = Path('Dockerfile').read_text()
+          digest_map = {}
+          for line in bootstrap['docker_base_images']:
+              logical, resolved = line.split('=', 1)
+              digest_map[logical] = resolved
+          node_ref = digest_map['node:22-alpine']
+          python_ref = digest_map['python:3.12-slim']
+          docker = re.sub(r'^FROM\s+node:22-alpine(?:@sha256:[0-9a-f]{64})?\s+AS\s+web-builder$',
+                          f'FROM {node_ref} AS web-builder', docker, flags=re.MULTILINE)
+          docker = re.sub(r'^FROM\s+python:3\.12-slim(?:@sha256:[0-9a-f]{64})?\s+AS\s+runtime$',
+                          f'FROM {python_ref} AS runtime', docker, flags=re.MULTILINE)
+          docker = docker.replace('COPY apps/web/package.json ./',
+                                  'COPY apps/web/package.json apps/web/package-lock.json ./')
+          docker = docker.replace('RUN npm install', 'RUN npm ci --no-audit --no-fund')
+          docker = docker.replace('COPY pyproject.toml README.md ./',
+                                  'COPY pyproject.toml uv.lock README.md ./')
+          docker = docker.replace(
+              'RUN python -m pip install --no-cache-dir .',
+              'RUN python -m pip install --no-cache-dir uv==0.8.4 \\\n    && uv sync --frozen --no-dev --no-editable',
+          )
+          if 'ENV PATH="/app/.venv/bin:$PATH"' not in docker:
+              docker = docker.replace('WORKDIR /app\n', 'WORKDIR /app\nENV PATH="/app/.venv/bin:$PATH"\n', 1)
+          Path('Dockerfile').write_text(docker)
+
+          def extra_args(spec: str) -> str:
+              extras = [item.strip() for item in spec.split(',') if item.strip()]
+              return ' '.join(f'--extra {item}' for item in extras)
+
+          install_re = re.compile(
+              r"^(?P<indent>\s*)(?:python(?:3)?\s+-m\s+pip|pip)\s+install\s+-e\s+['\"]?\.\[(?P<extras>[^\]]+)\]['\"]?\s*$"
+          )
+          plain_install_re = re.compile(
+              r"^(?P<indent>\s*)(?:python(?:3)?\s+-m\s+pip|pip)\s+install\s+-e\s+\.?\s*$"
+          )
+          upgrade_re = re.compile(
+              r"^(?P<indent>\s*)(?:python(?:3)?\s+-m\s+pip|pip)\s+install\s+--upgrade\s+pip(?:\s+wheel)?(?:\s+setuptools)?(?:\s+uv)?\s*$"
+          )
+
+          temporary = {
+              Path('.github/workflows/p4-supply-chain-bootstrap.yml'),
+              Path('.github/workflows/p4-materialize-locks.yml'),
+              Path('.github/workflows/p4-finalize-hardening.yml'),
+          }
+
+          for path in sorted(Path('.github/workflows').glob('*.yml')):
+              if path in temporary:
+                  continue
+              text = path.read_text()
+              rendered = []
+              for line in text.splitlines():
+                  match = install_re.match(line)
+                  if match:
+                      indent = match.group('indent')
+                      rendered.extend([
+                          f'{indent}python -m pip install --disable-pip-version-check uv==0.8.4',
+                          f'{indent}uv sync --frozen {extra_args(match.group("extras"))}'.rstrip(),
+                          f'{indent}export PATH="$PWD/.venv/bin:$PATH"',
+                          f'{indent}echo "$PWD/.venv/bin" >> "$GITHUB_PATH"',
+                      ])
+                      continue
+                  match = plain_install_re.match(line)
+                  if match:
+                      indent = match.group('indent')
+                      rendered.extend([
+                          f'{indent}python -m pip install --disable-pip-version-check uv==0.8.4',
+                          f'{indent}uv sync --frozen',
+                          f'{indent}export PATH="$PWD/.venv/bin:$PATH"',
+                          f'{indent}echo "$PWD/.venv/bin" >> "$GITHUB_PATH"',
+                      ])
+                      continue
+                  match = upgrade_re.match(line)
+                  if match:
+                      # A following editable-install line will install uv. Remove floating pip upgrades.
+                      continue
+                  rendered.append(line.replace('npm install', 'npm ci'))
+              path.write_text('\n'.join(rendered) + '\n')
+
+          # Permanent dependency/SAST/SBOM gate. Action refs are pinned below.
+          supply_chain = '''name: Supply Chain Security
+
+on:
+  pull_request:
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - "apps/web/package.json"
+      - "apps/web/package-lock.json"
+      - "Dockerfile"
+      - ".github/workflows/**"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-audit:
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [datahub, agent-registry]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Sync exact locked profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check uv==0.8.4
+          uv sync --frozen --extra dev --extra security --extra "${{ matrix.profile }}"
+      - name: Audit exact locked profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv export --frozen --no-emit-project --no-hashes \\
+            --extra dev --extra security --extra "${{ matrix.profile }}" \\
+            --output-file "requirements-${{ matrix.profile }}.txt"
+          uv run --frozen pip-audit -r "requirements-${{ matrix.profile }}.txt" --strict
+      - name: Generate Python CycloneDX SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --frozen cyclonedx-py requirements \\
+            "requirements-${{ matrix.profile }}.txt" \\
+            --output-format JSON \\
+            --output-file "sbom-python-${{ matrix.profile }}.cdx.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: "python-sbom-${{ matrix.profile }}"
+          path: "sbom-python-${{ matrix.profile }}.cdx.json"
+          if-no-files-found: error
+          retention-days: 30
+
+  bandit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Focused Python SAST
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check uv==0.8.4
+          uv sync --frozen --extra dev --extra security
+          uv run --frozen bandit -r src/toxicjoin -ll -ii -q
+
+  web-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install exact lock
+        run: npm ci --no-audit --no-fund
+      - name: Audit npm dependency graph
+        run: npm audit --audit-level=high
+      - name: Verify web build and tests
+        run: npm run check
+      - name: Generate Node CycloneDX SBOM
+        run: npm run sbom
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-sbom
+          path: apps/web/sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+'''
+          Path('.github/workflows/supply-chain.yml').write_text(supply_chain)
+
+          codeql = '''name: CodeQL
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: "${{ matrix.language }}"
+      - uses: github/codeql-action/autobuild@v4
+      - uses: github/codeql-action/analyze@v4
+'''
+          Path('.github/workflows/codeql.yml').write_text(codeql)
+
+          dependabot = '''version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: npm
+    directory: "/apps/web"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+'''
+          Path('.github/dependabot.yml').write_text(dependabot)
+
+          policy = '''# Dependency Update and Supply-Chain Policy
+
+## Locked resolution
+
+- Python resolution is committed in `uv.lock` and CI/release builds use `uv --frozen` semantics.
+- Web resolution is committed in `apps/web/package-lock.json` and CI/release builds use `npm ci`.
+- DataHub and Agent Registry extras remain explicitly mutually exclusive because they intentionally pin different `acryl-datahub` builds.
+- Docker base images are pinned by immutable digest.
+- Third-party GitHub Actions are pinned to full 40-character commit SHAs.
+
+## Security gates
+
+- `pip-audit` runs against both supported Python profiles.
+- `npm audit --audit-level=high` gates High/Critical Node advisories.
+- Dependency Review blocks newly introduced High/Critical vulnerable dependencies on pull requests.
+- Bandit gates Medium-or-higher / Medium-confidence Python findings; findings require human triage rather than automatic suppression.
+- CodeQL analyzes Python and JavaScript/TypeScript.
+- CycloneDX SBOMs are generated for both Python profiles and the web dependency graph.
+
+## Update SLA
+
+- Critical advisory affecting a reachable production dependency: triage immediately; patch or documented mitigation within 24 hours.
+- High advisory affecting a reachable production dependency: patch or documented mitigation within 7 calendar days.
+- Medium advisory: triage within 30 calendar days and schedule according to reachability/exploitability.
+- Low/informational: batch during routine dependency maintenance unless risk context justifies escalation.
+
+No dependency update is auto-merged. CI, security evidence, and exact-head release validation remain mandatory.
+'''
+          Path('docs/security/dependency-update-policy.md').write_text(policy)
+
+          # Resolve every remote action tag to an immutable commit and record provenance.
+          action_ref = re.compile(r'(?P<prefix>uses:\s*)(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?P<suffix>/[A-Za-z0-9_./-]+)?@(?P<ref>[^\s#]+)')
+          pin_evidence = {}
+          for path in sorted(Path('.github/workflows').glob('*.yml')):
+              if path in temporary:
+                  continue
+              text = path.read_text()
+              def replace(match: re.Match[str]) -> str:
+                  repo = match.group('repo')
+                  suffix = match.group('suffix') or ''
+                  ref = match.group('ref')
+                  if re.fullmatch(r'[0-9a-f]{40}', ref):
+                      sha = ref
+                  else:
+                      record = pins.get(repo)
+                      if record is None:
+                          raise SystemExit(f'unrecognized unpinned GitHub Action: {repo}@{ref} in {path}')
+                      if ref != record['tag']:
+                          raise SystemExit(
+                              f'unexpected tag for {repo}: {ref}; expected {record["tag"]}'
+                          )
+                      sha = record['sha']
+                  pin_evidence[f'{repo}{suffix}'] = sha
+                  return f'{match.group("prefix")}{repo}{suffix}@{sha}'
+              path.write_text(action_ref.sub(replace, text))
+
+          unresolved = []
+          for path in sorted(Path('.github/workflows').glob('*.yml')):
+              if path in temporary:
+                  continue
+              for line in path.read_text().splitlines():
+                  if 'uses:' not in line or 'uses: ./' in line:
+                      continue
+                  match = re.search(r'@([^\s#]+)', line)
+                  if match and not re.fullmatch(r'[0-9a-f]{40}', match.group(1)):
+                      unresolved.append(f'{path}: {line.strip()}')
+          if unresolved:
+              raise SystemExit('Unpinned actions remain: ' + json.dumps(unresolved))
+
+          Path('docs/security/p4-action-pins.json').write_text(
+              json.dumps(pin_evidence, indent=2, sort_keys=True) + '\n'
+          )
+
+          # Remove one-shot bootstrap/finalizer state from the merge candidate.
+          for path in temporary:
+              path.unlink(missing_ok=True)
+          import shutil
+          shutil.rmtree('p4-bootstrap', ignore_errors=True)
+          PY
+
+      - name: Validate locked Python environments, audits, SAST, and SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check uv==0.8.4
+
+          for profile in datahub agent-registry; do
+            uv sync --frozen --extra dev --extra security --extra "$profile"
+            uv export --frozen --no-emit-project --no-hashes \
+              --extra dev --extra security --extra "$profile" \
+              --output-file "/tmp/requirements-${profile}.txt"
+            uv run --frozen pip-audit -r "/tmp/requirements-${profile}.txt" --strict
+            uv run --frozen cyclonedx-py requirements \
+              "/tmp/requirements-${profile}.txt" \
+              --output-format JSON \
+              --output-file "/tmp/sbom-python-${profile}.cdx.json"
+            test -s "/tmp/sbom-python-${profile}.cdx.json"
+          done
+
+          uv sync --frozen --extra dev --extra security
+          uv run --frozen ruff check src tests
+          uv run --frozen bandit -r src/toxicjoin -ll -ii -q
+          uv run --frozen pytest -q
+
+      - name: Validate locked web install, audit, tests, build, and SBOM
+        shell: bash
+        working-directory: apps/web
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm audit --audit-level=high
+          npm run check
+          npm run sbom
+          test -s sbom.cdx.json
+
+      - name: Validate digest-pinned production image
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Eq '^FROM node:22-alpine@sha256:[0-9a-f]{64} AS web-builder$' Dockerfile
+          grep -Eq '^FROM python:3\.12-slim@sha256:[0-9a-f]{64} AS runtime$' Dockerfile
+          docker build --pull=false --tag toxicjoin:p4-finalizer .
+          docker run --rm toxicjoin:p4-finalizer python -c 'import toxicjoin, fastapi, duckdb'
+
+      - name: Verify final branch head and push one hardening commit
+        shell: bash
+        env:
+          TARGET_BRANCH: security/p4-supply-chain
+        run: |
+          set -euo pipefail
+          START_SHA="$(cat /tmp/p4-finalize-start-sha)"
+          REMOTE_SHA="$(git ls-remote origin "refs/heads/${TARGET_BRANCH}" | awk 'NR==1 {print $1}')"
+          if [ "$REMOTE_SHA" != "$START_SHA" ]; then
+            echo "Refusing to finalize: branch moved from $START_SHA to $REMOTE_SHA" >&2
+            exit 1
+          fi
+
+          git config user.name 'toxicjoin-security-bot'
+          git config user.email 'toxicjoin-security-bot@users.noreply.github.com'
+          git add -A
+          git diff --cached --exit-code && exit 0
+          git commit -m 'P4: enforce reproducible audited supply chain'
+          git push origin "HEAD:${TARGET_BRANCH}"
