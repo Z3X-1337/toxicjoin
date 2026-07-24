@@ -58,13 +58,14 @@ def build_composition_metadata(
 
 
 def canonicalize_cohort_sql(sql: str, *, dialect: str = "duckdb") -> str:
-    """Canonicalize row-selection structure while excluding root output aliases.
+    """Canonicalize membership-shaping SQL while excluding root output aliases.
 
     The root SELECT list is replaced with a constant because released output semantics
-    are tracked independently by ``DisclosureSemanticRelease``. ORDER BY is removed
-    because it changes presentation order, not cohort membership. WHERE, JOIN, CTE,
-    HAVING, QUALIFY, DISTINCT, GROUP BY, LIMIT, OFFSET, and literal predicates remain in
-    the in-memory canonical form and are protected by HMAC before persistence.
+    are tracked independently by ``DisclosureSemanticRelease``. A root ORDER BY is
+    removed only when neither LIMIT nor OFFSET is present; with row limiting, ordering
+    changes which rows or groups are selected and therefore must remain part of cohort
+    identity. WHERE, JOIN, CTE, HAVING, QUALIFY, DISTINCT, GROUP BY, LIMIT, OFFSET, and
+    literal predicates remain in the in-memory canonical form and are HMAC-protected.
     """
 
     try:
@@ -75,8 +76,10 @@ def canonicalize_cohort_sql(sql: str, *, dialect: str = "duckdb") -> str:
         raise DisclosureCompositionError("cohort identity requires exactly one SELECT")
 
     root = statements[0].copy()
+    has_row_limit = root.args.get("limit") is not None or root.args.get("offset") is not None
     root.set("expressions", [exp.Literal.number(1)])
-    root.set("order", None)
+    if not has_row_limit:
+        root.set("order", None)
     return root.sql(dialect=dialect, pretty=False, comments=False)
 
 
