@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 import time
 from datetime import date, datetime, time as time_value
@@ -19,7 +20,11 @@ from toxicjoin.execute.authorization import (
     ExecutionAuthorizationError,
     ExecutionAuthorizer,
 )
+from toxicjoin.execute.limits import ExecutionOutputLimits
 from toxicjoin.models import ColumnRef, QueryPlan, ReasonCode, StrictModel
+
+
+_MAX_CELL_NESTING = 32
 
 
 class ExecutionError(ValueError):
@@ -55,6 +60,7 @@ class DuckDBExecutor:
         *,
         max_preview_rows: int = 50,
         timeout_seconds: float = 5.0,
+        output_limits: ExecutionOutputLimits | None = None,
     ) -> None:
         self.database = Path(database)
         if max_preview_rows < 1:
@@ -63,6 +69,7 @@ class DuckDBExecutor:
             raise ValueError("timeout_seconds must be positive")
         self.max_preview_rows = max_preview_rows
         self.timeout_seconds = timeout_seconds
+        self.output_limits = output_limits or ExecutionOutputLimits.from_environment()
         self._authorizer: ExecutionAuthorizer | None = None
         self._authority_lock = threading.Lock()
 
@@ -206,10 +213,7 @@ class DuckDBExecutor:
         elapsed_ms = (time.perf_counter() - started) * 1000
         truncated = len(fetched) > self.max_preview_rows
         preview = fetched[: self.max_preview_rows]
-        normalized_rows = tuple(
-            tuple(_json_safe(value) for value in row)
-            for row in preview
-        )
+        normalized_rows = self._normalize_bounded_rows(columns, preview)
 
         return ExecutionResult(
             authorization_id=authorization.authorization_id,
@@ -221,6 +225,55 @@ class DuckDBExecutor:
             truncated=truncated,
             elapsed_ms=elapsed_ms,
         )
+
+    def _normalize_bounded_rows(
+        self,
+        columns: tuple[str, ...],
+        rows: list[tuple[Any, ...]],
+    ) -> tuple[tuple[Any, ...], ...]:
+        normalized_rows: list[tuple[Any, ...]] = []
+        for row in rows:
+            normalized_row = tuple(self._normalize_bounded_cell(value) for value in row)
+            normalized_rows.append(normalized_row)
+            payload_size = _serialized_json_bytes(
+                {"columns": columns, "rows": normalized_rows}
+            )
+            if payload_size > self.output_limits.max_result_bytes:
+                raise ExecutionError(
+                    ReasonCode.RESULT_SIZE_LIMIT,
+                    (
+                        "serialized execution payload exceeds "
+                        f"{self.output_limits.max_result_bytes} byte budget"
+                    ),
+                )
+        return tuple(normalized_rows)
+
+    def _normalize_bounded_cell(self, value: Any) -> Any:
+        if isinstance(value, str) and len(value.encode("utf-8")) > self.output_limits.max_cell_bytes:
+            raise ExecutionError(
+                ReasonCode.RESULT_SIZE_LIMIT,
+                f"serialized cell exceeds {self.output_limits.max_cell_bytes} byte budget",
+            )
+        if isinstance(value, bytes) and (len(value) * 2 + 2) > self.output_limits.max_cell_bytes:
+            raise ExecutionError(
+                ReasonCode.RESULT_SIZE_LIMIT,
+                f"serialized cell exceeds {self.output_limits.max_cell_bytes} byte budget",
+            )
+
+        try:
+            normalized = _json_safe(value)
+        except _CellNestingError as exc:
+            raise ExecutionError(
+                ReasonCode.RESULT_SIZE_LIMIT,
+                f"serialized cell nesting exceeds {_MAX_CELL_NESTING} levels",
+            ) from exc
+
+        if _serialized_json_bytes(normalized) > self.output_limits.max_cell_bytes:
+            raise ExecutionError(
+                ReasonCode.RESULT_SIZE_LIMIT,
+                f"serialized cell exceeds {self.output_limits.max_cell_bytes} byte budget",
+            )
+        return normalized
 
     def _connect(self) -> duckdb.DuckDBPyConnection:
         try:
@@ -244,7 +297,13 @@ class DuckDBExecutor:
             ) from exc
 
 
-def _json_safe(value: Any) -> Any:
+class _CellNestingError(ValueError):
+    pass
+
+
+def _json_safe(value: Any, *, depth: int = 0) -> Any:
+    if depth > _MAX_CELL_NESTING:
+        raise _CellNestingError("cell nesting limit exceeded")
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, Decimal):
@@ -256,7 +315,19 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, bytes):
         return value.hex()
     if isinstance(value, (list, tuple)):
-        return [_json_safe(item) for item in value]
+        return [_json_safe(item, depth=depth + 1) for item in value]
     if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
+        return {
+            str(key): _json_safe(item, depth=depth + 1)
+            for key, item in value.items()
+        }
     return str(value)
+
+
+def _serialized_json_bytes(value: Any) -> int:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return len(encoded)
