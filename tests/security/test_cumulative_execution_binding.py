@@ -170,6 +170,39 @@ def test_required_state_missing_fails_closed_before_execution(tmp_path: Path) ->
     assert result.receipt.execution is None
 
 
+def test_inactive_fixture_pipeline_drops_disclosure_authority_and_remains_stateless(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "fixture.duckdb"
+    seed_database(database)
+    inactive_ledger = DisclosureLedger(tmp_path / "inactive-disclosures.sqlite3")
+    pipeline = ToxicJoinPipeline(
+        context_resolver=FixtureContextResolver(default_fixture_catalog()),
+        policy_engine=PolicyEngine(load_policy()),
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        mode=ReceiptMode.FIXTURE,
+        executor=DuckDBExecutor(database),
+        disclosure_ledger=inactive_ledger,
+        stateful_privacy_required=False,
+        include_sanitized_sql=False,
+    )
+
+    assert pipeline.disclosure_ledger is None
+    with bind_request_identity(_identity()):
+        first = pipeline.execute_safe(
+            PipelineRequest(task_purpose=_TASK, sql=_count_sql("north"), subject_key=_SUBJECT)
+        )
+        second = pipeline.execute_safe(
+            PipelineRequest(task_purpose=_TASK, sql=_count_sql("south"), subject_key=_SUBJECT)
+        )
+
+    assert first.effective_decision == Decision.ALLOW
+    assert second.effective_decision == Decision.ALLOW
+    assert first.verification is not None and first.verification.execution is not None
+    assert second.verification is not None and second.verification.execution is not None
+    assert inactive_ledger.verify_all() == 0
+
+
 def _committed_authorizer(tmp_path: Path):
     resolver = FixtureContextResolver(default_fixture_catalog())
     policy = PolicyEngine(load_policy())
