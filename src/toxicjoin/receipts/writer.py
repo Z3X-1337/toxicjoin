@@ -36,6 +36,12 @@ _RECEIPT_ID = re.compile(r"^tj_[0-9a-f]{16}$")
 _HASH_EXCLUDED_FIELDS = {"receipt_id", "created_at", "content_sha256"}
 
 
+def allocate_receipt_id() -> str:
+    """Allocate the opaque receipt identity before disclosure authorization begins."""
+
+    return f"tj_{uuid4().hex[:16]}"
+
+
 def sanitize_sql(sql: str, *, dialect: str = "duckdb") -> str:
     """Return formatted SQL with every literal value replaced by a placeholder.
 
@@ -72,7 +78,7 @@ def build_receipt(
 ) -> DecisionReceipt:
     """Build a strict receipt without copying raw result rows into the payload."""
 
-    resolved_receipt_id = receipt_id or f"tj_{uuid4().hex[:16]}"
+    resolved_receipt_id = receipt_id or allocate_receipt_id()
     resolved_created_at = (created_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
     resolved_identity = identity or current_request_identity()
 
