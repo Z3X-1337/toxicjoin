@@ -40,6 +40,7 @@ from toxicjoin.auth import (
 from toxicjoin.benchmark.evidence import BENCHMARK_EVIDENCE, BenchmarkEvidenceSummary
 from toxicjoin.context import FixtureContextResolver
 from toxicjoin.demo import default_fixture_catalog, seed_database
+from toxicjoin.disclosure import DisclosureLedger
 from toxicjoin.execute import DuckDBExecutor
 from toxicjoin.pipeline import PipelineRequest, ToxicJoinPipeline
 from toxicjoin.policy import PolicyEngine, load_policy
@@ -66,7 +67,10 @@ _DEFAULT_SECURE_ALLOWED_HOSTS = ("localhost", "127.0.0.1", "testserver")
 _HSTS_VALUE = "max-age=31536000; includeSubDomains"
 
 
-def create_default_pipeline() -> ToxicJoinPipeline:
+def create_default_pipeline(
+    *,
+    stateful_privacy_required: bool = False,
+) -> ToxicJoinPipeline:
     """Create the zero-configuration deterministic fixture pipeline."""
 
     runtime_dir = Path(os.getenv("TOXICJOIN_RUNTIME_DIR", ".toxicjoin"))
@@ -75,6 +79,12 @@ def create_default_pipeline() -> ToxicJoinPipeline:
     )
     receipt_dir = Path(
         os.getenv("TOXICJOIN_RECEIPT_DIR", str(runtime_dir / "receipts"))
+    )
+    disclosure_path = Path(
+        os.getenv(
+            "TOXICJOIN_DISCLOSURE_LEDGER",
+            str(runtime_dir / "disclosures.sqlite3"),
+        )
     )
 
     if not database.exists():
@@ -86,6 +96,8 @@ def create_default_pipeline() -> ToxicJoinPipeline:
         receipt_store=ReceiptStore(receipt_dir),
         mode=ReceiptMode.FIXTURE,
         executor=DuckDBExecutor(database),
+        disclosure_ledger=DisclosureLedger(disclosure_path),
+        stateful_privacy_required=stateful_privacy_required,
         include_sanitized_sql=True,
     )
 
@@ -120,6 +132,12 @@ def create_app(
     restricted_surface = resolved_authenticator is not None or (
         pipeline is not None and pipeline.mode == ReceiptMode.LIVE
     )
+    if pipeline is not None and restricted_surface:
+        if pipeline.disclosure_ledger is None or not pipeline.stateful_privacy_required:
+            raise ValueError(
+                "restricted API requires an enabled stateful privacy disclosure ledger"
+            )
+
     serve_judge_interface = resolved_web_dist is not None and not restricted_surface
     fastapi_kwargs = {
         "title": "ToxicJoin",
@@ -139,7 +157,9 @@ def create_app(
 
         @asynccontextmanager
         async def lifespan(application: FastAPI):
-            application.state.pipeline = create_default_pipeline()
+            application.state.pipeline = create_default_pipeline(
+                stateful_privacy_required=restricted_surface
+            )
             yield
 
         application = FastAPI(lifespan=lifespan, **fastapi_kwargs)
@@ -209,7 +229,12 @@ def create_app(
                 receipt_parent,
                 os.W_OK,
             )
-            ready = database_ready and receipt_store_ready
+            privacy_ready = not services.stateful_privacy_required or (
+                services.disclosure_ledger is not None
+                and services.disclosure_ledger.path.is_file()
+                and services.disclosure_ledger.cohort_key_path.is_file()
+            )
+            ready = database_ready and receipt_store_ready and privacy_ready
             if not ready:
                 response.status_code = 503
             return HealthResponse(
