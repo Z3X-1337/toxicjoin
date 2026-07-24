@@ -74,6 +74,36 @@ def test_system_and_edited_metadata_are_merged_and_deduplicated() -> None:
     assert normalized.glossary_terms == ("Quasi Identifier",)
 
 
+def test_cleaned_mcp_string_tag_entry_is_supported() -> None:
+    field = {
+        "fieldPath": "age_band",
+        "tags": ["urn:li:tag:toxicjoin:quasi-identifier"],
+    }
+
+    normalized = _normalize_field(field)
+
+    assert normalized.category == SensitivityCategory.QUASI_IDENTIFIER
+    assert normalized.tags == (
+        "urn:li:tag:toxicjoin:quasi-identifier",
+    )
+
+
+def test_cleaned_mcp_string_glossary_entry_is_supported() -> None:
+    field = {
+        "fieldPath": "customer_id",
+        "editedGlossaryTerms": {
+            "terms": ["urn:li:glossaryTerm:StableCustomerIdentifier"],
+        },
+    }
+
+    normalized = _normalize_field(field)
+
+    assert normalized.category == SensitivityCategory.STABLE_PSEUDONYM
+    assert normalized.glossary_terms == (
+        "urn:li:glossaryTerm:StableCustomerIdentifier",
+    )
+
+
 def test_conflicting_system_and_edited_categories_fail_closed() -> None:
     field = {
         "fieldPath": "case_category",
