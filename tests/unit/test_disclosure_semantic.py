@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-
 import pytest
 
 from toxicjoin.auth import RequestIdentity
@@ -31,10 +29,6 @@ def _identity(
         agent_id=agent,
         session_id=session,
     )
-
-
-def _sha(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def test_scope_ignores_credential_session_and_dataset_rotation_for_same_subject() -> None:
@@ -130,24 +124,29 @@ def test_conflicting_subject_categories_across_sources_fail_closed() -> None:
         )
 
 
-def test_semantic_hash_is_alias_insensitive_but_governance_sensitive() -> None:
+def test_semantic_release_is_alias_insensitive_and_does_not_retain_aliases() -> None:
     catalog = default_fixture_catalog()
+    first_alias = "CALLER_ALIAS_A_MUST_NOT_PERSIST"
+    second_alias = "CALLER_ALIAS_B_MUST_NOT_PERSIST"
     first = analyze_sql(
-        "SELECT AVG(o.purchase_amount) AS amount_a FROM orders o",
+        f"SELECT AVG(o.purchase_amount) AS {first_alias} FROM orders o",
         dialect="duckdb",
     )
     renamed = analyze_sql(
-        "SELECT AVG(o.purchase_amount) AS amount_b FROM orders o",
+        f"SELECT AVG(o.purchase_amount) AS {second_alias} FROM orders o",
         dialect="duckdb",
     )
 
     first_release = build_semantic_release(catalog, first)
     renamed_release = build_semantic_release(catalog, renamed)
 
-    assert first_release.outputs[0].output_name != renamed_release.outputs[0].output_name
     assert first_release.semantic_sha256 == renamed_release.semantic_sha256
+    assert first_release.outputs == renamed_release.outputs
     assert first_release.outputs[0].sources[0].category == SensitivityCategory.SENSITIVE_ATTRIBUTE
     assert first_release.aggregate_functions == ("AVG",)
+    rendered = first_release.model_dump_json()
+    assert first_alias not in rendered
+    assert second_alias not in rendered
 
 
 def test_semantic_release_captures_group_join_and_referenced_governance() -> None:
@@ -175,21 +174,24 @@ def test_semantic_release_captures_group_join_and_referenced_governance() -> Non
     assert release.aggregate_functions == ("AVG",)
 
 
-def test_disclosure_event_contains_hashes_not_sql_or_literals() -> None:
+def test_disclosure_event_excludes_sql_hash_alias_and_session_metadata() -> None:
     catalog = default_fixture_catalog()
-    sql = "SELECT AVG(o.purchase_amount) AS avg_purchase FROM orders o"
+    alias_marker = "SECRET_ALIAS_MUST_NOT_PERSIST"
+    session_marker = "SECRET_SESSION_MUST_NOT_PERSIST"
+    sql = f"SELECT AVG(o.purchase_amount) AS {alias_marker} FROM orders o"
     plan = analyze_sql(sql, dialect="duckdb")
     event = build_disclosure_event(
-        identity=_identity(),
+        identity=_identity(session=session_marker),
         catalog=catalog,
         query_plan=plan,
         subject_key=ColumnRef(dataset="orders", field_path="customer_id"),
         receipt_id="tj_0000000000000001",
-        query_sha256=_sha(sql),
         policy_version="0.2.0",
     )
 
     rendered = event.model_dump_json()
     assert sql not in rendered
-    assert "avg_purchase" in rendered
-    assert event.query_sha256 == _sha(sql)
+    assert alias_marker not in rendered
+    assert session_marker not in rendered
+    assert "query_sha256" not in rendered
+    assert event.audit_identity.credential_id == "credential-a"
