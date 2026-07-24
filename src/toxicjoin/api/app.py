@@ -120,6 +120,7 @@ def create_app(
     restricted_surface = resolved_authenticator is not None or (
         pipeline is not None and pipeline.mode == ReceiptMode.LIVE
     )
+    serve_judge_interface = resolved_web_dist is not None and not restricted_surface
     fastapi_kwargs = {
         "title": "ToxicJoin",
         "version": _package_version(),
@@ -146,7 +147,7 @@ def create_app(
         application = FastAPI(**fastapi_kwargs)
         application.state.pipeline = pipeline
 
-    application.state.web_dist = resolved_web_dist
+    application.state.web_dist = resolved_web_dist if serve_judge_interface else None
     application.state.authenticator = resolved_authenticator
     application.state.resource_limits = resolved_limits
     application.state.traffic_limiter = resolved_traffic_limiter
@@ -290,7 +291,8 @@ def create_app(
                 )
             return receipt
 
-    if resolved_web_dist is not None:
+    if serve_judge_interface:
+        assert resolved_web_dist is not None
         assets = resolved_web_dist / "assets"
         if assets.is_dir():
             application.mount(
