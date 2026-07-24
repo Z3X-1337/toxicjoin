@@ -3,9 +3,18 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
+import pytest
+from pydantic import ValidationError
+
 from toxicjoin.context.fixture import ContextResolution
 from toxicjoin.models import Decision, PolicyDecision, ReasonCode
-from toxicjoin.receipts import ReceiptMode, ReceiptStore, build_receipt, compute_content_hash
+from toxicjoin.receipts import (
+    DecisionReceipt,
+    ReceiptMode,
+    ReceiptStore,
+    build_receipt,
+    compute_content_hash,
+)
 
 
 def _decision() -> PolicyDecision:
@@ -46,6 +55,22 @@ def test_v11_receipt_hash_binds_principal_identity() -> None:
     assert alice.principal_id == "alice"
     assert bob.principal_id == "bob"
     assert alice.content_sha256 != bob.content_sha256
+
+
+def test_v11_receipt_requires_principal_identity() -> None:
+    payload = _receipt("alice").model_dump(mode="json")
+    payload["principal_id"] = None
+
+    with pytest.raises(ValidationError, match="schema 1.1 receipts require principal_id"):
+        DecisionReceipt.model_validate(payload)
+
+
+def test_receipt_rejects_unknown_schema_version() -> None:
+    payload = _receipt("alice").model_dump(mode="json")
+    payload["schema_version"] = "1.2"
+
+    with pytest.raises(ValidationError):
+        DecisionReceipt.model_validate(payload)
 
 
 def test_v10_receipt_without_principal_remains_hash_verifiable(tmp_path) -> None:
