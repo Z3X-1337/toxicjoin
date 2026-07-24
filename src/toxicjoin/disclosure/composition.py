@@ -17,7 +17,7 @@ from sqlglot import exp
 from toxicjoin.disclosure.models import (
     CompositionRule,
     DisclosureComposition,
-    DisclosureCompositionDecision,
+    DisclosureCompositionEvaluation,
     DisclosureEvent,
     DisclosureRecord,
     DisclosureSemanticRelease,
@@ -112,7 +112,7 @@ def validate_event_composition(event: DisclosureEvent) -> None:
 def evaluate_composition_history(
     history: tuple[DisclosureRecord, ...],
     candidate: DisclosureEvent,
-) -> DisclosureCompositionDecision:
+) -> DisclosureCompositionEvaluation:
     """Evaluate one candidate against committed history without mutating state."""
 
     validate_event_composition(candidate)
@@ -127,7 +127,7 @@ def evaluate_composition_history(
         if not protected:
             continue
         if record.event.composition is None:
-            return DisclosureCompositionDecision(
+            return DisclosureCompositionEvaluation(
                 allowed=False,
                 rule=CompositionRule.LEGACY_HISTORY_BLOCK,
                 protected_release=composition.protected_release,
@@ -136,21 +136,19 @@ def evaluate_composition_history(
         prior_protected.append(record.event.composition)
 
     if not composition.protected_release:
-        return DisclosureCompositionDecision.model_construct(
+        return DisclosureCompositionEvaluation(
             allowed=True,
             rule=CompositionRule.UNPROTECTED_RELEASE,
             protected_release=False,
             prior_protected_count=len(prior_protected),
-            commitment=None,
         )
 
     if not prior_protected:
-        return DisclosureCompositionDecision.model_construct(
+        return DisclosureCompositionEvaluation(
             allowed=True,
             rule=CompositionRule.FIRST_PROTECTED_RELEASE,
             protected_release=True,
             prior_protected_count=0,
-            commitment=None,
         )
 
     same_release = all(
@@ -159,15 +157,14 @@ def evaluate_composition_history(
         for previous in prior_protected
     )
     if same_release:
-        return DisclosureCompositionDecision.model_construct(
+        return DisclosureCompositionEvaluation(
             allowed=True,
             rule=CompositionRule.REPEAT_IDENTICAL_RELEASE,
             protected_release=True,
             prior_protected_count=len(prior_protected),
-            commitment=None,
         )
 
-    return DisclosureCompositionDecision(
+    return DisclosureCompositionEvaluation(
         allowed=False,
         rule=CompositionRule.CUMULATIVE_VARIATION_BLOCK,
         protected_release=True,
