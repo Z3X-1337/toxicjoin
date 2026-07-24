@@ -42,7 +42,10 @@ def default_fixture_catalog() -> FixtureCatalog:
                         },
                         "coarse_region": {
                             "category": "QUASI_IDENTIFIER",
-                            "tags": ["toxicjoin:coarse-location"],
+                            "tags": [
+                                "toxicjoin:coarse-location",
+                                "toxicjoin:quasi-identifier",
+                            ],
                             "glossary_terms": ["urn:li:glossaryTerm:CoarseRegion"],
                         },
                     },
@@ -55,7 +58,10 @@ def default_fixture_catalog() -> FixtureCatalog:
                     "owner": "urn:li:corpuser:commerce-analytics",
                     "domain": "urn:li:domain:commerce",
                     "fields": {
-                        "order_id": {"category": "PUBLIC_OR_LOW_RISK"},
+                        "order_id": {
+                            "category": "PUBLIC_OR_LOW_RISK",
+                            "tags": ["toxicjoin:public-or-low-risk"],
+                        },
                         "customer_id": {
                             "category": "STABLE_PSEUDONYM",
                             "tags": ["toxicjoin:stable-pseudonym"],
@@ -67,8 +73,14 @@ def default_fixture_catalog() -> FixtureCatalog:
                                 "urn:li:glossaryTerm:PurchaseAmount"
                             ],
                         },
-                        "category": {"category": "PUBLIC_OR_LOW_RISK"},
-                        "ordered_at": {"category": "PUBLIC_OR_LOW_RISK"},
+                        "category": {
+                            "category": "PUBLIC_OR_LOW_RISK",
+                            "tags": ["toxicjoin:public-or-low-risk"],
+                        },
+                        "ordered_at": {
+                            "category": "PUBLIC_OR_LOW_RISK",
+                            "tags": ["toxicjoin:public-or-low-risk"],
+                        },
                     },
                 },
                 "support_cases": {
@@ -79,7 +91,10 @@ def default_fixture_catalog() -> FixtureCatalog:
                     "owner": "urn:li:corpuser:customer-support",
                     "domain": "urn:li:domain:customer-experience",
                     "fields": {
-                        "case_id": {"category": "PUBLIC_OR_LOW_RISK"},
+                        "case_id": {
+                            "category": "PUBLIC_OR_LOW_RISK",
+                            "tags": ["toxicjoin:public-or-low-risk"],
+                        },
                         "customer_id": {
                             "category": "STABLE_PSEUDONYM",
                             "tags": ["toxicjoin:stable-pseudonym"],
@@ -116,7 +131,10 @@ def default_fixture_catalog() -> FixtureCatalog:
                                 "toxicjoin:quasi-identifier",
                             ],
                         },
-                        "activity_count": {"category": "PUBLIC_OR_LOW_RISK"},
+                        "activity_count": {
+                            "category": "PUBLIC_OR_LOW_RISK",
+                            "tags": ["toxicjoin:public-or-low-risk"],
+                        },
                     },
                 },
                 "retention_scores": {
@@ -136,7 +154,10 @@ def default_fixture_catalog() -> FixtureCatalog:
                             "tags": ["toxicjoin:model-output"],
                             "glossary_terms": ["urn:li:glossaryTerm:ChurnScore"],
                         },
-                        "model_timestamp": {"category": "PUBLIC_OR_LOW_RISK"},
+                        "model_timestamp": {
+                            "category": "PUBLIC_OR_LOW_RISK",
+                            "tags": ["toxicjoin:public-or-low-risk"],
+                        },
                     },
                 },
             },
