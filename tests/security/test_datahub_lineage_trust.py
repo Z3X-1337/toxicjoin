@@ -52,6 +52,10 @@ class _FakeDataHubClient:
                     "fieldPath": "harmless_value",
                     "tags": ["toxicjoin:public-or-low-risk"],
                 },
+                {
+                    "fieldPath": "secret_value",
+                    "tags": ["toxicjoin:sensitive-attribute"],
+                },
             )
         raise AssertionError(f"unexpected dataset urn: {urn}")
 
@@ -68,6 +72,8 @@ class _FakeDataHubClient:
         self.lineage_calls.append((urn, column, max_hops, max_results))
         if urn == DERIVED_URN and column == "harmless_value":
             return self.derived_lineage
+        if urn == DERIVED_URN and column == "secret_value":
+            return _lineage_payload([_relationship(SOURCE_URN, ["secret"])])
         return _lineage_payload([])
 
 
@@ -110,7 +116,7 @@ def _asset_map() -> DataHubAssetMap:
         version="p3c-test-v1",
         datasets={"source": SOURCE_URN, "derived": DERIVED_URN},
         flagship_dataset="derived",
-        flagship_column="harmless_value",
+        flagship_column="secret_value",
     )
 
 
@@ -138,11 +144,14 @@ def test_materialized_public_alias_inherits_upstream_pseudonym_risk() -> None:
     ]
     assert all(call[2] == 3 for call in client.lineage_calls)
 
-    plan = analyze_sql(
-        "SELECT d.harmless_value, s.secret "
-        "FROM derived AS d CROSS JOIN source AS s"
-    )
+    plan = analyze_sql("SELECT harmless_value, secret_value FROM derived")
     context = FixtureContextResolver(snapshot.catalog).resolve(plan)
+    assert {
+        column.category for column in context.projected_context
+    } == {
+        SensitivityCategory.PUBLIC_OR_LOW_RISK,
+        SensitivityCategory.SENSITIVE_ATTRIBUTE,
+    }
     decision = PolicyEngine(load_policy()).evaluate(
         context.to_policy_input(
             task_purpose="P3-C materialized lineage regression",
