@@ -12,6 +12,7 @@ from toxicjoin.receipts.models import (
 )
 from toxicjoin.receipts.writer import (
     ReceiptStore,
+    allocate_receipt_id,
     build_receipt,
     compute_content_hash,
     sanitize_sql,
@@ -27,6 +28,7 @@ __all__ = [
     "ReceiptVerificationCheck",
     "ReceiptWriteback",
     "WritebackState",
+    "allocate_receipt_id",
     "build_receipt",
     "compute_content_hash",
     "sanitize_sql",
