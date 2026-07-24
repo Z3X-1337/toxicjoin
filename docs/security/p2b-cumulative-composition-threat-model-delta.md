@@ -101,6 +101,22 @@ The privacy commitment is created **before** execution capability issuance. This
 
 The executor also binds the disclosure ledger and the `require_disclosure_commitment` flag as part of its authority identity. Rebinding to a different ledger or disabling stateful privacy after the executor is bound is rejected.
 
+## Single-claim commitment rule
+
+A valid disclosure commitment is not a reusable authorization voucher. Immediately before constructing an execution capability, `ExecutionAuthorizer.issue()` claims that commitment for one freshly generated `tj_auth_...` authorization ID.
+
+The SQLite `disclosure_authorization_claims` table is append-only and stores only:
+
+- committed disclosure `record_id`;
+- unique execution `authorization_id`;
+- matching `receipt_id`;
+- commitment content SHA;
+- creation timestamp.
+
+The disclosure record ID is the primary key and the authorization ID is unique. A second attempt to issue another capability from the same commitment fails closed as `AUTH_DISCLOSURE_COMMITMENT_REPLAYED`. `verify_and_consume()` also verifies that the exact authorization ID owns the persisted claim before execution.
+
+The claim survives process restart. It is not deleted when a capability expires, execution fails, or a receipt write later fails. This preserves one-release/one-receipt/one-capability audit binding and prevents an internal caller from minting multiple capabilities from one committed privacy event.
+
 ## Receipt identity binding
 
 The pipeline allocates the final `tj_...` receipt ID at request start. The same ID is used by:
@@ -114,9 +130,9 @@ This prevents an execution release from being committed under one privacy record
 
 ## Crash semantics
 
-Once a protected release is committed, a later executor failure, post-execution quarantine, process crash, or receipt-write failure does **not** remove that commitment.
+Once a protected release is committed, a later executor failure, post-execution quarantine, process crash, authorization-claim creation followed by a crash, or receipt-write failure does **not** remove that commitment or claim.
 
-This can conservatively consume a privacy-history slot even when rows were never ultimately released. The resulting false positive is deliberate: forgetting a possibly authorized disclosure after a crash would recreate a differencing window. Automatic rollback of a committed privacy event is therefore prohibited.
+This can conservatively consume a privacy-history slot or a specific commitment even when rows were never ultimately released. The resulting false positive is deliberate: forgetting a possibly authorized disclosure after a crash would recreate a differencing or capability-replay window. Automatic rollback of committed privacy events or authorization claims is therefore prohibited.
 
 ## Provider-neutral governance
 
@@ -134,12 +150,12 @@ A synthetic metadata-only subject probe resolves the governed subject field acro
 
 ## Stable failure behavior
 
-P2-B adds two stable reason codes:
+P2-B adds two stable policy/result reason codes:
 
 - `CUMULATIVE_DISCLOSURE_RISK` — valid state proves the candidate is an unsafe protected variation;
-- `DISCLOSURE_STATE_UNAVAILABLE` — the required state, identity, key, commitment, or integrity proof cannot be validated safely.
+- `DISCLOSURE_STATE_UNAVAILABLE` — the required state, identity, key, commitment, claim, or integrity proof cannot be validated safely.
 
-Both fail closed before row release. Internal exception text is not required in public API output.
+At the authorization layer, replay of an already claimed commitment is rejected as `AUTH_DISCLOSURE_COMMITMENT_REPLAYED`. These failures occur before row release. Internal exception text is not required in public API output.
 
 ## Negative security tests
 
@@ -157,6 +173,9 @@ Coverage includes:
 - event/policy mutation failing commitment verification;
 - forged commitment hashes failing authorization;
 - direct `ExecutionAuthorizer` use without required commitment being rejected;
+- reuse of one valid commitment for a second capability being rejected as `AUTH_DISCLOSURE_COMMITMENT_REPLAYED`;
+- authorization-claim ownership being verified before capability consumption;
+- append-only authorization claims rejecting update/delete mutation;
 - executor authority substitution to a different ledger or disabled requirement being rejected;
 - required state missing in the pipeline producing `DISCLOSURE_STATE_UNAVAILABLE` and no execution;
 - restricted API startup without stateful privacy being rejected;
@@ -172,6 +191,6 @@ Coverage includes:
 - **Agent scope remains part of privacy partitioning.** Cross-agent collusion for one principal is not newly solved by P2-B; identity semantics remain an explicit deployment/governance responsibility.
 - **Different subject field names may describe the same people.** P2-B inherits the P2-A canonical-subject-name residual risk.
 - **Single authoritative writer state is required.** Local SQLite cannot protect independent active replicas with separate ledgers. A multi-replica deployment must use one authoritative shared state store or single-writer routing before claiming cumulative protection.
-- **Privileged filesystem compromise is outside application integrity guarantees.** A privileged attacker able to rewrite the database, key, triggers, and immutable metadata together can defeat local unkeyed record-chain checks. OS-level access control remains required.
-- **Commit-before-execute can over-count.** A committed authorization followed by execution/receipt failure remains in privacy history intentionally.
+- **Privileged filesystem compromise is outside application integrity guarantees.** A privileged attacker able to rewrite the database, key, triggers, immutable metadata, and authorization claims together can defeat local integrity checks. OS-level access control remains required.
+- **Commit-before-execute can over-count.** A committed release or claimed capability followed by execution/receipt failure remains in privacy history intentionally.
 - **The unauthenticated judge fixture is not the secure deployment profile.** Stateful enforcement is mandatory on restricted/authenticated and LIVE API surfaces, not on the deterministic public judge surface.
