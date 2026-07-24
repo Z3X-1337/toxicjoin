@@ -165,6 +165,7 @@ def _final_decision() -> PolicyDecision:
 def _verification(*, include_secret_row: bool = True) -> VerificationResult:
     rows = (("central", 0.8123, 40, "RAW_SECRET_VALUE"),) if include_secret_row else ()
     execution = ExecutionResult(
+        authorization_id="tj_auth_" + "0" * 32,
         query_sha256="a" * 64,
         query_plan=PLAN,
         columns=("coarse_region", "average_churn", "subject_count", "internal_debug"),
