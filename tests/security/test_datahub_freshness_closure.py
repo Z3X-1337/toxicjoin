@@ -30,12 +30,7 @@ from toxicjoin.execute import (
 from toxicjoin.models import Decision, PolicyDecision, ReasonCode
 from toxicjoin.pipeline import PipelineRequest, ToxicJoinPipeline
 from toxicjoin.policy import PolicyEngine, load_policy
-from toxicjoin.receipts import (
-    DecisionReceipt,
-    ReceiptMode,
-    ReceiptStore,
-    build_receipt,
-)
+from toxicjoin.receipts import ReceiptMode, ReceiptStore, build_receipt
 
 
 SYSTEM_KEY = "p3b-system-read-key-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
