@@ -65,7 +65,10 @@ class FakeTransport:
 
     async def list_tools(self) -> tuple[McpToolDefinition, ...]:
         if self.role == "write":
-            return (_save_document_contract(),)
+            return (
+                _save_document_contract(),
+                McpToolDefinition(name="add_tags", input_schema={}),
+            )
         if self.role == "readback":
             return _read_contracts() + (_grep_documents_contract(),)
         return _read_contracts()
@@ -286,7 +289,7 @@ def test_spike_proves_read_write_and_fresh_session_readback(tmp_path) -> None:
 
     assert factory.created == 3
     assert factory.roles == ["context_read", "write", "readback"]
-    assert report.schema_version == "1.1"
+    assert report.schema_version == "1.2"
     assert report.status == "verified"
     assert report.independent_readback_verified is True
     assert report.decision_document_urn == DOCUMENT_URN
@@ -294,7 +297,8 @@ def test_spike_proves_read_write_and_fresh_session_readback(tmp_path) -> None:
     assert report.field_counts == {"customers": 2, "retention_scores": 2}
     assert set(report.verified_entities) == {CUSTOMERS_URN, SCORES_URN}
     assert "save_document" not in report.read_discovered_tools
-    assert "save_document" in report.write_discovered_tools
+    assert set(report.write_server_discovered_tools) == {"add_tags", "save_document"}
+    assert report.write_discovered_tools == ("save_document",)
     assert "save_document" not in report.readback_discovered_tools
     assert factory.saved_arguments is not None
     assert factory.saved_arguments["document_type"] == "Decision"
