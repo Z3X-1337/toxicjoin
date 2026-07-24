@@ -1,0 +1,145 @@
+name: Validation P0 Semantic External Replay
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/validation-p0-semantic-external.yml"
+      - "research/kernel_v2/run_release_v02.py"
+      - "research/kernel_v2/external_catalog.py"
+      - "research/kernel_v2/preregistration.json"
+      - "research/agent_baseline/baseline-v1-proposals.json"
+      - "research/agent_baseline/baseline-v1-summary.json"
+      - "research/external_validation/**"
+      - "src/toxicjoin/models.py"
+      - "src/toxicjoin/sql/**"
+      - "src/toxicjoin/policy/**"
+      - "src/toxicjoin/rewrite/**"
+      - "src/toxicjoin/verify/**"
+      - "src/toxicjoin/execute/**"
+      - "src/toxicjoin/pipeline.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validation-p0-semantic-external-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frozen-external-replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out validation branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ToxicJoin
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m py_compile research/kernel_v2/run_release_v02.py
+
+      - name: Download unchanged official UCI source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p validation-artifacts/p0-semantic-external
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output validation-artifacts/p0-semantic-external/uci-diabetes-296.zip \
+            'https://archive.ics.uci.edu/static/public/296/diabetes%2B130-us%2Bhospitals%2Bfor%2Byears%2B1999-2008.zip'
+          echo 'f82ac129da2ddd2299391ff6fbae3a6a58b3edcf59ac9d7bd480c00fe453112a  validation-artifacts/p0-semantic-external/uci-diabetes-296.zip' | sha256sum --check --strict
+
+      - name: Build unchanged typed external warehouse
+        run: |
+          python research/external_validation/build_external_warehouse.py \
+            --source validation-artifacts/p0-semantic-external/uci-diabetes-296.zip \
+            --database validation-artifacts/p0-semantic-external/external-typed.duckdb \
+            --report validation-artifacts/p0-semantic-external/warehouse-profile.json
+
+      - name: Assert preregistered warehouse fingerprint
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          profile = json.loads(
+              Path('validation-artifacts/p0-semantic-external/warehouse-profile.json').read_text()
+          )
+          assert profile['warehouse_profile_sha256'] == 'd56cb3525915265d148c29ed299000ec2226e6c400a0eb9fcc31a1fe9ab76868'
+          assert profile['rows_filtered'] == 0
+          assert profile['rows_synthesized'] == 0
+          assert profile['rows_deduplicated'] == 0
+          assert all(value == 0 for value in profile['cast_failure_counts'].values())
+          PY
+
+      - name: Replay all frozen SQL through release Policy v0.2 stack
+        shell: bash
+        run: |
+          set -o pipefail
+          python research/kernel_v2/run_release_v02.py \
+            --preregistration research/kernel_v2/preregistration.json \
+            --proposals research/agent_baseline/baseline-v1-proposals.json \
+            --tasks research/external_validation/blind_tasks.json \
+            --baseline-summary research/agent_baseline/baseline-v1-summary.json \
+            --stewardship research/external_validation/stewardship-map.json \
+            --database validation-artifacts/p0-semantic-external/external-typed.duckdb \
+            --receipts validation-artifacts/p0-semantic-external/receipts \
+            --output validation-artifacts/p0-semantic-external/release-v02-report.json \
+            2>&1 | tee validation-artifacts/p0-semantic-external/replay.log
+
+      - name: Assert release evidence invariants
+        if: success()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(
+              Path('validation-artifacts/p0-semantic-external/release-v02-report.json').read_text()
+          )
+          assert report['passed'] is True
+          assert report['policy_version'] == '0.2.0'
+          assert report['task_count'] == 24
+          assert report['patient_rows_in_report'] is False
+          assert report['frozen_unsafe_remaining_task_ids'] == []
+          assert report['unsafe_must_not_execute_task_ids'] == []
+          assert report['unsafe_group_execution_task_ids'] == []
+          assert len(report['report_sha256']) == 64
+
+          by_id = {record['task_id']: record for record in report['records']}
+          for task_id in ('E18', 'E20', 'E24'):
+              assert by_id[task_id]['effective_decision'] == 'BLOCK'
+              assert by_id[task_id]['executed'] is False
+          assert by_id['E01']['effective_decision'] == 'ALLOW'
+          assert by_id['E01']['executed'] is True
+          PY
+
+      - name: Remove external patient data and receipts before upload
+        if: always()
+        shell: bash
+        run: |
+          rm -f validation-artifacts/p0-semantic-external/uci-diabetes-296.zip
+          rm -f validation-artifacts/p0-semantic-external/external-typed.duckdb
+          rm -rf validation-artifacts/p0-semantic-external/receipts
+
+      - name: Upload sanitized release regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-p0-semantic-external-replay
+          path: |
+            validation-artifacts/p0-semantic-external/warehouse-profile.json
+            validation-artifacts/p0-semantic-external/release-v02-report.json
+            validation-artifacts/p0-semantic-external/replay.log
+          if-no-files-found: warn
+          retention-days: 30
