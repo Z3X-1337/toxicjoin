@@ -208,16 +208,17 @@ def _semantic_projected_context(
     if not exposures:
         return policy_input.projected_context, False
 
-    raw_like_kinds = {
+    exposed_value_kinds = {
         ProjectionExposureKind.RAW_VALUE,
         ProjectionExposureKind.TRANSFORMED_RAW_VALUE,
         ProjectionExposureKind.GROUP_KEY,
+        ProjectionExposureKind.AGGREGATE_OPERAND,
         ProjectionExposureKind.NESTED_SCOPE,
     }
     exposed_keys = {
         ref.key
         for exposure in exposures
-        if exposure.kind in raw_like_kinds
+        if exposure.kind in exposed_value_kinds
         for ref in exposure.source_columns
     }
     by_key = {column.ref.key: column for column in policy_input.projected_context}
