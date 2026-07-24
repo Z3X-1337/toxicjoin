@@ -58,22 +58,22 @@ class RoleBoundDataHubMcpSettings(DataHubMcpSettings):
 
     def child_environment(self) -> dict[str, str]:
         environment = super().child_environment()
-        if self.role == DataHubMcpRole.READ_ONLY:
-            # DataHub controls metadata mutations and save_document independently.
-            # Keep document reads such as grep_documents enabled while explicitly
-            # suppressing document writes.
-            environment["TOOLS_IS_MUTATION_ENABLED"] = "false"
-            environment["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] = "false"
-            environment["SAVE_DOCUMENT_TOOL_ENABLED"] = "false"
-        else:
-            environment["TOOLS_IS_MUTATION_ENABLED"] = "true"
-            environment["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] = "false"
-            environment["SAVE_DOCUMENT_TOOL_ENABLED"] = "true"
+        # ToxicJoin never needs DataHub's broad metadata-mutation tool family in either
+        # role. The writer requires only save_document, which upstream controls with an
+        # independent flag. Keeping the broad mutation switch off reduces the child
+        # process attack surface even if the write credential itself is overprivileged.
+        environment["TOOLS_IS_MUTATION_ENABLED"] = "false"
+        environment["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] = "false"
+        environment["SAVE_DOCUMENT_TOOL_ENABLED"] = (
+            "true" if self.role == DataHubMcpRole.MUTATION else "false"
+        )
         return environment
 
     def redacted_summary(self) -> dict[str, Any]:
         summary = super().redacted_summary()
         summary["role"] = self.role.value
+        summary["metadata_mutations_enabled"] = False
+        summary["document_write_enabled"] = self.role == DataHubMcpRole.MUTATION
         return summary
 
 
@@ -87,7 +87,7 @@ def read_only_settings_from_env() -> RoleBoundDataHubMcpSettings:
 
 
 def mutation_settings_from_env() -> RoleBoundDataHubMcpSettings:
-    """Build settings for the isolated write-back process with mutation enabled."""
+    """Build settings for the isolated Decision write-back process."""
 
     return _settings_from_env(
         token_env=_WRITE_TOKEN_ENV,
@@ -121,6 +121,9 @@ def _settings_from_env(
         command=command,
         args=args,
         timeout_seconds=timeout,
+        # This field describes the application role for compatibility with existing
+        # callers. child_environment() intentionally narrows the upstream server's broad
+        # metadata mutation switch in both roles.
         mutation_enabled=role == DataHubMcpRole.MUTATION,
         role=role,
     )
@@ -162,6 +165,16 @@ class RoleBoundDataHubMcpClient(DataHubMcpClient):
         tools = {definition.name: definition for definition in definitions}
         save_document = tools.get("save_document")
         failures: list[str] = []
+        broad_mutations = sorted(
+            definition.name
+            for definition in definitions
+            if definition.name != "save_document" and _looks_mutating(definition.name)
+        )
+        if broad_mutations:
+            failures.append(
+                "writer exposed unnecessary metadata mutation tools: "
+                + ", ".join(broad_mutations)
+            )
         if save_document is None:
             failures.append("missing tool save_document")
         else:
