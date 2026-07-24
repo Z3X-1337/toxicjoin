@@ -37,7 +37,7 @@ def test_seed_report_hash_matches_persisted_json_representation() -> None:
 
 def test_spike_report_hash_matches_persisted_json_representation() -> None:
     payload = {
-        "schema_version": "1.2",
+        "schema_version": "1.3",
         "created_at": datetime(2026, 7, 23, 2, 45, 24, tzinfo=timezone.utc),
         "status": "verified",
         "read_settings": {
@@ -74,6 +74,14 @@ def test_spike_report_hash_matches_persisted_json_representation() -> None:
         ),
         "field_counts": {"customers": 4},
         "lineage_relationship_count": 3,
+        "lineage_bound_field_count": 2,
+        "lineage_source_count": 3,
+        "flagship_lineage_source_keys": (
+            "orders.purchase_amount",
+            "support_cases.case_category",
+        ),
+        "flagship_lineage_categories": ("SENSITIVE_ATTRIBUTE",),
+        "unclassified_lineage_source_count": 0,
         "decision_document_urn": "urn:li:document:shared-test",
         "verification_marker": "TOXICJOIN_MCP_0123456789abcdef0123456789abcdef",
         "marker_sha256": "a" * 64,
