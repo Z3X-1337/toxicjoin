@@ -17,6 +17,7 @@ import sqlglot
 from pydantic import BaseModel
 from sqlglot import exp
 
+from toxicjoin.auth import RequestIdentity
 from toxicjoin.context.fixture import ContextResolution
 from toxicjoin.models import PolicyDecision
 from toxicjoin.receipts.models import (
@@ -59,6 +60,7 @@ def build_receipt(
     original_sql: str,
     initial_decision: PolicyDecision,
     context: ContextResolution,
+    identity: RequestIdentity | None = None,
     safe_sql: str | None = None,
     final_decision: PolicyDecision | None = None,
     verification: VerificationResult | None = None,
@@ -125,10 +127,11 @@ def build_receipt(
         )
 
     payload: dict[str, Any] = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "receipt_id": resolved_receipt_id,
         "created_at": resolved_created_at,
         "mode": mode,
+        "identity": identity,
         "task_purpose": task_purpose,
         "initial_decision": initial_decision.decision,
         "initial_reason_codes": initial_decision.reason_codes,
@@ -166,6 +169,7 @@ def compute_content_hash(receipt_or_payload: BaseModel | Mapping[str, Any]) -> s
         key: value
         for key, value in payload.items()
         if key not in _HASH_EXCLUDED_FIELDS
+        and not (key == "identity" and value is None)
     }
     canonical = json.dumps(
         canonical_payload,
