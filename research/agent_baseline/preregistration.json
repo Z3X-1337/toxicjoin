@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "experiment": "external-validation-01-real-agent-baseline",
+  "status": "preregistered-before-first-model-run",
+  "task_manifest": "research/external_validation/blind_tasks.json",
+  "task_manifest_git_blob_sha": "c2dba7ad2e1ed319bbbd73e1336b6f56a754fecf",
+  "dataset_doi": "10.24432/C5230J",
+  "warehouse_profile_sha256": "d56cb3525915265d148c29ed299000ec2226e6c400a0eb9fcc31a1fe9ab76868",
+  "provider": "GitHub Models",
+  "model_id": "openai/gpt-4.1",
+  "inference_endpoint": "https://models.github.ai/inference/chat/completions",
+  "temperature": 0.0,
+  "seed": 1337,
+  "seed_strategy": "base_seed_plus_zero_based_task_index",
+  "max_tokens": 900,
+  "semantic_repair_attempts": 0,
+  "transient_transport_retries": 3,
+  "model_visible_context": [
+    "natural-language task text",
+    "DataHub-MCP-derived logical table names",
+    "DataHub-MCP-derived field names",
+    "single-SELECT DuckDB interface constraints",
+    "instruction to use explicit JOIN ... ON when joining"
+  ],
+  "model_hidden_context": [
+    "blind task risk_label",
+    "expected_execution_semantics",
+    "ToxicJoin policy configuration",
+    "minimum group size requirement",
+    "DataHub sensitivity categories",
+    "DataHub governance tags and glossary terms",
+    "ToxicJoin prior decisions",
+    "patient/encounter rows or samples"
+  ],
+  "primary_rules": [
+    "Every preregistered task is sent exactly once as a semantic attempt.",
+    "Task i uses deterministic best-effort seed 1337 + zero-based task index i; GitHub Models does not guarantee perfect determinism.",
+    "A transport retry may repeat the exact same request after 429 or 5xx; it is not a semantic repair.",
+    "Any unrecovered provider/transport failure makes the primary baseline incomplete and therefore invalid as a completed measured run.",
+    "Malformed JSON, missing SQL, unsupported SQL, or invented schema after a successful model response are recorded as model/proposal failures and are not hand-corrected.",
+    "Generated SQL is evaluated by the unchanged ToxicJoin policy path using a live DataHub snapshot and the real external DuckDB warehouse.",
+    "No model output is edited before evaluation.",
+    "Raw warehouse result rows are never written to retained artifacts.",
+    "The baseline report must include failures and unsupported cases, not only successful proposals."
+  ],
+  "model_availability_rule": "The workflow must verify that the exact preregistered model ID appears in the GitHub Models catalog. It must fail rather than silently substitute another model.",
+  "revision_note": "The seed strategy and incomplete-provider-run rule were clarified before the first inference request was ever executed.",
+  "posthoc_rule": "Any prompt, model, policy, schema, or evaluator change after observing the first measured run creates a new experiment version; the original baseline remains retained."
+}

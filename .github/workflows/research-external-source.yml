@@ -1,0 +1,108 @@
+name: Research External Source Acquisition
+
+on:
+  pull_request:
+    paths:
+      - "research/external_validation/**"
+      - ".github/workflows/research-external-source.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  acquire-and-fingerprint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ToxicJoin runtime dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -e .
+
+      - name: Download official UCI source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p research-artifacts/source
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output research-artifacts/source/uci-diabetes-296.zip \
+            'https://archive.ics.uci.edu/static/public/296/diabetes%2B130-us%2Bhospitals%2Bfor%2Byears%2B1999-2008.zip'
+          sha256sum research-artifacts/source/uci-diabetes-296.zip
+
+      - name: Fingerprint official source
+        run: |
+          python research/external_validation/ingest_uci_diabetes.py \
+            --source research-artifacts/source/uci-diabetes-296.zip \
+            --database research-artifacts/source/source-validation.duckdb \
+            --report research-artifacts/source/source-fingerprint.json
+
+      - name: Build typed external warehouse profile
+        run: |
+          python research/external_validation/build_external_warehouse.py \
+            --source research-artifacts/source/uci-diabetes-296.zip \
+            --database research-artifacts/source/external-typed.duckdb \
+            --report research-artifacts/source/warehouse-profile.json
+
+      - name: Assert acquisition and typed-profile invariants
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          source = json.loads(Path('research-artifacts/source/source-fingerprint.json').read_text())
+          warehouse = json.loads(Path('research-artifacts/source/warehouse-profile.json').read_text())
+
+          assert source['contains_patient_rows'] is False
+          assert source['synthetic_patient_or_encounter_records_added'] is False
+          assert source['raw_values_modified'] is False
+          assert source['row_count'] == 101766
+          assert source['table_row_counts']['raw_diabetic_data'] == 101766
+
+          assert warehouse['contains_patient_rows'] is False
+          assert warehouse['raw_table_preserves_source_tokens'] is True
+          assert warehouse['rows_filtered'] == 0
+          assert warehouse['rows_synthesized'] == 0
+          assert warehouse['rows_deduplicated'] == 0
+          assert warehouse['raw_table_row_count'] == 101766
+          assert all(count == 101766 for count in warehouse['typed_table_row_counts'].values())
+          assert all(count == 0 for count in warehouse['cast_failure_counts'].values())
+          assert source['diabetic_data_csv_sha256'] == warehouse['diabetic_data_csv_sha256']
+
+          print(json.dumps({
+              'source_archive_sha256': source['source_archive_sha256'],
+              'diabetic_data_csv_sha256': source['diabetic_data_csv_sha256'],
+              'row_count': source['row_count'],
+              'distinct_patient_nbr_count': source['distinct_patient_nbr_count'],
+              'warehouse_profile_sha256': warehouse['warehouse_profile_sha256'],
+              'projection_definition_sha256': warehouse['projection_definition_sha256'],
+              'cast_failure_counts': warehouse['cast_failure_counts'],
+          }, indent=2))
+          PY
+
+      - name: Remove raw external data before artifact upload
+        if: always()
+        shell: bash
+        run: |
+          rm -f research-artifacts/source/uci-diabetes-296.zip
+          rm -f research-artifacts/source/source-validation.duckdb
+          rm -f research-artifacts/source/external-typed.duckdb
+
+      - name: Upload sanitized source provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: toxicjoin-external-source-provenance
+          path: |
+            research-artifacts/source/source-fingerprint.json
+            research-artifacts/source/warehouse-profile.json
+          if-no-files-found: error
+          retention-days: 30

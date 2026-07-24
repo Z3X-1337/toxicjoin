@@ -1,0 +1,78 @@
+{
+  "schema_version": "1.0",
+  "experiment": "external-validation-01",
+  "dataset_doi": "10.24432/C5230J",
+  "frozen_before_measured_policy_run": true,
+  "classification_rubric": {
+    "DIRECT_IDENTIFIER": "A field that uniquely identifies an encounter/record in the released dataset and materially increases row-level linkability.",
+    "STABLE_PSEUDONYM": "A stable subject key reused across multiple encounters and therefore capable of cross-record linkage.",
+    "QUASI_IDENTIFIER": "A demographic or descriptive attribute that can narrow identity when composed with other attributes.",
+    "SENSITIVE_ATTRIBUTE": "Clinical, diagnostic, laboratory, medication, utilization, outcome, or payer information whose row-level disclosure is sensitive in this evaluation.",
+    "PUBLIC_OR_LOW_RISK": "Operational categorical metadata that is not treated as sensitive by itself in this declared evaluation."
+  },
+  "tables": {
+    "encounters": {
+      "fields": {
+        "encounter_id": "DIRECT_IDENTIFIER",
+        "patient_nbr": "STABLE_PSEUDONYM",
+        "race": "QUASI_IDENTIFIER",
+        "gender": "QUASI_IDENTIFIER",
+        "age": "QUASI_IDENTIFIER",
+        "weight": "SENSITIVE_ATTRIBUTE",
+        "admission_type_id": "PUBLIC_OR_LOW_RISK",
+        "discharge_disposition_id": "SENSITIVE_ATTRIBUTE",
+        "admission_source_id": "PUBLIC_OR_LOW_RISK",
+        "time_in_hospital": "SENSITIVE_ATTRIBUTE",
+        "payer_code": "SENSITIVE_ATTRIBUTE",
+        "medical_specialty": "SENSITIVE_ATTRIBUTE",
+        "num_lab_procedures": "SENSITIVE_ATTRIBUTE",
+        "num_procedures": "SENSITIVE_ATTRIBUTE",
+        "num_medications": "SENSITIVE_ATTRIBUTE",
+        "number_outpatient": "SENSITIVE_ATTRIBUTE",
+        "number_emergency": "SENSITIVE_ATTRIBUTE",
+        "number_inpatient": "SENSITIVE_ATTRIBUTE",
+        "number_diagnoses": "SENSITIVE_ATTRIBUTE"
+      }
+    },
+    "diagnoses": {
+      "fields": {
+        "encounter_id": "DIRECT_IDENTIFIER",
+        "patient_nbr": "STABLE_PSEUDONYM",
+        "diag_1": "SENSITIVE_ATTRIBUTE",
+        "diag_2": "SENSITIVE_ATTRIBUTE",
+        "diag_3": "SENSITIVE_ATTRIBUTE"
+      }
+    },
+    "labs": {
+      "fields": {
+        "encounter_id": "DIRECT_IDENTIFIER",
+        "patient_nbr": "STABLE_PSEUDONYM",
+        "max_glu_serum": "SENSITIVE_ATTRIBUTE",
+        "A1Cresult": "SENSITIVE_ATTRIBUTE"
+      }
+    },
+    "medications": {
+      "default_category": "SENSITIVE_ATTRIBUTE",
+      "overrides": {
+        "encounter_id": "DIRECT_IDENTIFIER",
+        "patient_nbr": "STABLE_PSEUDONYM"
+      }
+    },
+    "outcomes": {
+      "fields": {
+        "encounter_id": "DIRECT_IDENTIFIER",
+        "patient_nbr": "STABLE_PSEUDONYM",
+        "discharge_disposition_id": "SENSITIVE_ATTRIBUTE",
+        "readmitted": "SENSITIVE_ATTRIBUTE"
+      }
+    }
+  },
+  "datahub_tag_mapping": {
+    "DIRECT_IDENTIFIER": "toxicjoin:direct-identifier",
+    "STABLE_PSEUDONYM": "toxicjoin:stable-pseudonym",
+    "QUASI_IDENTIFIER": "toxicjoin:quasi-identifier",
+    "SENSITIVE_ATTRIBUTE": "toxicjoin:sensitive-attribute",
+    "PUBLIC_OR_LOW_RISK": "toxicjoin:public-or-low-risk"
+  },
+  "methodological_note": "The semantic classifications above are frozen before any measured ToxicJoin decision on the external dataset. They must not be weakened after observing failures. Changes require a new stewardship-map version and explicit before/after reporting."
+}

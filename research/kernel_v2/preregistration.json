@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.0",
+  "experiment": "kernel-v2-frozen-proposal-ablation",
+  "status": "preregistered-before-kernel-v2-results",
+  "input_proposals": "research/agent_baseline/baseline-v1-proposals.json",
+  "input_report_sha256": "9ccd74e61f69683557e4b5e34bd715ade4e9335c0c56566ebf98198e69b7f1dc",
+  "dataset_doi": "10.24432/C5230J",
+  "warehouse_profile_sha256": "d56cb3525915265d148c29ed299000ec2226e6c400a0eb9fcc31a1fe9ab76868",
+  "frozen_baseline": {
+    "unsafe_high_risk_task_ids": ["E18", "E20", "E24"],
+    "preregistered_low_risk_effective_block_task_ids": ["E02", "E03", "E04", "E05", "E06", "E07", "E08"],
+    "grouped_sensitive_executed_count": 0
+  },
+  "stages": [
+    {
+      "stage": "P1",
+      "name": "patient-level pseudonym-sensitive rule",
+      "change_surface": "policy only",
+      "hypothesis": "For non-grouped output, projecting a stable subject pseudonym together with any sensitive attribute should fail closed even when fewer than two quasi-identifiers are projected.",
+      "success_criteria": [
+        "E18, E20, and E24 no longer reach effective ALLOW or execution.",
+        "No task that was effective BLOCK in baseline v1 becomes ALLOW solely because of P1.",
+        "E01 remains ALLOW; P1 must not introduce a new low-risk regression."
+      ]
+    },
+    {
+      "stage": "R1",
+      "name": "governed subject rewrite binding",
+      "change_surface": "rewrite only after P1 is measured",
+      "hypothesis": "A grouped-sensitive query can receive a safe COUNT(DISTINCT subject) guard when the governed subject field exists on a direct source relation even if the original SQL did not reference that field.",
+      "success_criteria": [
+        "A rewrite may bind only to a unique direct source relation whose physical dataset matches the declared subject-key dataset.",
+        "Ambiguous, derived, CTE, or absent subject bindings fail closed.",
+        "Rewritten SQL is reparsed, regrounded, and independently re-evaluated as before."
+      ]
+    },
+    {
+      "stage": "S1",
+      "name": "semantic output exposure plan",
+      "change_surface": "SQL semantic model after P1/R1 evidence",
+      "hypothesis": "Policy should reason about what an output expression exposes, not classify every source operand of an aggregate as if its raw value were projected.",
+      "required_distinctions": [
+        "row-level raw output",
+        "group key",
+        "privacy-reducing aggregate output such as COUNT",
+        "sensitive aggregate output such as AVG/SUM of sensitive values",
+        "identifier-returning aggregate such as MIN/MAX over identifiers",
+        "collection/string aggregates that can reproduce row-level values",
+        "filter-only columns",
+        "join-only columns",
+        "ORDER BY output aliases",
+        "root-query aggregation versus aggregation confined to nested subqueries"
+      ],
+      "success_criteria": [
+        "COUNT(encounter_id) is not treated as exposing encounter_id itself.",
+        "Raw encounter_id output remains direct-identifier exposure.",
+        "ARRAY/LIST/STRING aggregation of identifiers is not mistaken for a safe count.",
+        "ORDER BY an output alias does not create a fake unresolved physical column.",
+        "An aggregate inside a scalar subquery does not by itself mark the root SELECT as grouped."
+      ]
+    }
+  ],
+  "promotion_rule": "No stage is combined with the next until its isolated before/after report is retained. The final combined kernel must then be retested against the real DataHub OSS + UCI warehouse and a new real-agent experiment version."
+}
