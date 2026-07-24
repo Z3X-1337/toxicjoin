@@ -234,7 +234,16 @@ def create_app(
                 and services.disclosure_ledger.path.is_file()
                 and services.disclosure_ledger.cohort_key_path.is_file()
             )
-            ready = database_ready and receipt_store_ready and privacy_ready
+            freshness_check = getattr(services.context_resolver, "is_fresh", None)
+            governance_ready = services.mode != ReceiptMode.LIVE or (
+                callable(freshness_check) and bool(freshness_check())
+            )
+            ready = (
+                database_ready
+                and receipt_store_ready
+                and privacy_ready
+                and governance_ready
+            )
             if not ready:
                 response.status_code = 503
             return HealthResponse(
@@ -244,6 +253,7 @@ def create_app(
                 policy_version=services.policy_engine.config.version,
                 database_ready=database_ready,
                 receipt_store_ready=receipt_store_ready,
+                governance_ready=governance_ready,
             )
 
     if not restricted_surface:
