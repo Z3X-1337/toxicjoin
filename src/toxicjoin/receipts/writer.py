@@ -107,6 +107,9 @@ def build_receipt(
             datahub_urn=column.datahub_urn,
             tags=tuple(sorted(column.tags)),
             glossary_terms=tuple(sorted(column.glossary_terms)),
+            lineage_sources=tuple(
+                sorted(column.lineage_sources, key=lambda source: source.ref.key)
+            ),
             resolved=column.resolved,
         )
         for column in sorted(
@@ -136,7 +139,7 @@ def build_receipt(
         )
 
     payload: dict[str, Any] = {
-        "schema_version": "1.2",
+        "schema_version": "1.3",
         "receipt_id": resolved_receipt_id,
         "created_at": resolved_created_at,
         "mode": mode,
