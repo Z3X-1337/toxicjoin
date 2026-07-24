@@ -16,6 +16,7 @@ from toxicjoin.api.limits import (
 from toxicjoin.auth import ApiKeyAuthenticator, ApiKeyCredentialConfig, AuthScope
 from toxicjoin.context import FixtureContextResolver
 from toxicjoin.demo import default_fixture_catalog, seed_database
+from toxicjoin.disclosure import DisclosureLedger
 from toxicjoin.execute import DuckDBExecutor
 from toxicjoin.models import ColumnRef, ReasonCode
 from toxicjoin.pipeline import ToxicJoinPipeline
@@ -76,6 +77,8 @@ def _pipeline(tmp_path, *, resolver=None) -> ToxicJoinPipeline:
         receipt_store=ReceiptStore(tmp_path / "receipts"),
         mode=ReceiptMode.FIXTURE,
         executor=DuckDBExecutor(database),
+        disclosure_ledger=DisclosureLedger(tmp_path / "disclosures.sqlite3"),
+        stateful_privacy_required=True,
         include_sanitized_sql=False,
     )
 
