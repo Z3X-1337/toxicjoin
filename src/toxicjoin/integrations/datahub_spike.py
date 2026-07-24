@@ -31,14 +31,14 @@ from toxicjoin.integrations.datahub_mcp import (
     DataHubMcpTransport,
     StdioDataHubMcpTransport,
 )
-from toxicjoin.models import StrictModel
+from toxicjoin.models import SensitivityCategory, StrictModel
 
 
 TransportFactory = Callable[[DataHubMcpSettings], DataHubMcpTransport]
 
 
 class DataHubSpikeReport(StrictModel):
-    schema_version: str = "1.2"
+    schema_version: str = "1.3"
     created_at: datetime
     status: str = Field(pattern=r"^verified$")
     read_settings: dict[str, Any]
@@ -50,6 +50,11 @@ class DataHubSpikeReport(StrictModel):
     verified_entities: tuple[str, ...]
     field_counts: dict[str, int]
     lineage_relationship_count: int = Field(ge=1)
+    lineage_bound_field_count: int = Field(ge=1)
+    lineage_source_count: int = Field(ge=1)
+    flagship_lineage_source_keys: tuple[str, ...]
+    flagship_lineage_categories: tuple[SensitivityCategory, ...]
+    unclassified_lineage_source_count: int = Field(ge=0)
     decision_document_urn: str = Field(pattern=r"^urn:li:document:")
     verification_marker: str = Field(pattern=r"^TOXICJOIN_MCP_[0-9a-f]{32}$")
     marker_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -95,6 +100,37 @@ async def run_datahub_spike(
             asset_map,
         ).load(require_mutations=False)
 
+    lineage_bound_fields = [
+        (logical_name, field_path, field)
+        for logical_name, dataset in snapshot.catalog.datasets.items()
+        for field_path, field in dataset.fields.items()
+        if field.lineage_sources
+    ]
+    lineage_sources = [
+        source
+        for _, _, field in lineage_bound_fields
+        for source in field.lineage_sources
+    ]
+    unclassified_lineage_sources = [
+        source
+        for source in lineage_sources
+        if source.category == SensitivityCategory.UNCLASSIFIED
+    ]
+    if unclassified_lineage_sources:
+        raise DataHubMcpError(
+            "live DataHub snapshot contains unclassified or incomplete upstream lineage"
+        )
+
+    flagship_sources = ()
+    if asset_map.flagship_column is not None:
+        flagship_dataset = snapshot.catalog.datasets[asset_map.flagship_dataset]
+        flagship_field = flagship_dataset.fields.get(asset_map.flagship_column)
+        if flagship_field is None:
+            raise DataHubMcpError("configured flagship lineage field is missing")
+        flagship_sources = flagship_field.lineage_sources
+    if not flagship_sources:
+        raise DataHubMcpError("configured flagship field has no governed upstream lineage")
+
     # mcp-server-datahub 0.6.x requires its general mutation registration path before
     # save_document exists. Keep that child isolated and put a mandatory transport
     # allowlist in front of it. The raw server inventory is retained in the report so
@@ -119,6 +155,8 @@ async def run_datahub_spike(
                 lineage_relationship_count=len(
                     snapshot.lineage_sample.get("relationships", [])
                 ),
+                lineage_bound_field_count=len(lineage_bound_fields),
+                lineage_source_count=len(lineage_sources),
             ),
             related_assets=snapshot.verified_entities,
             external_url=external_url,
@@ -137,7 +175,7 @@ async def run_datahub_spike(
         await readback_client.verify_document_marker(document_urn, marker)
 
     payload: dict[str, Any] = {
-        "schema_version": "1.2",
+        "schema_version": "1.3",
         "created_at": created_at,
         "status": "verified",
         "read_settings": read_settings.redacted_summary(),
@@ -155,6 +193,18 @@ async def run_datahub_spike(
         "lineage_relationship_count": len(
             snapshot.lineage_sample.get("relationships", [])
         ),
+        "lineage_bound_field_count": len(lineage_bound_fields),
+        "lineage_source_count": len(lineage_sources),
+        "flagship_lineage_source_keys": tuple(
+            sorted(source.ref.key for source in flagship_sources)
+        ),
+        "flagship_lineage_categories": tuple(
+            sorted(
+                {source.category for source in flagship_sources},
+                key=lambda category: category.value,
+            )
+        ),
+        "unclassified_lineage_source_count": len(unclassified_lineage_sources),
         "decision_document_urn": document_urn,
         "verification_marker": marker,
         "marker_sha256": hashlib.sha256(marker.encode("utf-8")).hexdigest(),
@@ -174,6 +224,8 @@ def _decision_content(
     entity_count: int,
     field_counts: dict[str, int],
     lineage_relationship_count: int,
+    lineage_bound_field_count: int,
+    lineage_source_count: int,
 ) -> str:
     rendered_counts = ", ".join(
         f"{name}={count}" for name, count in sorted(field_counts.items())
@@ -193,6 +245,8 @@ def _decision_content(
             f"Configured assets verified: {entity_count}",
             f"Governed schema fields: {rendered_counts}",
             f"Lineage relationships observed: {lineage_relationship_count}",
+            f"Fields with governed upstream lineage: {lineage_bound_field_count}",
+            f"Governed upstream column sources: {lineage_source_count}",
             "",
             "No raw warehouse rows or authentication secrets are included.",
         )
@@ -253,6 +307,8 @@ def _json_compatible(value: Any) -> Any:
         return {str(key): _json_compatible(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_compatible(item) for item in value]
+    if hasattr(value, "value") and isinstance(value.value, str):
+        return value.value
     return value
 
 
