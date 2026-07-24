@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from pathlib import Path
 from typing import Any, Self
 
 import pytest
@@ -202,3 +203,15 @@ def test_mutation_client_validates_only_write_contract_and_cannot_acquire_contex
     with pytest.raises(DataHubMcpContractError, match="cannot acquire governed read context"):
         asyncio.run(client.get_entities(("urn:li:dataset:test",)))
     assert [name for name, _ in transport.calls] == ["save_document"]
+
+
+def test_production_source_does_not_use_ambiguous_mcp_settings_factory() -> None:
+    ambiguous = "DataHubMcpSettings.from_env("
+    violations: list[str] = []
+    for path in Path("src/toxicjoin").rglob("*.py"):
+        if path.name == "datahub_mcp.py":
+            continue
+        if ambiguous in path.read_text(encoding="utf-8"):
+            violations.append(path.as_posix())
+
+    assert violations == []
