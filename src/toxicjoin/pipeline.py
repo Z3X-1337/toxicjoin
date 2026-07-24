@@ -38,7 +38,7 @@ class PipelineRequest(StrictModel):
     task_purpose: str = Field(min_length=1, max_length=2000)
     sql: str = Field(min_length=1, max_length=100_000)
     subject_key: ColumnRef
-    dialect: str = Field(default="duckdb", pattern=r"^[a-zA-Z0-9_-]+$")
+    dialect: str = Field(default="duckdb", pattern=r"^duckdb$")
 
 
 class PipelineResult(StrictModel):
