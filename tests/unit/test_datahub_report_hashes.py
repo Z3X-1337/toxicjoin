@@ -37,7 +37,7 @@ def test_seed_report_hash_matches_persisted_json_representation() -> None:
 
 def test_spike_report_hash_matches_persisted_json_representation() -> None:
     payload = {
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "created_at": datetime(2026, 7, 23, 2, 45, 24, tzinfo=timezone.utc),
         "status": "verified",
         "read_settings": {
@@ -57,6 +57,11 @@ def test_spike_report_hash_matches_persisted_json_representation() -> None:
             "timeout_seconds": 90.0,
         },
         "read_discovered_tools": ("get_entities", "get_lineage", "list_schema_fields"),
+        "write_server_discovered_tools": (
+            "add_tags",
+            "remove_tags",
+            "save_document",
+        ),
         "write_discovered_tools": ("save_document",),
         "readback_discovered_tools": (
             "get_entities",
