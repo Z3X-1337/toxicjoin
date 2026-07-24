@@ -15,6 +15,7 @@ from uuid import UUID
 import duckdb
 from pydantic import Field
 
+from toxicjoin.disclosure import DisclosureCommitment, DisclosureLedger
 from toxicjoin.execute.authorization import (
     ExecutionAuthorization,
     ExecutionAuthorizationError,
@@ -87,7 +88,14 @@ class DuckDBExecutor:
                 )
             self._authorizer = authorizer
 
-    def bind_authority(self, *, context_resolver: Any, policy_engine: Any) -> None:
+    def bind_authority(
+        self,
+        *,
+        context_resolver: Any,
+        policy_engine: Any,
+        disclosure_ledger: DisclosureLedger | None = None,
+        require_disclosure_commitment: bool = False,
+    ) -> None:
         """Bind verifier authority once and reject later authority substitution."""
 
         with self._authority_lock:
@@ -95,11 +103,16 @@ class DuckDBExecutor:
                 self._authorizer = ExecutionAuthorizer(
                     context_resolver=context_resolver,
                     policy_engine=policy_engine,
+                    disclosure_ledger=disclosure_ledger,
+                    require_disclosure_commitment=require_disclosure_commitment,
                 )
                 return
             if (
                 self._authorizer.context_resolver is not context_resolver
                 or self._authorizer.policy_engine is not policy_engine
+                or self._authorizer.disclosure_ledger is not disclosure_ledger
+                or self._authorizer.require_disclosure_commitment
+                != bool(require_disclosure_commitment)
             ):
                 raise ValueError("executor authority does not match verifier authority")
 
@@ -111,6 +124,7 @@ class DuckDBExecutor:
         subject_key: ColumnRef,
         dialect: str = "duckdb",
         rewrite_parent_sql: str | None = None,
+        disclosure_commitment: DisclosureCommitment | None = None,
     ) -> ExecutionAuthorization:
         """Issue from the same authority that the execution boundary will verify."""
 
@@ -126,10 +140,11 @@ class DuckDBExecutor:
                 subject_key=subject_key,
                 dialect=dialect,
                 rewrite_parent_sql=rewrite_parent_sql,
+                disclosure_commitment=disclosure_commitment,
             )
         except ExecutionAuthorizationError as exc:
             raise ExecutionError(
-                ReasonCode.VERIFICATION_FAILED,
+                _authorization_failure_reason(exc.code),
                 f"execution authorization issuance rejected: {exc.code}",
             ) from exc
 
@@ -167,7 +182,7 @@ class DuckDBExecutor:
             )
         except ExecutionAuthorizationError as exc:
             raise ExecutionError(
-                ReasonCode.VERIFICATION_FAILED,
+                _authorization_failure_reason(exc.code),
                 f"execution authorization rejected: {exc.code}",
             ) from exc
 
@@ -301,6 +316,12 @@ class _CellNestingError(ValueError):
     pass
 
 
+def _authorization_failure_reason(code: str) -> ReasonCode:
+    if code.startswith("AUTH_DISCLOSURE_"):
+        return ReasonCode.DISCLOSURE_STATE_UNAVAILABLE
+    return ReasonCode.VERIFICATION_FAILED
+
+
 def _json_safe(value: Any, *, depth: int = 0) -> Any:
     if depth > _MAX_CELL_NESTING:
         raise _CellNestingError("cell nesting limit exceeded")
@@ -328,6 +349,8 @@ def _serialized_json_bytes(value: Any) -> int:
     encoded = json.dumps(
         value,
         ensure_ascii=False,
+        sort_keys=True,
         separators=(",", ":"),
+        default=str,
     ).encode("utf-8")
     return len(encoded)
