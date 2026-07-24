@@ -15,10 +15,17 @@ class RecordingExecutor:
     def __init__(self) -> None:
         self.calls = 0
 
-    def execute_allowed(self, sql: str, *, policy_decision, dialect: str = "duckdb"):
+    def bind_authority(self, **_: object) -> None:
+        return None
+
+    def issue_authorization(self, *_: object, **__: object) -> object:
+        return object()
+
+    def execute_authorized(self, sql: str, **kwargs: object) -> ExecutionResult:
         self.calls += 1
-        plan = analyze_sql(sql, dialect=dialect)
+        plan = analyze_sql(sql, dialect=str(kwargs.get("dialect", "duckdb")))
         return ExecutionResult(
+            authorization_id="tj_auth_" + "0" * 32,
             query_sha256=hashlib.sha256(sql.encode("utf-8")).hexdigest(),
             query_plan=plan,
             columns=("customer_count",),
@@ -36,7 +43,7 @@ def _verify(sql: str, executor: RecordingExecutor):
         subject_key=ColumnRef(dataset="customers", field_path="customer_id"),
         context_resolver=FixtureContextResolver(default_fixture_catalog()),
         policy_engine=PolicyEngine(load_policy()),
-        executor=executor,
+        executor=executor,  # type: ignore[arg-type]
         required_minimum_group_size=20,
         require_subject_threshold=False,
         forbidden_raw_output_fields=("customer_id",),
