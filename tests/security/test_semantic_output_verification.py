@@ -43,6 +43,12 @@ def _verify(sql: str, executor: RecordingExecutor):
     )
 
 
+def _output_check(result):
+    return next(
+        check for check in result.checks if check.name == "no_raw_forbidden_output"
+    )
+
+
 def test_wrapped_subject_identifier_is_stopped_before_executor() -> None:
     executor = RecordingExecutor()
     result = _verify(
@@ -59,9 +65,26 @@ def test_wrapped_subject_identifier_is_stopped_before_executor() -> None:
     assert result.policy_decision is not None
     assert result.policy_decision.decision.value == "ALLOW"
     assert executor.calls == 0
-    output_check = next(
-        check for check in result.checks if check.name == "no_raw_forbidden_output"
+    output_check = _output_check(result)
+    assert output_check.passed is False
+    assert "customer_id" in output_check.detail
+
+
+def test_min_subject_identifier_is_stopped_before_executor() -> None:
+    executor = RecordingExecutor()
+    result = _verify(
+        """
+        SELECT MIN(c.customer_id) AS min_customer_id
+        FROM customers c
+        """.strip(),
+        executor,
     )
+
+    assert result.passed is False
+    assert result.policy_decision is not None
+    assert result.policy_decision.decision.value == "ALLOW"
+    assert executor.calls == 0
+    output_check = _output_check(result)
     assert output_check.passed is False
     assert "customer_id" in output_check.detail
 
@@ -78,7 +101,4 @@ def test_count_of_subject_identifier_is_not_misclassified_as_raw_output() -> Non
 
     assert result.passed is True
     assert executor.calls == 1
-    output_check = next(
-        check for check in result.checks if check.name == "no_raw_forbidden_output"
-    )
-    assert output_check.passed is True
+    assert _output_check(result).passed is True
