@@ -10,13 +10,6 @@ on:
       - "research/kernel_v2/retained-baseline-authoritative-proposals.json"
       - "research/agent_baseline/baseline-v1-summary.json"
       - "research/external_validation/**"
-      - "src/toxicjoin/models.py"
-      - "src/toxicjoin/sql/**"
-      - "src/toxicjoin/policy/**"
-      - "src/toxicjoin/rewrite/**"
-      - "src/toxicjoin/verify/**"
-      - "src/toxicjoin/execute/**"
-      - "src/toxicjoin/pipeline.py"
   workflow_dispatch:
 
 permissions:
@@ -31,9 +24,32 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    env:
+      RELEASE_CANDIDATE_SHA: f3970161b245d36bd35e0e8eb2ecd4338f56d3c5
+      RELEASE_DIR: /tmp/toxicjoin-release-candidate
+
     steps:
-      - name: Check out validation branch
+      - name: Check out validation evidence branch
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Materialize exact production release candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$RELEASE_CANDIDATE_SHA"
+          git worktree add --detach "$RELEASE_DIR" "$RELEASE_CANDIDATE_SHA"
+          test "$(git -C "$RELEASE_DIR" rev-parse HEAD)" = "$RELEASE_CANDIDATE_SHA"
+
+          # Runtime comes only from the exact production SHA. Research assets are
+          # copied into the detached worktree solely as a frozen validation harness.
+          rm -rf "$RELEASE_DIR/research"
+          cp -a research "$RELEASE_DIR/research"
+
+          mkdir -p validation-artifacts/p0-semantic-external
+          printf '%s\n' "$RELEASE_CANDIDATE_SHA" \
+            > validation-artifacts/p0-semantic-external/release-candidate-sha.txt
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -41,15 +57,19 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install ToxicJoin
+      - name: Install exact release candidate
+        shell: bash
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install -e .
-          python -m py_compile research/kernel_v2/run_release_v02.py
+          python -m pip install -e "$RELEASE_DIR"
+          python -m py_compile "$RELEASE_DIR/research/kernel_v2/run_release_v02.py"
 
       - name: Verify retained baseline input provenance
         shell: bash
         run: |
+          set -euo pipefail
+          cd "$RELEASE_DIR"
           python - <<'PY'
           import hashlib
           import json
@@ -92,29 +112,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p validation-artifacts/p0-semantic-external
+          EVIDENCE_DIR="$GITHUB_WORKSPACE/validation-artifacts/p0-semantic-external"
           curl --fail --location --retry 3 --retry-all-errors \
-            --output validation-artifacts/p0-semantic-external/uci-diabetes-296.zip \
+            --output "$EVIDENCE_DIR/uci-diabetes-296.zip" \
             'https://archive.ics.uci.edu/static/public/296/diabetes%2B130-us%2Bhospitals%2Bfor%2Byears%2B1999-2008.zip'
-          echo 'f82ac129da2ddd2299391ff6fbae3a6a58b3edcf59ac9d7bd480c00fe453112a  validation-artifacts/p0-semantic-external/uci-diabetes-296.zip' | sha256sum --check --strict
+          echo "f82ac129da2ddd2299391ff6fbae3a6a58b3edcf59ac9d7bd480c00fe453112a  $EVIDENCE_DIR/uci-diabetes-296.zip" | sha256sum --check --strict
 
       - name: Build unchanged typed external warehouse
+        shell: bash
         run: |
+          set -euo pipefail
+          EVIDENCE_DIR="$GITHUB_WORKSPACE/validation-artifacts/p0-semantic-external"
+          cd "$RELEASE_DIR"
           python research/external_validation/build_external_warehouse.py \
-            --source validation-artifacts/p0-semantic-external/uci-diabetes-296.zip \
-            --database validation-artifacts/p0-semantic-external/external-typed.duckdb \
-            --report validation-artifacts/p0-semantic-external/warehouse-profile.json
+            --source "$EVIDENCE_DIR/uci-diabetes-296.zip" \
+            --database "$EVIDENCE_DIR/external-typed.duckdb" \
+            --report "$EVIDENCE_DIR/warehouse-profile.json"
 
       - name: Assert preregistered warehouse fingerprint
         shell: bash
         run: |
-          python - <<'PY'
+          set -euo pipefail
+          EVIDENCE_DIR="$GITHUB_WORKSPACE/validation-artifacts/p0-semantic-external"
+          python - "$EVIDENCE_DIR/warehouse-profile.json" <<'PY'
           import json
+          import sys
           from pathlib import Path
 
-          profile = json.loads(
-              Path('validation-artifacts/p0-semantic-external/warehouse-profile.json').read_text()
-          )
+          profile = json.loads(Path(sys.argv[1]).read_text())
           assert profile['warehouse_profile_sha256'] == 'd56cb3525915265d148c29ed299000ec2226e6c400a0eb9fcc31a1fe9ab76868'
           assert profile['rows_filtered'] == 0
           assert profile['rows_synthesized'] == 0
@@ -122,32 +147,36 @@ jobs:
           assert all(value == 0 for value in profile['cast_failure_counts'].values())
           PY
 
-      - name: Replay all frozen SQL through release Policy v0.2 stack
+      - name: Replay all frozen SQL through exact release candidate
         shell: bash
         run: |
+          set -euo pipefail
           set -o pipefail
+          EVIDENCE_DIR="$GITHUB_WORKSPACE/validation-artifacts/p0-semantic-external"
+          cd "$RELEASE_DIR"
           python -m research.kernel_v2.run_release_v02 \
             --preregistration research/kernel_v2/preregistration.json \
             --proposals research/kernel_v2/retained-baseline-authoritative-proposals.json \
             --tasks research/external_validation/blind_tasks.json \
             --baseline-summary research/agent_baseline/baseline-v1-summary.json \
             --stewardship research/external_validation/stewardship-map.json \
-            --database validation-artifacts/p0-semantic-external/external-typed.duckdb \
-            --receipts validation-artifacts/p0-semantic-external/receipts \
-            --output validation-artifacts/p0-semantic-external/release-v02-report.json \
-            2>&1 | tee validation-artifacts/p0-semantic-external/replay.log
+            --database "$EVIDENCE_DIR/external-typed.duckdb" \
+            --receipts "$EVIDENCE_DIR/receipts" \
+            --output "$EVIDENCE_DIR/release-v02-report.json" \
+            2>&1 | tee "$EVIDENCE_DIR/replay.log"
 
       - name: Assert release evidence invariants
         if: success()
         shell: bash
         run: |
-          python - <<'PY'
+          set -euo pipefail
+          EVIDENCE_DIR="$GITHUB_WORKSPACE/validation-artifacts/p0-semantic-external"
+          python - "$EVIDENCE_DIR/release-v02-report.json" <<'PY'
           import json
+          import sys
           from pathlib import Path
 
-          report = json.loads(
-              Path('validation-artifacts/p0-semantic-external/release-v02-report.json').read_text()
-          )
+          report = json.loads(Path(sys.argv[1]).read_text())
           assert report['passed'] is True
           assert report['policy_version'] == '0.2.0'
           assert report['task_count'] == 24
@@ -169,9 +198,10 @@ jobs:
         if: always()
         shell: bash
         run: |
-          rm -f validation-artifacts/p0-semantic-external/uci-diabetes-296.zip
-          rm -f validation-artifacts/p0-semantic-external/external-typed.duckdb
-          rm -rf validation-artifacts/p0-semantic-external/receipts
+          EVIDENCE_DIR="$GITHUB_WORKSPACE/validation-artifacts/p0-semantic-external"
+          rm -f "$EVIDENCE_DIR/uci-diabetes-296.zip"
+          rm -f "$EVIDENCE_DIR/external-typed.duckdb"
+          rm -rf "$EVIDENCE_DIR/receipts"
 
       - name: Upload sanitized release regression evidence
         if: always()
@@ -179,6 +209,7 @@ jobs:
         with:
           name: toxicjoin-p0-semantic-external-replay
           path: |
+            validation-artifacts/p0-semantic-external/release-candidate-sha.txt
             validation-artifacts/p0-semantic-external/warehouse-profile.json
             validation-artifacts/p0-semantic-external/release-v02-report.json
             validation-artifacts/p0-semantic-external/replay.log
