@@ -6,7 +6,7 @@ This guide creates the governed ToxicJoin demo graph in DataHub OSS and proves t
 read-only MCP child
 → DataHub asset/schema/lineage read
 → child closed
-→ isolated mutation MCP child
+→ isolated document-write MCP child
 → Decision document write
 → child closed
 → fresh read-only MCP child
@@ -21,7 +21,7 @@ Fixture mode is useful for deterministic testing, but it is never presented as l
 - Docker with enough memory for DataHub OSS.
 - A local or hosted DataHub Graph Metadata Service endpoint.
 - A read-scoped DataHub credential for MCP context acquisition/read-back when authentication is enabled.
-- A separately scoped DataHub credential for the short-lived MCP write-back process when authentication is enabled.
+- A separately scoped DataHub credential for the short-lived document-write MCP process when authentication is enabled.
 
 ## 1. Install the live integration
 
@@ -59,7 +59,7 @@ export DATAHUB_GMS_URL=http://localhost:8080
 export DATAHUB_GMS_TOKEN=replace-with-sdk-token
 # Used only by role-separated MCP children.
 export DATAHUB_GMS_READ_TOKEN=replace-with-read-scoped-token
-export DATAHUB_GMS_WRITE_TOKEN=replace-with-write-scoped-token
+export DATAHUB_GMS_WRITE_TOKEN=replace-with-document-write-scoped-token
 export DATAHUB_MCP_COMMAND=uvx
 export DATAHUB_MCP_ARGS=mcp-server-datahub
 export DATAHUB_MCP_TIMEOUT_SECONDS=30
@@ -71,13 +71,15 @@ Windows PowerShell:
 $env:DATAHUB_GMS_URL = "http://localhost:8080"
 $env:DATAHUB_GMS_TOKEN = "replace-with-sdk-token"
 $env:DATAHUB_GMS_READ_TOKEN = "replace-with-read-scoped-token"
-$env:DATAHUB_GMS_WRITE_TOKEN = "replace-with-write-scoped-token"
+$env:DATAHUB_GMS_WRITE_TOKEN = "replace-with-document-write-scoped-token"
 $env:DATAHUB_MCP_COMMAND = "uvx"
 $env:DATAHUB_MCP_ARGS = "mcp-server-datahub"
 $env:DATAHUB_MCP_TIMEOUT_SECONDS = "30"
 ```
 
-For an authentication-disabled local quickstart, keep all required token variables explicitly set to a non-secret placeholder. They may contain the same placeholder only because the local server is auth-disabled. A secure deployment must provision distinct server-side scopes for read and write credentials. ToxicJoin does not fall back from either MCP role to the legacy ambiguous token.
+For an authentication-disabled local quickstart, keep all required token variables explicitly set to a non-secret placeholder. They may contain the same placeholder only because the local server is auth-disabled. A secure deployment must provision distinct server-side scopes for read and document-write credentials. ToxicJoin does not fall back from either MCP role to the legacy ambiguous token.
+
+Do not set broad MCP mutation flags globally for ToxicJoin. The role-bound settings construct the exact child environment and intentionally keep DataHub's broad metadata mutation family disabled in **all** ToxicJoin MCP processes.
 
 ## 4. Create the deterministic warehouse
 
@@ -93,7 +95,7 @@ This writes synthetic DuckDB data under `.toxicjoin/`. It contains no real ident
 toxicjoin-datahub-seed --yes
 ```
 
-The command upserts:
+The seed command uses the DataHub SDK rather than the role-separated MCP path. It explicitly upserts:
 
 - the five ToxicJoin datasets;
 - 19 schema fields;
@@ -102,7 +104,7 @@ The command upserts:
 - field-level tag and glossary-term associations;
 - four table and column-lineage relationships into `retention_scores`.
 
-The command is explicit about mutation and writes a sanitized report to:
+It writes a sanitized report to:
 
 ```text
 .toxicjoin/datahub-seed.json
@@ -119,16 +121,18 @@ toxicjoin-datahub-spike --verify
 The spike performs the following checks:
 
 1. launches a read-only official `mcp-server-datahub` process;
-2. validates read contracts and rejects mutation-tool exposure;
-3. reads configured entities, governed schema fields, and upstream lineage;
-4. closes the read-only process;
-5. launches a separate mutation-enabled MCP process with the write credential;
-6. validates only the required `save_document` write contract;
-7. writes a sanitized DataHub `Decision` with a unique verification marker;
-8. closes the mutation process;
-9. launches a fresh read-only MCP process;
-10. verifies persisted Decision content through `grep_documents` without trusting the write response;
-11. writes a sanitized evidence report containing separate role settings and discovered-tool inventories.
+2. keeps broad metadata mutations off and document writes off;
+3. validates read contracts and rejects mutation-tool exposure;
+4. reads configured entities, governed schema fields, and upstream lineage;
+5. closes the read-only process;
+6. launches a separate document-write MCP process with the write credential;
+7. keeps broad metadata mutations off and enables only the independently controlled `save_document` capability;
+8. validates the required `save_document` Decision contract and rejects broad metadata-mutation tool exposure;
+9. writes one sanitized DataHub `Decision` with a unique verification marker;
+10. closes the writer;
+11. launches a fresh read-only MCP process;
+12. verifies persisted Decision content through `grep_documents` without trusting the writer response;
+13. writes a sanitized evidence report containing separate role settings and discovered-tool inventories.
 
 Successful output is written to:
 
@@ -151,11 +155,16 @@ The spike report must show:
 - `schema_version: 1.1`;
 - `status: verified`;
 - `independent_readback_verified: true`;
-- `read_settings.mutation_enabled: false`;
-- `write_settings.mutation_enabled: true`;
+- `read_settings.role: read_only`;
+- `write_settings.role: mutation`;
+- `read_settings.metadata_mutations_enabled: false`;
+- `write_settings.metadata_mutations_enabled: false`;
+- `read_settings.document_write_enabled: false`;
+- `write_settings.document_write_enabled: true`;
 - all five configured dataset URNs;
 - `save_document` absent from `read_discovered_tools`;
 - `save_document` present in `write_discovered_tools`;
+- no broad add/remove/set/update/create/delete/upsert/patch mutation tools in `write_discovered_tools`;
 - `save_document` absent from `readback_discovered_tools`;
 - a DataHub Decision document URN;
 - a valid report SHA-256.
@@ -170,10 +179,11 @@ Also inspect the DataHub UI and confirm:
 ## Security behavior
 
 - Context acquisition and read-back run with read-only role settings.
-- The read child explicitly sets `TOOLS_IS_MUTATION_ENABLED=false` and `SAVE_DOCUMENT_TOOL_ENABLED=false` while keeping document read tools available.
-- Write-back occurs only in a separate short-lived mutation child with `SAVE_DOCUMENT_TOOL_ENABLED=true`.
-- The application client independently prevents a read role from calling `save_decision`, and prevents a mutation role from becoming the source of governed policy context.
-- Read-only discovery fails closed if mutation-shaped tools are exposed despite server settings.
+- Read children explicitly set `TOOLS_IS_MUTATION_ENABLED=false` and `SAVE_DOCUMENT_TOOL_ENABLED=false` while keeping document read tools available.
+- The isolated writer also keeps `TOOLS_IS_MUTATION_ENABLED=false`; it enables only `SAVE_DOCUMENT_TOOL_ENABLED=true`.
+- The writer fails closed if broad metadata-mutation tools are discovered despite those settings.
+- The application client independently prevents a read role from calling `save_decision`, and prevents the writer role from becoming the source of governed policy context.
+- Read-only discovery fails closed if any mutation-shaped tools are exposed despite server settings.
 - Child processes receive only operating-system/network variables and the selected DataHub credential they require.
 - OpenAI, AWS, database, and unrelated application secrets are not forwarded.
 - Every MCP initialization, tool discovery, and tool call has a hard timeout.
@@ -195,17 +205,21 @@ SAVE_DOCUMENT_TOOL_ENABLED=false
 
 Document reads remain enabled so `grep_documents` can perform fresh-process verification; document writes must remain disabled.
 
-### Missing `save_document` in the writer
+### Broad mutation tools appear in the writer
 
-Confirm the isolated write child receives:
+This is also a security failure. The writer does **not** need DataHub's broad metadata mutation family. It must receive:
 
 ```text
-TOOLS_IS_MUTATION_ENABLED=true
+TOOLS_IS_MUTATION_ENABLED=false
 DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED=false
 SAVE_DOCUMENT_TOOL_ENABLED=true
 ```
 
-The writer still validates the live `save_document` schema and fails if the required Decision contract is absent.
+If tools such as `add_*`, `remove_*`, `set_*`, `update_*`, `create_*`, `delete_*`, `upsert_*`, or `patch_*` are still exposed, treat the upstream MCP configuration as unsafe and do not use the evidence.
+
+### Missing `save_document` in the writer
+
+Confirm `SAVE_DOCUMENT_TOOL_ENABLED=true` for the isolated writer. ToxicJoin still validates the live `save_document` schema and fails if the required Decision contract is absent.
 
 ### Asset not returned
 
@@ -221,4 +235,4 @@ Increase `DATAHUB_MCP_TIMEOUT_SECONDS` only after confirming DataHub is healthy.
 
 ## Evidence policy
 
-The repository contains deterministic negative tests for credential separation, tool exposure, application capability escalation, and the three-process protocol. A real `.toxicjoin/datahub-spike.json` report must be generated from the final demo environment and must satisfy the Live DataHub Evidence gate. Secrets and private endpoints must never be committed.
+The repository contains deterministic negative tests for credential separation, upstream tool exposure, application capability escalation, and the three-process protocol. A real `.toxicjoin/datahub-spike.json` report must be generated from the final demo environment and must satisfy the Live DataHub Evidence gate. Secrets and private endpoints must never be committed.
