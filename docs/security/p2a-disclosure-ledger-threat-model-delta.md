@@ -118,6 +118,7 @@ Coverage includes:
 - simulated out-of-band payload/chain tampering being detected;
 - raw SQL, raw-query-hash field names, literal markers, alias markers, and session markers never appearing in the SQLite file;
 - owner-only database permissions and symlink rejection;
+- unsupported ledger schema versions failing closed;
 - missing ledger storage after initialization failing closed.
 
 ## Residual risk and explicit non-goals
