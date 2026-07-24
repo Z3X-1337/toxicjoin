@@ -261,6 +261,15 @@ def test_ledger_file_is_owner_only_and_symlink_target_is_rejected(tmp_path: Path
         DisclosureLedger(symlink)
 
 
+def test_unsupported_ledger_schema_version_fails_closed(tmp_path: Path) -> None:
+    path = tmp_path / "unsupported.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute("PRAGMA user_version = 99")
+
+    with pytest.raises(DisclosureLedgerIntegrityError, match="unsupported disclosure ledger"):
+        DisclosureLedger(path)
+
+
 def test_missing_database_after_initialization_fails_closed(tmp_path: Path) -> None:
     path = tmp_path / "disclosures.sqlite3"
     ledger = DisclosureLedger(path)
