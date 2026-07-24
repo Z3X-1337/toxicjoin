@@ -76,6 +76,21 @@ class DuckDBExecutor:
             raise ValueError("executor is already bound to a different execution authorizer")
         self._authorizer = authorizer
 
+    def bind_authority(self, *, context_resolver: Any, policy_engine: Any) -> None:
+        """Bind verifier authority once and reject later authority substitution."""
+
+        if self._authorizer is None:
+            self._authorizer = ExecutionAuthorizer(
+                context_resolver=context_resolver,
+                policy_engine=policy_engine,
+            )
+            return
+        if (
+            self._authorizer.context_resolver is not context_resolver
+            or self._authorizer.policy_engine is not policy_engine
+        ):
+            raise ValueError("executor authority does not match verifier authority")
+
     def issue_authorization(
         self,
         sql: str,
