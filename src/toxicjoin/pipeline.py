@@ -8,6 +8,13 @@ from pydantic import Field
 
 from toxicjoin.context.datahub import DataHubSnapshotContextResolver
 from toxicjoin.context.fixture import ContextResolution
+from toxicjoin.context.governance import (
+    GovernanceContextBinding,
+    GovernanceContextDriftError,
+    GovernanceContextStaleError,
+    require_same_governance_binding,
+    resolve_with_governance_binding,
+)
 from toxicjoin.disclosure import DisclosureLedger
 from toxicjoin.execute import DuckDBExecutor
 from toxicjoin.models import (
@@ -51,6 +58,7 @@ class PipelineResult(StrictModel):
     final_plan: QueryPlan | None = None
     final_decision: PolicyDecision | None = None
     verification: VerificationResult | None = None
+    governance_binding: GovernanceContextBinding | None = None
     receipt: DecisionReceipt
 
     @property
@@ -123,11 +131,15 @@ class ToxicJoinPipeline:
             )
 
         try:
-            initial_context = self.context_resolver.resolve(original_plan)
+            initial_context, initial_governance_binding = resolve_with_governance_binding(
+                self.context_resolver,
+                original_plan,
+            )
         except Exception as exc:
-            initial_context = _empty_context(ReasonCode.DATAHUB_UNAVAILABLE)
+            reason = _governance_failure_reason(exc)
+            initial_context = _empty_context(reason)
             initial_decision = _failure_decision(
-                reason=ReasonCode.DATAHUB_UNAVAILABLE,
+                reason=reason,
                 policy_version=self.policy_engine.config.version,
                 stage="context_resolution",
                 error_type=type(exc).__name__,
@@ -155,6 +167,7 @@ class ToxicJoinPipeline:
                 original_plan=original_plan,
                 initial_context=initial_context,
                 initial_decision=initial_decision,
+                governance_binding=initial_governance_binding,
             )
 
         if initial_decision.decision == Decision.ALLOW:
@@ -163,6 +176,7 @@ class ToxicJoinPipeline:
                 request=request,
                 original_plan=original_plan,
                 initial_context=initial_context,
+                initial_governance_binding=initial_governance_binding,
                 initial_decision=initial_decision,
                 execute=execute,
             )
@@ -172,6 +186,7 @@ class ToxicJoinPipeline:
             request=request,
             original_plan=original_plan,
             initial_context=initial_context,
+            initial_governance_binding=initial_governance_binding,
             initial_decision=initial_decision,
             execute=execute,
         )
@@ -183,6 +198,7 @@ class ToxicJoinPipeline:
         request: PipelineRequest,
         original_plan: QueryPlan,
         initial_context: ContextResolution,
+        initial_governance_binding: GovernanceContextBinding | None,
         initial_decision: PolicyDecision,
         execute: bool,
     ) -> PipelineResult:
@@ -193,6 +209,7 @@ class ToxicJoinPipeline:
                 original_plan=original_plan,
                 initial_context=initial_context,
                 initial_decision=initial_decision,
+                governance_binding=initial_governance_binding,
             )
 
         if self.executor is None:
@@ -209,6 +226,7 @@ class ToxicJoinPipeline:
                 initial_context=initial_context,
                 initial_decision=initial_decision,
                 final_decision=final_decision,
+                governance_binding=initial_governance_binding,
             )
 
         verification = verify_and_execute(
@@ -227,6 +245,7 @@ class ToxicJoinPipeline:
             disclosure_ledger=self.disclosure_ledger,
             receipt_id=receipt_id,
             require_disclosure_commitment=self.stateful_privacy_required,
+            expected_governance_binding=initial_governance_binding,
         )
         final_decision = _verification_outcome(
             verification,
@@ -241,6 +260,7 @@ class ToxicJoinPipeline:
             initial_decision=initial_decision,
             final_decision=final_decision,
             verification=verification,
+            governance_binding=initial_governance_binding,
         )
 
     def _handle_rewrite(
@@ -250,6 +270,7 @@ class ToxicJoinPipeline:
         request: PipelineRequest,
         original_plan: QueryPlan,
         initial_context: ContextResolution,
+        initial_governance_binding: GovernanceContextBinding | None,
         initial_decision: PolicyDecision,
         execute: bool,
     ) -> PipelineResult:
@@ -274,14 +295,23 @@ class ToxicJoinPipeline:
                 initial_context=initial_context,
                 initial_decision=initial_decision,
                 final_decision=final_decision,
+                governance_binding=initial_governance_binding,
             )
 
         try:
-            final_context = self.context_resolver.resolve(rewrite.safe_plan)
+            final_context, final_governance_binding = resolve_with_governance_binding(
+                self.context_resolver,
+                rewrite.safe_plan,
+            )
+            require_same_governance_binding(
+                initial_governance_binding,
+                final_governance_binding,
+            )
         except Exception as exc:
-            final_context = _empty_context(ReasonCode.DATAHUB_UNAVAILABLE)
+            reason = _governance_failure_reason(exc)
+            final_context = _empty_context(reason)
             final_decision = _failure_decision(
-                reason=ReasonCode.DATAHUB_UNAVAILABLE,
+                reason=reason,
                 policy_version=initial_decision.policy_version,
                 stage="rewritten_context_resolution",
                 error_type=type(exc).__name__,
@@ -296,6 +326,7 @@ class ToxicJoinPipeline:
                 final_plan=rewrite.safe_plan,
                 final_context=final_context,
                 final_decision=final_decision,
+                governance_binding=initial_governance_binding,
             )
 
         final_policy_decision = self.policy_engine.evaluate(
@@ -316,6 +347,7 @@ class ToxicJoinPipeline:
                 final_plan=rewrite.safe_plan,
                 final_context=final_context,
                 final_decision=final_policy_decision,
+                governance_binding=initial_governance_binding,
             )
 
         if self.executor is None:
@@ -335,6 +367,7 @@ class ToxicJoinPipeline:
                 final_plan=rewrite.safe_plan,
                 final_context=final_context,
                 final_decision=final_decision,
+                governance_binding=initial_governance_binding,
             )
 
         verification = verify_and_execute(
@@ -351,6 +384,7 @@ class ToxicJoinPipeline:
             disclosure_ledger=self.disclosure_ledger,
             receipt_id=receipt_id,
             require_disclosure_commitment=self.stateful_privacy_required,
+            expected_governance_binding=initial_governance_binding,
         )
         final_decision = _verification_outcome(
             verification,
@@ -368,6 +402,7 @@ class ToxicJoinPipeline:
             final_context=final_context,
             final_decision=final_decision,
             verification=verification,
+            governance_binding=initial_governance_binding,
         )
 
     def _finalize(
@@ -384,6 +419,7 @@ class ToxicJoinPipeline:
         final_decision: PolicyDecision | None = None,
         verification: VerificationResult | None = None,
         include_sanitized_sql: bool | None = None,
+        governance_binding: GovernanceContextBinding | None = None,
     ) -> PipelineResult:
         receipt_context = _merge_contexts(initial_context, final_context)
         receipt = build_receipt(
@@ -411,6 +447,7 @@ class ToxicJoinPipeline:
             final_plan=final_plan,
             final_decision=final_decision,
             verification=verification,
+            governance_binding=governance_binding,
             receipt=receipt,
         )
 
@@ -507,3 +544,11 @@ def _merge_contexts(
         all_referenced_context=tuple(referenced[key] for key in sorted(referenced)),
         failures=tuple(dict.fromkeys(first.failures + second.failures)),
     )
+
+
+def _governance_failure_reason(exc: Exception) -> ReasonCode:
+    if isinstance(exc, GovernanceContextStaleError):
+        return ReasonCode.DATAHUB_CONTEXT_STALE
+    if isinstance(exc, GovernanceContextDriftError):
+        return ReasonCode.DATAHUB_CONTEXT_DRIFT
+    return ReasonCode.DATAHUB_UNAVAILABLE
