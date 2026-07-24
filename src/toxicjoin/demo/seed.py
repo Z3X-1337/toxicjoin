@@ -23,6 +23,13 @@ from toxicjoin.models import StrictModel
 DEFAULT_SEED = 1337
 DEFAULT_CUSTOMER_COUNT = 120
 MODEL_TIMESTAMP = "2026-07-22T00:00:00Z"
+_ROW_COUNT_QUERIES = {
+    "customers": "SELECT COUNT(*) FROM customers",
+    "orders": "SELECT COUNT(*) FROM orders",
+    "support_cases": "SELECT COUNT(*) FROM support_cases",
+    "location_activity": "SELECT COUNT(*) FROM location_activity",
+    "retention_scores": "SELECT COUNT(*) FROM retention_scores",
+}
 
 
 class SeedSummary(StrictModel):
@@ -49,6 +56,8 @@ def seed_database(
     output_path.unlink(missing_ok=True)
 
     generated = _generate_rows(seed=seed, customer_count=customer_count)
+    if set(generated) != set(_ROW_COUNT_QUERIES):
+        raise RuntimeError("generated seed tables do not match the fixed verification allowlist")
     fingerprint = _fingerprint(generated)
 
     connection = duckdb.connect(str(output_path))
@@ -58,8 +67,8 @@ def seed_database(
         _insert_rows(connection, generated)
         connection.execute("COMMIT")
         row_counts = {
-            table: int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
-            for table in generated
+            table: int(connection.execute(query).fetchone()[0])
+            for table, query in _ROW_COUNT_QUERIES.items()
         }
     except Exception:
         connection.execute("ROLLBACK")
