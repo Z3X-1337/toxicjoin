@@ -6,7 +6,7 @@ import os
 from collections.abc import Mapping
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from toxicjoin.models import StrictModel
 
@@ -20,6 +20,12 @@ class ExecutionOutputLimits(StrictModel):
 
     max_cell_bytes: int = Field(default=64 * 1024, ge=1024, le=1024 * 1024)
     max_result_bytes: int = Field(default=256 * 1024, ge=4096, le=4 * 1024 * 1024)
+
+    @model_validator(mode="after")
+    def cell_must_fit_result(self) -> "ExecutionOutputLimits":
+        if self.max_cell_bytes > self.max_result_bytes:
+            raise ValueError("max_cell_bytes cannot exceed max_result_bytes")
+        return self
 
     @classmethod
     def from_environment(
@@ -41,9 +47,6 @@ class ExecutionOutputLimits(StrictModel):
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"{env_name} must be an integer") from exc
         try:
-            limits = cls.model_validate(values)
+            return cls.model_validate(values)
         except Exception as exc:
             raise ValueError("execution output limit configuration is invalid") from exc
-        if limits.max_cell_bytes > limits.max_result_bytes:
-            raise ValueError("max_cell_bytes cannot exceed max_result_bytes")
-        return limits
