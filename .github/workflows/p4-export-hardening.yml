@@ -1,0 +1,99 @@
+name: P4 Export Verified Hardening
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/p4-export-hardening.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p4-export-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact P4 head
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Materialize and statically verify hardened tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_SHA="$(git rev-parse HEAD)"
+          test "$BASE_SHA" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          python3 scripts/p4_finalize.py --start-sha "$BASE_SHA"
+          python3 scripts/p4_fix_workflow_installs.py
+          rm -f .github/workflows/p4-export-hardening.yml
+          python3 scripts/validate_dependency_audit.py static
+
+          mkdir -p /tmp/p4-export/tree
+          python3 - <<'PY'
+          import json
+          import shutil
+          import subprocess
+          from pathlib import Path
+
+          root = Path.cwd()
+          output = Path('/tmp/p4-export')
+
+          def lines(*args: str) -> set[str]:
+              result = subprocess.run(
+                  ['git', *args],
+                  check=True,
+                  text=True,
+                  stdout=subprocess.PIPE,
+              ).stdout
+              return {line for line in result.splitlines() if line}
+
+          deleted = lines('diff', '--name-only', '--diff-filter=D', 'HEAD')
+          changed = lines('diff', '--name-only', '--diff-filter=ACMRTUXB', 'HEAD')
+          untracked = lines('ls-files', '--others', '--exclude-standard')
+          write_paths = sorted((changed | untracked) - deleted)
+          delete_paths = sorted(deleted)
+
+          for relative in write_paths:
+              source = root / relative
+              if not source.is_file():
+                  raise SystemExit(f'Expected hardened file missing: {relative}')
+              target = output / 'tree' / relative
+              target.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(source, target)
+
+          manifest = {
+              'base_sha': subprocess.run(
+                  ['git', 'rev-parse', 'HEAD'],
+                  check=True,
+                  text=True,
+                  stdout=subprocess.PIPE,
+              ).stdout.strip(),
+              'write_paths': write_paths,
+              'delete_paths': delete_paths,
+          }
+          (output / 'manifest.json').write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          print(json.dumps(manifest, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload exact hardened tree delta
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: p4-verified-hardened-tree
+          path: /tmp/p4-export/
+          if-no-files-found: error
+          retention-days: 7
