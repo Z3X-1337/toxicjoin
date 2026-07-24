@@ -1,0 +1,114 @@
+name: P4 Supply Chain Bootstrap
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/p4-supply-chain-bootstrap.yml"
+      - "pyproject.toml"
+      - "apps/web/package.json"
+      - "Dockerfile"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p4-supply-chain-bootstrap-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960b21737293a21f48cc94acb231d88b3f16 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+        continue-on-error: true
+
+      - name: Generate Python universal lock and audit inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p p4-bootstrap
+          python -m pip install --disable-pip-version-check 'uv==0.8.4' 'pip-audit==2.9.0'
+          uv lock
+          cp uv.lock p4-bootstrap/uv.lock
+
+          uv export --frozen \
+            --extra datahub --extra dev --extra security \
+            --no-hashes \
+            --output-file p4-bootstrap/requirements-datahub.txt
+          uv export --frozen \
+            --extra agent-registry --extra dev --extra security \
+            --no-hashes \
+            --output-file p4-bootstrap/requirements-agent-registry.txt
+
+          set +e
+          pip-audit -r p4-bootstrap/requirements-datahub.txt \
+            --format json --output p4-bootstrap/pip-audit-datahub.json
+          DATAHUB_AUDIT_RC=$?
+          pip-audit -r p4-bootstrap/requirements-agent-registry.txt \
+            --format json --output p4-bootstrap/pip-audit-agent-registry.json
+          AGENT_AUDIT_RC=$?
+          set -e
+
+          printf '%s\n' "$DATAHUB_AUDIT_RC" > p4-bootstrap/pip-audit-datahub.exit-code.txt
+          printf '%s\n' "$AGENT_AUDIT_RC" > p4-bootstrap/pip-audit-agent-registry.exit-code.txt
+          uv --version > p4-bootstrap/uv-version.txt
+          pip-audit --version > p4-bootstrap/pip-audit-version.txt
+
+      - name: Generate web lock and capture npm audit
+        shell: bash
+        working-directory: apps/web
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --ignore-scripts
+          cp package-lock.json ../../p4-bootstrap/package-lock.json
+
+          set +e
+          npm audit --package-lock-only --json > ../../p4-bootstrap/npm-audit.json
+          NPM_AUDIT_RC=$?
+          set -e
+          printf '%s\n' "$NPM_AUDIT_RC" > ../../p4-bootstrap/npm-audit.exit-code.txt
+          node --version > ../../p4-bootstrap/node-version.txt
+          npm --version > ../../p4-bootstrap/npm-version.txt
+
+      - name: Resolve Docker base image digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull node:22-alpine >/dev/null
+          docker pull python:3.12-slim >/dev/null
+          {
+            docker inspect --format='node:22-alpine={{index .RepoDigests 0}}' node:22-alpine
+            docker inspect --format='python:3.12-slim={{index .RepoDigests 0}}' python:3.12-slim
+          } | tee p4-bootstrap/base-image-digests.txt
+
+      - name: Record exact production candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > p4-bootstrap/release-candidate-sha.txt
+
+      - name: Upload bootstrap evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: toxicjoin-p4-supply-chain-bootstrap
+          path: p4-bootstrap/
+          if-no-files-found: error
+          retention-days: 14
