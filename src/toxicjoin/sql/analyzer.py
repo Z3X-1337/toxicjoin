@@ -145,11 +145,14 @@ def _classify_projection_expression(
     if not columns:
         return ProjectionExposureKind.NESTED_SCOPE
 
-    aggregate_backed = False
+    count_backed = False
     for column in columns:
-        if _column_is_aggregate_operand(column, select):
-            aggregate_backed = True
+        aggregate_kind = _aggregate_operand_kind(column, select)
+        if aggregate_kind == ProjectionExposureKind.AGGREGATE_VALUE:
+            count_backed = True
             continue
+        if aggregate_kind == ProjectionExposureKind.AGGREGATE_OPERAND:
+            return ProjectionExposureKind.AGGREGATE_OPERAND
 
         source_kind = _source_column_kind(
             column,
@@ -158,15 +161,17 @@ def _classify_projection_expression(
             visited=visited,
         )
         if source_kind == ProjectionExposureKind.AGGREGATE_VALUE:
-            aggregate_backed = True
+            count_backed = True
             continue
+        if source_kind == ProjectionExposureKind.AGGREGATE_OPERAND:
+            return ProjectionExposureKind.AGGREGATE_OPERAND
         if source_kind == ProjectionExposureKind.NESTED_SCOPE:
             return ProjectionExposureKind.NESTED_SCOPE
         return ProjectionExposureKind.TRANSFORMED_RAW_VALUE
 
     return (
         ProjectionExposureKind.AGGREGATE_VALUE
-        if aggregate_backed
+        if count_backed
         else ProjectionExposureKind.TRANSFORMED_RAW_VALUE
     )
 
@@ -235,13 +240,26 @@ def _is_group_key(
     return bool(current_keys.intersection(grouped_keys))
 
 
-def _column_is_aggregate_operand(column: exp.Column, select: exp.Select) -> bool:
+def _aggregate_operand_kind(
+    column: exp.Column,
+    select: exp.Select,
+) -> ProjectionExposureKind | None:
+    """Classify aggregate operands conservatively.
+
+    COUNT only reveals cardinality, so its source can be treated as an aggregate
+    value. Other aggregates may preserve or reconstruct source values (for example
+    MIN, MAX, FIRST, ARRAY_AGG, STRING_AGG), so their operands remain semantically
+    exposed and must pass normal policy/verifier checks.
+    """
+
     current = column.parent
     while current is not None and current is not select:
         if isinstance(current, exp.AggFunc):
-            return True
+            if isinstance(current, exp.Count):
+                return ProjectionExposureKind.AGGREGATE_VALUE
+            return ProjectionExposureKind.AGGREGATE_OPERAND
         current = current.parent
-    return False
+    return None
 
 
 def _is_output_wildcard(projection: exp.Expression) -> bool:
