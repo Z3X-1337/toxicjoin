@@ -48,21 +48,10 @@ class DisclosureLedger:
         self.busy_timeout_ms = busy_timeout_ms
         self._initialize()
 
-    def append(
-        self,
-        event: DisclosureEvent,
-        *,
-        created_at: datetime | None = None,
-        record_id: str | None = None,
-    ) -> DisclosureRecord:
+    def append(self, event: DisclosureEvent) -> DisclosureRecord:
         """Append one disclosure event or return its identical prior receipt record."""
 
         event_sha256 = compute_event_sha256(event)
-        resolved_created_at = (created_at or datetime.now(timezone.utc)).astimezone(
-            timezone.utc
-        )
-        resolved_record_id = record_id or f"dl_{uuid4().hex}"
-
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -99,12 +88,14 @@ class DisclosureLedger:
                     "SELECT COALESCE(MAX(sequence), 0) + 1 FROM disclosure_records"
                 ).fetchone()[0]
             )
+            created_at = datetime.now(timezone.utc)
+            record_id = f"dl_{uuid4().hex}"
 
             provisional = DisclosureRecord.model_construct(
                 schema_version="1.0",
-                record_id=resolved_record_id,
+                record_id=record_id,
                 sequence=sequence,
-                created_at=resolved_created_at,
+                created_at=created_at,
                 event=event,
                 event_sha256=event_sha256,
                 previous_content_sha256=previous_sha256,
@@ -112,9 +103,9 @@ class DisclosureLedger:
             )
             content_sha256 = compute_record_sha256(provisional)
             record = DisclosureRecord(
-                record_id=resolved_record_id,
+                record_id=record_id,
                 sequence=sequence,
-                created_at=resolved_created_at,
+                created_at=created_at,
                 event=event,
                 event_sha256=event_sha256,
                 previous_content_sha256=previous_sha256,
