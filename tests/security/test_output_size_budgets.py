@@ -163,7 +163,7 @@ def test_small_api_response_remains_unchanged_under_budget(tmp_path) -> None:
         response = client.get("/api/health")
 
     assert response.status_code == 200
-    assert response.json()["mode"] == "fixture"
+    assert response.json() == {"status": "ok"}
     assert len(response.content) < 4096
 
 
