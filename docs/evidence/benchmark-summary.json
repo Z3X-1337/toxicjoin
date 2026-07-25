@@ -3,11 +3,11 @@
   "benchmark_version": "1.0",
   "policy_version": "0.2.0",
   "source": {
-    "workflow_run": 30136824481,
+    "workflow_run": 30140102648,
     "artifact": "toxicjoin-benchmark",
-    "artifact_id": 8613113482,
-    "artifact_digest": "sha256:4f46fdf293e2e6fc8174a30cfa7b825e4e65028483808db6f2732607360363a5",
-    "head_sha": "fe4f8da2579e09bdbfb1d998b92dfea86549733b"
+    "artifact_id": 8614180997,
+    "artifact_digest": "sha256:3adec180defa9338fe970068f47bc3a479ceae2817941f41b8c7f32c8f4a10d6",
+    "head_sha": "e139fa99bd666505ed83a18188423722405695a2"
   },
   "corpus": {
     "total": 30,
