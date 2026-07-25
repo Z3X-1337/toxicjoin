@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Callable
 from urllib.parse import quote, unquote_to_bytes
-
-from pydantic import ValidationError
 
 from toxicjoin.agent.models import (
     AgentDataContext,
@@ -24,6 +23,7 @@ from toxicjoin.integrations.datahub_authority import (
     DataHubMcpRole,
     ReadOnlyDataHubMcpSettings,
     RoleBoundDataHubMcpClient,
+    read_only_credential_provenance_valid,
 )
 from toxicjoin.integrations.datahub_mcp import (
     DataHubMcpTransport,
@@ -56,9 +56,9 @@ TransportFactory = Callable[[ReadOnlyDataHubMcpSettings], DataHubMcpTransport]
 class DataHubAgentDiscoverer:
     """Acquire one trusted DataHub snapshot and expose only a sanitized planning view.
 
-    Discovery requires the concrete dedicated READ_ONLY credential type produced from the
-    read-token channel. Writer settings cannot become eligible by mutating role fields because
-    concrete credential type identity is part of the authority boundary.
+    Discovery requires a factory-issued dedicated READ_ONLY credential whose concrete type,
+    private factory seal, and bearer-token fingerprint all remain intact. A settings object whose
+    token or authority labels were copied/replaced is rejected before any transport is created.
     """
 
     def __init__(
@@ -181,27 +181,18 @@ def _project_trusted_snapshot(snapshot: DataHubSnapshot) -> AgentDataContext:
 
 
 def _read_only_settings(settings: ReadOnlyDataHubMcpSettings) -> ReadOnlyDataHubMcpSettings:
-    """Return a private copy of a dedicated read credential without relabeling authority."""
+    """Return a private copy only when factory-issued read-token provenance is intact."""
 
-    if type(settings) is not ReadOnlyDataHubMcpSettings:
-        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_READ_ROLE_REQUIRED")
-    if (
-        settings.role != DataHubMcpRole.READ_ONLY
-        or settings.mutation_enabled
-        or settings.credential_source != "DATAHUB_GMS_READ_TOKEN"
-    ):
+    if not read_only_credential_provenance_valid(settings):
         raise AgentDataHubDiscoveryError("AGENT_DATAHUB_READ_ROLE_REQUIRED")
 
     try:
-        return ReadOnlyDataHubMcpSettings(
-            gms_url=settings.gms_url,
-            gms_token=settings.gms_token,
-            command=settings.command,
-            args=tuple(settings.args),
-            timeout_seconds=settings.timeout_seconds,
-        )
-    except (AttributeError, ValidationError, ValueError):
+        copied = settings.model_copy(deep=False)
+    except Exception:
         raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID") from None
+    if not read_only_credential_provenance_valid(copied):
+        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_READ_ROLE_REQUIRED")
+    return copied
 
 
 def _is_canonical_dataset_urn(value: str) -> bool:
@@ -237,7 +228,10 @@ def _is_canonical_urn_component(value: str, *, safe: str) -> bool:
         return False
     if not decoded:
         return False
-    if any(character.isspace() or ord(character) < 0x20 for character in decoded):
+    if any(
+        character.isspace() or unicodedata.category(character).startswith("C")
+        for character in decoded
+    ):
         return False
     if any(character in ",()" for character in decoded):
         return False
