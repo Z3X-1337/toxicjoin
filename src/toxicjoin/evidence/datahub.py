@@ -169,6 +169,7 @@ def build_datahub_evidence_bundle(
             observed_at=observed_at,
             expires_at=expires_at,
             supporting_claim_ids=root_support,
+            derivation=DerivationKind.EXPLICIT_MAPPING,
         )
     )
 
@@ -302,6 +303,7 @@ def build_datahub_evidence_bundle(
                         expires_at=expires_at,
                         supporting_claim_ids=root_support,
                         complete=lineage_complete,
+                        derivation=DerivationKind.EXPLICIT_MAPPING,
                     )
                 )
                 claims.append(
