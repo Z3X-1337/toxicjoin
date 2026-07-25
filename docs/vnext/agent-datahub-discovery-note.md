@@ -7,8 +7,9 @@ This slice connects the planning-only Governed Agent context model to the existi
 The security-owned path is:
 
 ```text
-dedicated RoleBoundDataHubMcpSettings(role=READ_ONLY)
-  -> reject legacy/ambiguous or mutation-role credentials
+DATAHUB_GMS_READ_TOKEN
+  -> ReadOnlyDataHubMcpSettings concrete credential type
+  -> reject legacy/base, writer type, or authority-field relabeling
   -> mutation_enabled=false
   -> TOOLS_IS_MUTATION_ENABLED=false
   -> SAVE_DOCUMENT_TOOL_ENABLED=false
@@ -17,7 +18,8 @@ dedicated RoleBoundDataHubMcpSettings(role=READ_ONLY)
   -> reject any mutation-shaped tool exposure
   -> DataHubSnapshotLoader.load(require_mutations=false)
   -> validated DataHubSnapshot
-  -> fail-closed canonical dataset-URN validation
+  -> redacted snapshot serialization/revalidation
+  -> canonical DataHub dataset-URN exact round-trip
   -> redacted deterministic projection
   -> AgentDataContext (security_authoritative=false)
   -> untrusted planner
@@ -25,21 +27,28 @@ dedicated RoleBoundDataHubMcpSettings(role=READ_ONLY)
 
 The existing `DataHubSnapshotLoader` remains the ingestion/normalization authority. There is no second DataHub parser for the agent.
 
-## Credential and tool boundary
+## Credential provenance and tool boundary
 
 The planner never receives:
 
 - DataHub credentials;
 - raw GMS endpoint;
-- `RoleBoundDataHubMcpSettings`;
+- read/write MCP settings;
 - MCP transport/session/client objects;
 - discovered MCP tool definitions;
 - callable tools;
 - mutation handles.
 
-`DataHubAgentDiscoverer` requires a dedicated `RoleBoundDataHubMcpSettings(role=READ_ONLY)` credential. Generic legacy `DataHubMcpSettings` are rejected even when their `mutation_enabled` flag is false, because disabling tool registration does not attenuate the underlying DataHub token. A MUTATION-role settings object is likewise rejected rather than repurposing a writer credential for discovery.
+DataHub authority now has concrete credential types:
 
-The discoverer creates a private copy of the dedicated read settings. The read child always emits both `TOOLS_IS_MUTATION_ENABLED=false` and `SAVE_DOCUMENT_TOOL_ENABLED=false`. Snapshot loading is invoked with `require_mutations=false` through `RoleBoundDataHubMcpClient(role=READ_ONLY)`. If the read server nevertheless exposes `save_document` or another mutation-shaped tool, discovery fails closed before any metadata call is accepted.
+- `ReadOnlyDataHubMcpSettings`, sourced by `read_only_settings_from_env()` from `DATAHUB_GMS_READ_TOKEN`;
+- `MutationDataHubMcpSettings`, sourced by `mutation_settings_from_env()` from `DATAHUB_GMS_WRITE_TOKEN`.
+
+`DataHubAgentDiscoverer` accepts only the exact `ReadOnlyDataHubMcpSettings` type. Generic `DataHubMcpSettings`, the abstract role-bound base, and the writer concrete type are not eligible even if their fields appear to say `READ_ONLY`. This matters because disabling MCP mutation-tool registration does not attenuate the authority of the underlying DataHub token.
+
+Authority-bearing fields (`role`, `mutation_enabled`, and `credential_source`) are locked against Pydantic `model_copy(update=...)`. More importantly, concrete Python type identity remains part of the Agent boundary: even bypassing that override through the base Pydantic implementation cannot transform a writer instance into the read credential class.
+
+The discoverer creates a private `ReadOnlyDataHubMcpSettings` copy. The read child always emits both `TOOLS_IS_MUTATION_ENABLED=false` and `SAVE_DOCUMENT_TOOL_ENABLED=false`. Snapshot loading is invoked with `require_mutations=false` through `RoleBoundDataHubMcpClient(role=READ_ONLY)`. If the read server nevertheless exposes `save_document` or another mutation-shaped tool, discovery fails closed before metadata calls are accepted.
 
 ## Sanitized planning projection
 
@@ -58,9 +67,15 @@ Every resulting context, dataset, field, and lineage record remains `security_au
 
 These labels are hints for planning. They are not EvidenceClaims, trust resolutions, authorization facts, proof evidence, or a substitute for the downstream DataHub evidence/policy path.
 
-## Fail-closed DataHub identity
+## Fail-closed canonical DataHub identity
 
-A mere `urn:li:dataset:` prefix is not treated as resolved identity. P0 accepts only the canonical three-part dataset-URN structure used by the governed ToxicJoin asset manifest: a non-empty `urn:li:dataPlatform:<platform>` component, a non-empty dataset-name component, and a non-empty environment component inside the dataset tuple. Ambiguous, truncated, empty-component, whitespace-containing, or otherwise malformed dataset and lineage URNs fail closed.
+A mere `urn:li:dataset:` prefix is not treated as resolved identity. P0 accepts only the three-part dataset-URN structure used by the governed ToxicJoin asset manifest:
+
+```text
+urn:li:dataset:(urn:li:dataPlatform:<platform>,<dataset>,<environment>)
+```
+
+Each component is percent-decoded as strict UTF-8, checked for empty/control/whitespace/delimiter values, then re-encoded with a security-owned safe-character set. The encoded component must exactly equal its input. This rejects malformed escapes such as `%ZZ`, non-canonical encoding of safe characters such as `%2F` where `/` is canonical, truncated structures, empty components, and hidden whitespace while still permitting canonical percent-encoded Unicode.
 
 The existing DataHub normalizer can represent incomplete lineage using a deterministic unresolved synthetic ref with `datahub_urn=None`. The agent projection does **not** silently drop such an edge and does not invent a trusted-looking URN. It rejects the discovery context with `AGENT_DATAHUB_LINEAGE_IDENTITY_UNRESOLVED`.
 
@@ -68,13 +83,17 @@ An upstream edge with a canonical DataHub dataset URN but category `UNCLASSIFIED
 
 ## Error redaction
 
-The pluggable transport/factory and MCP snapshot acquisition execute inside one untrusted I/O boundary. Any exception escaping that boundary—including a forged `AgentDataHubDiscoveryError`—is replaced with the stable `AGENT_DATAHUB_DISCOVERY_FAILED` error and raised `from None`. External exception text/chaining therefore cannot be trusted to cross into the agent-facing boundary.
+The pluggable transport/factory and MCP snapshot acquisition execute inside one untrusted I/O boundary. Any exception escaping that boundary—including a forged `AgentDataHubDiscoveryError`—is replaced with the stable `AGENT_DATAHUB_DISCOVERY_FAILED` error and raised `from None`.
 
-Projection occurs only after the transport boundary has closed. Security-owned fixed identity failures retain finite stable error codes. Any other projection failure, including Pydantic validation caused by raw MCP-derived metadata, is collapsed to `AGENT_DATAHUB_PROJECTION_FAILED` with `from None` so raw input cannot leak through exception text or traceback. Regression coverage renders full propagated tracebacks and verifies planted credential/endpoint/metadata material is absent.
+Snapshot serialization and revalidation form a second redacted boundary. This is necessary because `DataHubSnapshot.lineage_sample` intentionally contains `dict[str, Any]`; a malicious/non-JSON value can make Pydantic serialization itself fail before ordinary validation. Every serialization/revalidation exception is collapsed to `AGENT_DATAHUB_SNAPSHOT_INVALID` with exception chaining suppressed.
+
+After successful revalidation, security-owned fixed identity failures retain finite stable codes. Any other projection failure, including Pydantic validation caused by raw MCP-derived metadata, is collapsed to `AGENT_DATAHUB_PROJECTION_FAILED` with `from None`. Regression coverage renders complete propagated tracebacks and verifies planted credential/endpoint/metadata/type material is absent.
 
 ## Live least-privilege coupling
 
-The existing DataHub least-privilege security suite now includes an agent-discovery regression that feeds the real `read_only_settings_from_env()` role-bound settings into `DataHubAgentDiscoverer`, exposes mutation tools from a fake read server, and requires failure before any metadata call. That security test is part of the `Live DataHub Evidence` workflow path filter, so future changes to this read-role boundary cannot bypass the live DataHub gate silently.
+`tests/security/test_datahub_mcp_least_privilege.py` feeds the real `read_only_settings_from_env()` concrete read credential into `DataHubAgentDiscoverer`, exposes mutation tools from a fake read server, and requires failure before any metadata call.
+
+In addition, `.github/workflows/datahub-live.yml` watches `src/toxicjoin/agent/**` directly and runs `DataHubAgentDiscoverer` itself against DataHub OSS quickstart. The live step verifies dedicated read provenance, mutation-disabled child settings, real snapshot acquisition, non-authoritative Agent context, expected dataset/field/lineage counts, and absence of credential/endpoint/tool-control material from serialized Agent context. A sanitized Agent discovery report is included in the Live DataHub evidence artifact.
 
 ## Non-goals
 
@@ -91,4 +110,4 @@ The proposed SQL remains subject to independent reacquisition/revalidation of go
 
 ## Retarget provenance
 
-PR #87 was merged into `main` as `d2498fce5bd44163c545286683de99fe165ed4f1` after explicit exact-head approval. PR #88 was then retargeted to that `main` merge. All earlier stacked CI/review evidence is development evidence only and is not sufficient for final merge eligibility. The final head must obtain fresh exact-head CI, security workflows, Live DataHub evidence, production-container evidence, and fresh review before a merge decision.
+PR #87 was merged into `main` as `d2498fce5bd44163c545286683de99fe165ed4f1` after explicit exact-head approval. PR #88 was then retargeted to that `main` merge. All earlier stacked or superseded-head evidence is development evidence only. The final head must obtain fresh exact-head CI, security workflows, Live DataHub evidence, production-container evidence, fresh Codex review, and a separate explicit owner merge approval.
