@@ -116,7 +116,7 @@ def test_remove_projection_uses_governed_urn_field_key() -> None:
     assert [item.field_path for item in plan.projected_columns] == ["customer_id"]
 
 
-def test_coarsen_qi_uses_only_frozen_date_trunc_transform() -> None:
+def test_coarsen_qi_fails_closed_without_trusted_type_evidence() -> None:
     sql = "SELECT event_date AS event_day FROM patients"
     candidate = _single(
         build_remediation_action(
@@ -126,16 +126,13 @@ def test_coarsen_qi_uses_only_frozen_date_trunc_transform() -> None:
         )
     )
 
-    compiled = compile_cpcc_candidate(
-        sql,
-        candidate,
-        original_resolution=_resolution(sql),
-        subject_key=SUBJECT,
-    )
-
-    assert "DATE_TRUNC('MONTH', event_date)" in compiled.generated_sql.upper()
-    assert "AS event_day" in compiled.generated_sql
-    analyze_sql(compiled.generated_sql)
+    with pytest.raises(CpccCompileError, match="trusted field-type evidence"):
+        compile_cpcc_candidate(
+            sql,
+            candidate,
+            original_resolution=_resolution(sql),
+            subject_key=SUBJECT,
+        )
 
 
 def test_aggregate_sensitive_replaces_simple_projection_and_preserves_alias() -> None:
@@ -159,6 +156,25 @@ def test_aggregate_sensitive_replaces_simple_projection_and_preserves_alias() ->
     assert "COUNT(DISTINCT diagnosis)" in compiled.generated_sql
     assert "AS diagnosis_value" in compiled.generated_sql
     assert "COUNT" in plan.aggregate_functions
+
+
+def test_aggregate_sensitive_rejects_mixed_root_projection() -> None:
+    sql = "SELECT customer_id, diagnosis FROM patients"
+    candidate = _single(
+        build_remediation_action(
+            RemediationOperator.AGGREGATE_SENSITIVE,
+            field_key=f"{URN}#diagnosis",
+            aggregate_operator=TrustedSensitiveAggregate.COUNT,
+        )
+    )
+
+    with pytest.raises(CpccCompileError, match="only root projection"):
+        compile_cpcc_candidate(
+            sql,
+            candidate,
+            original_resolution=_resolution(sql),
+            subject_key=SUBJECT,
+        )
 
 
 def test_add_minimum_group_threshold_reuses_existing_fail_closed_rewriter() -> None:
@@ -256,7 +272,11 @@ def test_compiler_rejects_multiple_threshold_actions_in_one_candidate() -> None:
         ),
     )
     space = build_remediation_space(actions)
-    pair = next(candidate for candidate in enumerate_cpcc_candidates(space) if len(candidate.actions) == 2)
+    pair = next(
+        candidate
+        for candidate in enumerate_cpcc_candidates(space)
+        if len(candidate.actions) == 2
+    )
 
     with pytest.raises(CpccCompileError, match="multiple threshold"):
         compile_cpcc_candidate(
