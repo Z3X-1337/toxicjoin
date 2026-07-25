@@ -1,11 +1,13 @@
 {
   "schema_version": "1.0",
   "benchmark_version": "1.0",
-  "policy_version": "0.1.0",
+  "policy_version": "0.2.0",
   "source": {
-    "ci_run": 97,
+    "workflow_run": 30136824481,
     "artifact": "toxicjoin-benchmark",
-    "head_sha": "fced08542756452b8769ebc2d980bb900df6e0ca"
+    "artifact_id": 8613113482,
+    "artifact_digest": "sha256:4f46fdf293e2e6fc8174a30cfa7b825e4e65028483808db6f2732607360363a5",
+    "head_sha": "fe4f8da2579e09bdbfb1d998b92dfea86549733b"
   },
   "corpus": {
     "total": 30,
@@ -35,7 +37,7 @@
     "BLOCK": {"ALLOW": 0, "REWRITE": 0, "BLOCK": 14}
   },
   "data_fingerprint": "bfeae85c4b238e38012aadc6f4c95d24c7a28bcb1da1c35e8eeef5be28be7d16",
-  "full_report_sha256": "4a1b7630012ffd54eba698b6bf1fd66a9dc3b6167d2513ef1c4c5519a8483987",
+  "full_report_sha256": "3aadc0b357db50641c8ffdc0525dde0e3d9159f933abf62a31a6a74b777d1b08",
   "gate_failures": [],
   "scope_note": "Deterministic regression corpus for the declared ToxicJoin SQL and policy profile; not a claim of universal privacy detection."
 }
