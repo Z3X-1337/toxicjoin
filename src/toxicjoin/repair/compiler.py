@@ -8,17 +8,11 @@ from sqlglot import exp
 
 from toxicjoin.context.models import ContextResolution
 from toxicjoin.evidence.canonical import canonical_json_sha256
-from toxicjoin.models import (
-    ColumnContext,
-    ProjectionExposure,
-    SensitivityCategory,
-    StrictModel,
-)
+from toxicjoin.models import ColumnContext, ProjectionExposure, SensitivityCategory, StrictModel
 from toxicjoin.repair.models import (
     CpccCandidate,
     RemediationAction,
     RemediationOperator,
-    TrustedQiTransformation,
     TrustedSensitiveAggregate,
 )
 from toxicjoin.rewrite import RewriteError, enforce_minimum_group_size
@@ -55,11 +49,7 @@ class CompiledCpccRepair(StrictModel):
 
     @model_validator(mode="after")
     def validate_compilation(self) -> "CompiledCpccRepair":
-        if self.operations != tuple(self.operations):
-            raise ValueError("CPCC compiler operations must be canonical")
-        if self.generated_sql_sha256 != canonical_json_sha256(
-            {"sql": self.generated_sql}
-        ):
+        if self.generated_sql_sha256 != canonical_json_sha256({"sql": self.generated_sql}):
             raise ValueError("CPCC generated SQL hash mismatch")
         if self.compilation_sha256 != compute_compiled_repair_sha256(self):
             raise ValueError("CPCC compilation hash mismatch")
@@ -77,8 +67,8 @@ def compile_cpcc_candidate(
     """Compile one candidate using only security-owned deterministic transforms.
 
     The original governed resolution is used only to bind declared CPCC field keys to exact
-    root projections. The generated query is not trusted here: the full validator must reparse
-    and reground it from scratch before policy or PPMC evaluation.
+    root projections. The generated query remains untrusted until the full validator reparses,
+    regrounds, rebuilds evidence, re-evaluates PolicyEngine, rebuilds the Twin, and reruns PPMC.
     """
 
     if not sql.strip():
@@ -219,8 +209,12 @@ def _compile_projection_action(
             for slot in slots
             if slot.has_effective_category(SensitivityCategory.STABLE_PSEUDONYM)
         )
-        operation = "REMOVE_STABLE_IDENTIFIER"
-        return _remove_projection_indexes(root, indexes, operation=operation, dialect=dialect)
+        return _remove_projection_indexes(
+            root,
+            indexes,
+            operation="REMOVE_STABLE_IDENTIFIER",
+            dialect=dialect,
+        )
 
     if action.operator == RemediationOperator.REMOVE_SENSITIVE_PROJECTION:
         indexes = tuple(
@@ -228,8 +222,19 @@ def _compile_projection_action(
             for slot in slots
             if slot.has_effective_category(SensitivityCategory.SENSITIVE_ATTRIBUTE)
         )
-        operation = "REMOVE_SENSITIVE_PROJECTION"
-        return _remove_projection_indexes(root, indexes, operation=operation, dialect=dialect)
+        return _remove_projection_indexes(
+            root,
+            indexes,
+            operation="REMOVE_SENSITIVE_PROJECTION",
+            dialect=dialect,
+        )
+
+    if action.operator == RemediationOperator.COARSEN_QI:
+        # The normalized governance model does not currently retain typed schema evidence.
+        # DATE_TRUNC without trusted type provenance can parse yet fail at bind/runtime.
+        raise CpccCompileError(
+            "COARSEN_QI requires trusted field-type evidence not available in compiler v0.1"
+        )
 
     if action.field_key is None:
         raise CpccCompileError("field-scoped remediation is missing field binding")
@@ -248,34 +253,18 @@ def _compile_projection_action(
             dialect=dialect,
         )
 
-    if action.operator == RemediationOperator.COARSEN_QI:
-        if not slot.has_effective_category(SensitivityCategory.QUASI_IDENTIFIER):
-            raise CpccCompileError("COARSEN_QI target is not a governed quasi-identifier")
-        body, alias = _simple_projection_column(slot.expression)
-        if action.qi_transformation == TrustedQiTransformation.DATE_TO_MONTH:
-            unit = "month"
-        elif action.qi_transformation == TrustedQiTransformation.DATE_TO_YEAR:
-            unit = "year"
-        else:  # pragma: no cover - model restricts enum.
-            raise CpccCompileError("unsupported trusted QI transformation")
-        replacement = exp.Anonymous(
-            this="DATE_TRUNC",
-            expressions=[exp.Literal.string(unit), body.copy()],
-        )
-        expressions[slot.index] = _restore_alias(replacement, alias)
-        root.set("expressions", expressions)
-        return root.sql(dialect=dialect, pretty=True), f"COARSEN_QI:{unit}:{action.field_key}"
-
     if action.operator == RemediationOperator.AGGREGATE_SENSITIVE:
         if not slot.has_effective_category(SensitivityCategory.SENSITIVE_ATTRIBUTE):
             raise CpccCompileError("AGGREGATE_SENSITIVE target is not sensitive")
+        if len(expressions) != 1:
+            raise CpccCompileError(
+                "AGGREGATE_SENSITIVE compiler profile requires the target as the only root projection"
+            )
         body, alias = _simple_projection_column(slot.expression)
         if action.aggregate_operator == TrustedSensitiveAggregate.COUNT:
             replacement = exp.Count(this=body.copy())
         elif action.aggregate_operator == TrustedSensitiveAggregate.COUNT_DISTINCT:
-            replacement = exp.Count(
-                this=exp.Distinct(expressions=[body.copy()])
-            )
+            replacement = exp.Count(this=exp.Distinct(expressions=[body.copy()]))
         else:  # pragma: no cover - model restricts enum.
             raise CpccCompileError("unsupported trusted sensitive aggregate")
         expressions[slot.index] = _restore_alias(replacement, alias)
@@ -299,7 +288,6 @@ class _ProjectionSlot:
         self.index = index
         self.expression = expression
         self.exposure = exposure
-        self._contexts = contexts
         governed: list[ColumnContext] = []
         for source in exposure.source_columns:
             context = contexts.get(source.key)
@@ -334,9 +322,7 @@ def _governance_by_ref(resolution: ContextResolution) -> dict[str, ColumnContext
             raise CpccCompileError("original governance must be fully resolved")
         existing = result.get(context.ref.key)
         if existing is not None and existing != context:
-            raise CpccCompileError(
-                f"conflicting original governance for {context.ref.key}"
-            )
+            raise CpccCompileError(f"conflicting original governance for {context.ref.key}")
         result[context.ref.key] = context
     return result
 
@@ -360,7 +346,9 @@ def _remove_projection_indexes(
     return root.sql(dialect=dialect, pretty=True), operation
 
 
-def _simple_projection_column(expression: exp.Expression) -> tuple[exp.Column, exp.Identifier | None]:
+def _simple_projection_column(
+    expression: exp.Expression,
+) -> tuple[exp.Column, exp.Identifier | None]:
     if isinstance(expression, exp.Alias):
         body = expression.this
         alias = expression.args.get("alias")
