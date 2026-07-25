@@ -143,7 +143,11 @@ def validate_static() -> None:
         "web-audit:",
         "hosted-replay-audit:",
         "bandit:",
+        "dependency-review-probe:",
         "dependency-review:",
+        "dependency-review-fallback:",
+        "exact-lock-local-fallback",
+        "dependency-review-platform-error:",
     )
     if any(token not in supply for token in required_supply_tokens):
         raise SystemExit("Permanent supply-chain workflow is incomplete")
