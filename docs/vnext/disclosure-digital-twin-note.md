@@ -8,12 +8,14 @@ The builder consumes:
 
 - one privacy `DisclosureScope`;
 - a complete per-scope audit-history snapshot of validated `DisclosureRecord` objects plus their lifecycle state;
-- the current candidate semantic release and optional composition metadata;
+- the current candidate semantic release and its composition metadata whenever the semantic release is protected;
 - purpose, governance, evidence-root, and optional warehouse-snapshot commitments.
 
 `RELEASED` and `PENDING` history are projected as active knowledge. `PENDING` is intentionally active because the existing secure ledger already counts pending reservations during cumulative evaluation to prevent concurrent requests from racing around the privacy gate. `ABORTED` records remain audit history but are excluded from active disclosure knowledge.
 
 The current candidate is projected as hypothetically released. This produces the post-candidate state that the later prospective model checker will inspect.
+
+Protected semantics are composition-complete or fail closed. If `is_protected_release(semantic)` is true, missing composition metadata is rejected. Supplied composition must bind the exact semantic release family and its `protected_release` flag must agree with deterministic classification. This prevents legacy/malformed protected history from silently losing cohort information in the prospective state.
 
 ## Atomic history snapshot requirement
 
