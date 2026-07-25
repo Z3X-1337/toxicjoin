@@ -153,6 +153,10 @@ def _authorizer() -> ProofBoundExecutionAuthorizer:
     )
 
 
+def _expected_binding(authorizer):
+    return authorizer.context_resolver.current_governance_binding()
+
+
 def test_proof_bound_authorization_binds_exact_proof_and_caps_ttl() -> None:
     authorizer = _authorizer()
     proof = _sealed_proof()
@@ -163,6 +167,7 @@ def test_proof_bound_authorization_binds_exact_proof_and_caps_ttl() -> None:
             task_purpose=TASK,
             subject_key=SUBJECT,
             privacy_proof=proof,
+            expected_governance_binding=_expected_binding(authorizer),
         )
         plan = authorizer.verify_and_consume(
             authorization,
@@ -192,6 +197,7 @@ def test_proof_is_required_at_issue_and_consume() -> None:
             task_purpose=TASK,
             subject_key=SUBJECT,
             privacy_proof=proof,
+            expected_governance_binding=_expected_binding(authorizer),
         )
         with pytest.raises(ExecutionAuthorizationError, match="AUTH_PRIVACY_PROOF_REQUIRED"):
             authorizer.verify_and_consume(
@@ -214,6 +220,7 @@ def test_tampered_proof_is_rejected_before_authorization_issue() -> None:
                 task_purpose=TASK,
                 subject_key=SUBJECT,
                 privacy_proof=tampered,
+                expected_governance_binding=_expected_binding(authorizer),
             )
 
 
@@ -239,6 +246,7 @@ def test_runtime_binding_mismatch_is_rejected_even_for_valid_hmac_proof() -> Non
                 task_purpose=TASK,
                 subject_key=SUBJECT,
                 privacy_proof=different,
+                expected_governance_binding=_expected_binding(authorizer),
             )
 
 
@@ -254,6 +262,7 @@ def test_swapping_another_valid_proof_after_issue_is_rejected() -> None:
             task_purpose=TASK,
             subject_key=SUBJECT,
             privacy_proof=proof,
+            expected_governance_binding=_expected_binding(authorizer),
         )
         with pytest.raises(
             ExecutionAuthorizationError,
@@ -278,6 +287,7 @@ def test_privacy_proof_commitment_is_covered_by_authorization_mac() -> None:
             task_purpose=TASK,
             subject_key=SUBJECT,
             privacy_proof=proof,
+            expected_governance_binding=_expected_binding(authorizer),
         )
         forged = authorization.model_copy(
             update={"privacy_proof_sha256": "0" * 64}
@@ -303,7 +313,12 @@ def test_legacy_authorizer_remains_available_for_staged_migration() -> None:
     )
 
     with bind_request_identity(IDENTITY):
-        authorization = legacy.issue(SQL, task_purpose=TASK, subject_key=SUBJECT)
+        authorization = legacy.issue(
+            SQL,
+            task_purpose=TASK,
+            subject_key=SUBJECT,
+            expected_governance_binding=_expected_binding(legacy),
+        )
         plan = legacy.verify_and_consume(
             authorization,
             SQL,
