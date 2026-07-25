@@ -46,7 +46,7 @@ jobs:
           python -m pip install --disable-pip-version-check 'uv==0.8.4'
           uv sync --frozen --extra agent-registry
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-          python - <<'PY'
+          .venv/bin/python - <<'PY'
           from importlib.metadata import version
           from datahub.api.entities.agent.agent import Agent
           from datahub.api.entities.agent.agent_skill import AgentSkill
