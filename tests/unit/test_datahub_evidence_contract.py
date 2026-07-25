@@ -7,10 +7,10 @@ from pydantic import SecretStr, ValidationError
 
 from toxicjoin.context.datahub import DataHubSnapshot
 from toxicjoin.context.fixture import FixtureCatalog, FixtureDataset, FixtureField
+from toxicjoin.evidence.canonical import canonical_json_sha256
 from toxicjoin.evidence.datahub import (
     DataHubEvidenceBundle,
     build_datahub_evidence_bundle,
-    compute_datahub_evidence_root,
 )
 from toxicjoin.evidence.models import (
     DerivationKind,
@@ -56,6 +56,10 @@ def _bundle() -> DataHubEvidenceBundle:
     return build_datahub_evidence_bundle(snapshot, settings)
 
 
+def _json_datetime(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _rebuild_payload_with_claim(
     bundle: DataHubEvidenceBundle,
     *,
@@ -65,19 +69,27 @@ def _rebuild_payload_with_claim(
     claims = list(bundle.claims)
     claims[replacement_index] = replacement_claim
     claims = sorted(claims, key=lambda claim: claim.claim_id)
-
-    unchecked = DataHubEvidenceBundle.model_construct(
-        schema_version=bundle.schema_version,
-        source_identity=bundle.source_identity,
-        snapshot_sha256=bundle.snapshot_sha256,
-        catalog_version=bundle.catalog_version,
-        observed_at=bundle.observed_at,
-        expires_at=bundle.expires_at,
-        claims=tuple(claims),
-        evidence_root_sha256="0" * 64,
+    evidence_root = canonical_json_sha256(
+        {
+            "schema_version": bundle.schema_version,
+            "source_identity": bundle.source_identity,
+            "snapshot_sha256": bundle.snapshot_sha256,
+            "catalog_version": bundle.catalog_version,
+            "observed_at": _json_datetime(bundle.observed_at),
+            "expires_at": _json_datetime(bundle.expires_at),
+            "claim_sha256s": [claim.content_sha256 for claim in claims],
+        }
     )
-    unchecked.evidence_root_sha256 = compute_datahub_evidence_root(unchecked)
-    return unchecked.model_dump(mode="json")
+    return {
+        "schema_version": bundle.schema_version,
+        "source_identity": bundle.source_identity,
+        "snapshot_sha256": bundle.snapshot_sha256,
+        "catalog_version": bundle.catalog_version,
+        "observed_at": _json_datetime(bundle.observed_at),
+        "expires_at": _json_datetime(bundle.expires_at),
+        "claims": [claim.model_dump(mode="json") for claim in claims],
+        "evidence_root_sha256": evidence_root,
+    }
 
 
 def test_mapped_security_predicate_cannot_be_spoofed_as_runtime_observed() -> None:
