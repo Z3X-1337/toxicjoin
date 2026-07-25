@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
+from toxicjoin.disclosure.composition import is_protected_release
 from toxicjoin.disclosure.models import (
+    DisclosureComposition,
     DisclosureSemanticRelease,
     GovernedColumn,
     SemanticOutput,
@@ -9,11 +13,11 @@ from toxicjoin.disclosure.models import (
 from toxicjoin.models import ProjectionExposureKind, SensitivityCategory
 from toxicjoin.prospective.twin import (
     DisclosureAtomKind,
+    DisclosureTwinError,
     direct_atoms_for_release,
     instantiate_disclosure_inference_rules,
     least_fixed_point,
 )
-
 
 DATASET_URN = "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.twin-boundary,PROD)"
 
@@ -67,8 +71,17 @@ def _output(column: GovernedColumn, kind: ProjectionExposureKind) -> SemanticOut
     return SemanticOutput(kind=kind, sources=(column,))
 
 
+def _composition(semantic: DisclosureSemanticRelease) -> DisclosureComposition:
+    return DisclosureComposition(
+        protected_release=is_protected_release(semantic),
+        release_family_sha256=semantic.semantic_sha256,
+        cohort_hmac_sha256="a" * 64,
+    )
+
+
 def _derived(semantic: DisclosureSemanticRelease):
-    released = direct_atoms_for_release(semantic, None)
+    composition = _composition(semantic) if is_protected_release(semantic) else None
+    released = direct_atoms_for_release(semantic, composition)
     rules = instantiate_disclosure_inference_rules(released)
     return least_fixed_point(released, rules)
 
@@ -139,3 +152,31 @@ def test_aggregate_sensitive_signal_is_known_but_not_raw_linkable_coexposure() -
         atom.kind != DisclosureAtomKind.IDENTIFIER_SENSITIVE_COEXPOSURE
         for atom in derived
     )
+
+
+def test_protected_release_without_composition_fails_closed() -> None:
+    stable = _column("customer_id", SensitivityCategory.STABLE_PSEUDONYM)
+    semantic = _semantic(
+        outputs=(_output(stable, ProjectionExposureKind.RAW_VALUE),),
+        referenced=(stable,),
+    )
+    assert is_protected_release(semantic)
+
+    with pytest.raises(DisclosureTwinError, match="requires composition metadata"):
+        direct_atoms_for_release(semantic, None)
+
+
+def test_protected_classification_mismatch_fails_closed() -> None:
+    stable = _column("customer_id", SensitivityCategory.STABLE_PSEUDONYM)
+    semantic = _semantic(
+        outputs=(_output(stable, ProjectionExposureKind.RAW_VALUE),),
+        referenced=(stable,),
+    )
+    forged = DisclosureComposition(
+        protected_release=False,
+        release_family_sha256=semantic.semantic_sha256,
+        cohort_hmac_sha256="b" * 64,
+    )
+
+    with pytest.raises(DisclosureTwinError, match="classification mismatch"):
+        direct_atoms_for_release(semantic, forged)
