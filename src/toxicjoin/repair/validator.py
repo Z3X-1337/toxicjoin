@@ -7,7 +7,12 @@ from datetime import datetime, timezone
 from toxicjoin.context.datahub import DataHubSnapshot, DataHubSnapshotContextResolver
 from toxicjoin.context.models import ContextResolution
 from toxicjoin.disclosure.composition import is_protected_release
-from toxicjoin.disclosure.models import DisclosureComposition, DisclosureScope
+from toxicjoin.disclosure.models import (
+    DisclosureComposition,
+    DisclosureScope,
+    GovernedColumn,
+    compute_scope_sha256,
+)
 from toxicjoin.disclosure.semantic import (
     build_semantic_release_from_resolution,
     resolve_governed_subject_domain,
@@ -19,12 +24,7 @@ from toxicjoin.evidence.derivation import (
     validate_datahub_evidence_derivations,
 )
 from toxicjoin.integrations.datahub_mcp import DataHubMcpSettings
-from toxicjoin.models import (
-    ColumnContext,
-    ColumnRef,
-    Decision,
-    SensitivityCategory,
-)
+from toxicjoin.models import ColumnContext, ColumnRef, Decision
 from toxicjoin.policy import PolicyEngine
 from toxicjoin.prospective.forbidden import (
     build_forbidden_predicate_policy,
@@ -32,13 +32,14 @@ from toxicjoin.prospective.forbidden import (
 )
 from toxicjoin.prospective.grammar import (
     DeclaredSnapshotTransition,
-    FutureActionKind,
     FutureActionGrammarError,
+    FutureActionKind,
     build_future_action_grammar_context,
     instantiate_future_action_grammar,
 )
 from toxicjoin.prospective.policy_oracle import (
     PolicyEngineLocalOracle,
+    PolicyOracleGovernanceContext,
     PolicyOracleSemanticError,
     build_policy_oracle_governance_context,
     policy_decision_sha256,
@@ -49,11 +50,7 @@ from toxicjoin.prospective.ppmc import (
     build_ppmc_search_config,
     check_prospective_privacy,
 )
-from toxicjoin.prospective.twin import (
-    DisclosureHistoryEntry,
-    DisclosureTwinError,
-    build_disclosure_state,
-)
+from toxicjoin.prospective.twin import DisclosureHistoryEntry, build_disclosure_state
 from toxicjoin.repair.compiler import CpccCompileError, compile_cpcc_candidate
 from toxicjoin.repair.cpcc import build_cpcc_candidate_validation
 from toxicjoin.repair.models import (
@@ -66,11 +63,11 @@ from toxicjoin.sql import SqlAnalysisError, analyze_sql
 
 
 class CpccFullValidationError(RuntimeError):
-    """Raised only when the trusted validator cannot even establish its base contract."""
+    """Raised only when the trusted validator cannot establish its base contract."""
 
 
 class DataHubCpccCandidateValidator:
-    """Security-side candidate validator implementing the complete frozen CPCC chain.
+    """Security-side validator implementing the complete frozen CPCC chain.
 
     The validator is bound to one exact DataHub snapshot, PolicyEngine configuration,
     disclosure-history snapshot, future-action declaration, and warehouse snapshot. It never
@@ -91,8 +88,8 @@ class DataHubCpccCandidateValidator:
         cohort_hmac_sha256: str,
         warehouse_snapshot_sha256: str,
         audit_history: tuple[DisclosureHistoryEntry, ...] = (),
-        relevant_projection_fields=(),
-        group_key_fields=(),
+        relevant_projection_fields: tuple[GovernedColumn, ...] = (),
+        group_key_fields: tuple[GovernedColumn, ...] = (),
         aggregate_allowlist: tuple[str, ...] = (),
         cohort_variant_hmacs: tuple[str, ...] = (),
         snapshot_transitions: tuple[DeclaredSnapshotTransition, ...] = (),
@@ -192,7 +189,9 @@ class DataHubCpccCandidateValidator:
             )
 
         try:
-            resolution, governance_binding = self._resolver.resolve_with_governance_binding(plan)
+            resolution, governance_binding = self._resolver.resolve_with_governance_binding(
+                plan
+            )
             if resolution.failures:
                 return self._failed(
                     candidate,
@@ -299,12 +298,10 @@ class DataHubCpccCandidateValidator:
                 principal_id=self.principal_id,
                 agent_id=self.agent_id,
                 subject=subject,
-                scope_sha256=canonical_json_sha256(
-                    {
-                        "principal_id": self.principal_id,
-                        "agent_id": self.agent_id,
-                        "subject_namespace_sha256": subject.namespace_sha256,
-                    }
+                scope_sha256=compute_scope_sha256(
+                    principal_id=self.principal_id,
+                    agent_id=self.agent_id,
+                    subject_namespace_sha256=subject.namespace_sha256,
                 ),
             )
             composition = DisclosureComposition(
@@ -356,7 +353,9 @@ class DataHubCpccCandidateValidator:
                 oracle_governance,
             )
             replay = next(
-                action for action in grammar.actions if action.kind == FutureActionKind.REPLAY
+                action
+                for action in grammar.actions
+                if action.kind == FutureActionKind.REPLAY
             )
             _, replay_policy_decision, replay_local = oracle.evaluate_release_action(
                 state,
@@ -452,7 +451,7 @@ class DataHubCpccCandidateValidator:
     def _build_oracle_governance(
         self,
         resolution: ContextResolution,
-    ):
+    ) -> PolicyOracleGovernanceContext:
         contexts: list[ColumnContext] = list(resolution.all_referenced_context)
         needed = (*self.relevant_projection_fields, *self.group_key_fields)
         urn_to_logical = {
