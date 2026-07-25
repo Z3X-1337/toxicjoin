@@ -60,10 +60,12 @@ def verify_and_execute(
     """
 
     executor = kwargs.get("executor")
-    if not isinstance(executor, DuckDBExecutor):
-        return _governance_verify_and_execute(sql, **kwargs)
     if privacy_proof is None:
         return _governance_verify_and_execute(sql, **kwargs)
+    if not isinstance(executor, DuckDBExecutor):
+        raise TypeError(
+            "privacy-proof verification requires a DuckDBExecutor execution boundary"
+        )
 
     bound_executor = _PrivacyProofInjectingExecutor(
         executor=executor,
