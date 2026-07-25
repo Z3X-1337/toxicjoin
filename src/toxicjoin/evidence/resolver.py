@@ -66,22 +66,22 @@ def resolve_evidence(
             policy=policy,
         )
 
-    if any(not claim.complete for claim in admissible):
-        return _result(
-            subject=subject,
-            predicate=predicate,
-            state=EvidenceTrustState.INCOMPLETE,
-            value=None,
-            claim_ids=claim_ids,
-            policy=policy,
-        )
-
     fresh = tuple(claim for claim in admissible if not claim.is_stale(current_time))
     if not fresh:
         return _result(
             subject=subject,
             predicate=predicate,
             state=EvidenceTrustState.STALE,
+            value=None,
+            claim_ids=claim_ids,
+            policy=policy,
+        )
+
+    if any(not claim.complete for claim in fresh):
+        return _result(
+            subject=subject,
+            predicate=predicate,
+            state=EvidenceTrustState.INCOMPLETE,
             value=None,
             claim_ids=claim_ids,
             policy=policy,
