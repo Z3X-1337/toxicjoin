@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/datahub-live.yml"
+      - "src/toxicjoin/agent/**"
       - "src/toxicjoin/api/**"
       - "src/toxicjoin/auth.py"
       - "src/toxicjoin/context/**"
@@ -114,15 +115,15 @@ jobs:
           title = "ToxicJoin MCP document bootstrap"
           client = DataHubClient.from_env()
           document = Document.create_document(
-              id=document_id,
-              title=title,
-              text=(
-                  "Bootstrap document used only to ensure that DataHub's official "
-                  "MCP document-content tools are registered before the independent "
-                  "ToxicJoin verification process starts."
-              ),
-              subtype="Context",
-              show_in_global_context=True,
+            id=document_id,
+            title=title,
+            text=(
+              "Bootstrap document used only to ensure that DataHub's official "
+              "MCP document-content tools are registered before the independent "
+              "ToxicJoin verification process starts."
+            ),
+            subtype="Context",
+            show_in_global_context=True,
           )
           client.entities.upsert(document)
 
@@ -171,6 +172,107 @@ jobs:
         run: |
           set -o pipefail
           toxicjoin-datahub-spike --verify 2>&1 | tee datahub-spike.log
+
+      - name: Verify Governed Agent discovery through live read-only MCP
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import asyncio
+          import hashlib
+          import json
+          from pathlib import Path
+
+          from toxicjoin.agent import DataHubAgentDiscoverer
+          from toxicjoin.context import DataHubAssetMap
+          from toxicjoin.integrations.datahub_authority import (
+              DataHubMcpRole,
+              read_only_settings_from_env,
+          )
+
+          async def discover():
+              settings = read_only_settings_from_env()
+              assert settings.role == DataHubMcpRole.READ_ONLY
+              assert settings.mutation_enabled is False
+              child_env = settings.child_environment()
+              assert child_env['TOOLS_IS_MUTATION_ENABLED'] == 'false'
+              assert child_env['SAVE_DOCUMENT_TOOL_ENABLED'] == 'false'
+              asset_map = DataHubAssetMap.from_path('config/datahub-assets.json')
+              context = await DataHubAgentDiscoverer(
+                  settings=settings,
+                  asset_map=asset_map,
+              ).discover()
+              return context, asset_map
+
+          context, asset_map = asyncio.run(discover())
+          assert context.security_authoritative is False
+          assert context.source == 'DATAHUB'
+          assert len(context.source_snapshot_sha256) == 64
+          assert len(context.context_sha256) == 64
+          assert tuple(dataset.logical_name for dataset in context.datasets) == tuple(
+              sorted(asset_map.datasets)
+          )
+          assert all(dataset.security_authoritative is False for dataset in context.datasets)
+          assert all(
+              field.security_authoritative is False
+              for dataset in context.datasets
+              for field in dataset.fields
+          )
+          assert all(
+              lineage.security_authoritative is False
+              for dataset in context.datasets
+              for field in dataset.fields
+              for lineage in field.lineage
+          )
+
+          serialized = context.model_dump_json()
+          forbidden = (
+              'local-quickstart-auth-disabled',
+              'http://127.0.0.1:8080',
+              'save_document',
+              'TOOLS_IS_MUTATION_ENABLED',
+              'SAVE_DOCUMENT_TOOL_ENABLED',
+          )
+          for value in forbidden:
+              assert value not in serialized, value
+
+          field_count = sum(len(dataset.fields) for dataset in context.datasets)
+          lineage_edge_count = sum(
+              len(field.lineage)
+              for dataset in context.datasets
+              for field in dataset.fields
+          )
+          payload = {
+              'schema_version': '1.0',
+              'status': 'verified',
+              'source': context.source,
+              'security_authoritative': context.security_authoritative,
+              'source_snapshot_sha256': context.source_snapshot_sha256,
+              'context_sha256': context.context_sha256,
+              'catalog_version': context.catalog_version,
+              'dataset_count': len(context.datasets),
+              'field_count': field_count,
+              'lineage_edge_count': lineage_edge_count,
+              'dedicated_read_role': True,
+              'mutation_tools_exposed_to_agent': False,
+          }
+          report_sha256 = hashlib.sha256(
+              json.dumps(
+                  payload,
+                  sort_keys=True,
+                  separators=(',', ':'),
+                  ensure_ascii=True,
+              ).encode('utf-8')
+          ).hexdigest()
+          report = {**payload, 'report_sha256': report_sha256}
+          output = Path('.toxicjoin/agent-discovery-live.json')
+          output.parent.mkdir(parents=True, exist_ok=True)
+          output.write_text(
+              json.dumps(report, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          print(json.dumps(report, indent=2, sort_keys=True))
+          PY
 
       - name: Verify live semantic policy decision through read-only MCP
         shell: bash
@@ -286,6 +388,7 @@ jobs:
 
           seed = json.loads(Path('.toxicjoin/datahub-seed.json').read_text())
           spike = json.loads(Path('.toxicjoin/datahub-spike.json').read_text())
+          agent = json.loads(Path('.toxicjoin/agent-discovery-live.json').read_text())
 
           assert seed['status'] == 'seeded'
           assert seed['tag_count'] == 10
@@ -295,6 +398,19 @@ jobs:
           assert seed['lineage_count'] == 4
           assert len(seed['dataset_urns']) == 5
           assert len(seed['report_sha256']) == 64
+
+          assert agent['schema_version'] == '1.0'
+          assert agent['status'] == 'verified'
+          assert agent['source'] == 'DATAHUB'
+          assert agent['security_authoritative'] is False
+          assert agent['dataset_count'] == 5
+          assert agent['field_count'] == 19
+          assert agent['lineage_edge_count'] >= 5
+          assert agent['dedicated_read_role'] is True
+          assert agent['mutation_tools_exposed_to_agent'] is False
+          assert len(agent['source_snapshot_sha256']) == 64
+          assert len(agent['context_sha256']) == 64
+          assert len(agent['report_sha256']) == 64
 
           assert spike['schema_version'] == '1.3'
           assert spike['status'] == 'verified'
@@ -347,8 +463,10 @@ jobs:
 
           forbidden = ('password', 'secret', 'http://127.0.0.1:8080')
           raw_report = Path('.toxicjoin/datahub-spike.json').read_text().lower()
+          raw_agent_report = Path('.toxicjoin/agent-discovery-live.json').read_text().lower()
           for value in forbidden:
               assert value not in raw_report, value
+              assert value not in raw_agent_report, value
 
           raw_mutation_extras = sorted(
               tool
@@ -357,6 +475,8 @@ jobs:
           )
           print(json.dumps({
             'seed_report_sha256': seed['report_sha256'],
+            'agent_discovery_report_sha256': agent['report_sha256'],
+            'agent_context_sha256': agent['context_sha256'],
             'spike_report_sha256': spike['report_sha256'],
             'decision_document_urn': spike['decision_document_urn'],
             'lineage_relationship_count': spike['lineage_relationship_count'],
@@ -391,6 +511,7 @@ jobs:
           path: |
             .toxicjoin/datahub-seed.json
             .toxicjoin/datahub-spike.json
+            .toxicjoin/agent-discovery-live.json
             datahub-gms-health.txt
           if-no-files-found: error
           retention-days: 30
@@ -402,6 +523,8 @@ jobs:
           name: toxicjoin-live-datahub-diagnostics
           path: |
             .toxicjoin/datahub-seed.json
+            .toxicjoin/datahub-spike.json
+            .toxicjoin/agent-discovery-live.json
             datahub-seed.log
             datahub-spike.log
             datahub-quickstart.log
