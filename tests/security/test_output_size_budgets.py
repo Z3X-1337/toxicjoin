@@ -91,9 +91,10 @@ def test_total_execution_payload_budget_blocks_many_individually_valid_cells(
     assert result.effective_decision == Decision.BLOCK
     assert result.verification is not None
     assert result.verification.execution is None
-    assert result.verification.execution_error is not None
-    assert ReasonCode.RESULT_SIZE_LIMIT.value in result.verification.execution_error
-    assert "execution payload" in result.verification.execution_error
+    assert result.verification.execution_error == (
+        "RESULT_SIZE_LIMIT: protected execution failed"
+    )
+    assert "execution payload" not in result.verification.execution_error
     assert result.receipt.execution is None
 
 
