@@ -28,6 +28,7 @@ from toxicjoin.models import StrictModel
 
 _HASH_PATTERN = r"^[0-9a-f]{64}$"
 _VALIDATOR_VERSION = "1.0"
+ClaimKey = tuple[str, str]
 
 
 class DataHubDerivationValidationError(RuntimeError):
@@ -47,20 +48,28 @@ class DataHubDerivationValidation(StrictModel):
     evidence_root_sha256: str = Field(pattern=_HASH_PATTERN)
     snapshot_sha256: str = Field(pattern=_HASH_PATTERN)
     source_identity: str = Field(min_length=1, max_length=2048)
+    evidence_observed_at: datetime
+    evidence_expires_at: datetime
     validated_at: datetime
     observed_claim_ids: tuple[str, ...] = ()
     mapped_claim_ids: tuple[str, ...] = ()
     validation_sha256: str = Field(pattern=_HASH_PATTERN)
 
-    @field_validator("validated_at")
+    @field_validator("evidence_observed_at", "evidence_expires_at", "validated_at")
     @classmethod
-    def validated_at_must_be_utc(cls, value: datetime) -> datetime:
+    def timestamps_must_be_utc(cls, value: datetime) -> datetime:
         if value.tzinfo is None:
-            raise ValueError("DataHub derivation validation time must be timezone-aware")
+            raise ValueError("DataHub derivation validation timestamps must be timezone-aware")
         return value.astimezone(timezone.utc)
 
     @model_validator(mode="after")
     def validate_commitment(self) -> "DataHubDerivationValidation":
+        if self.evidence_expires_at <= self.evidence_observed_at:
+            raise ValueError("evidence_expires_at must follow evidence_observed_at")
+        if self.validated_at < self.evidence_observed_at:
+            raise ValueError("validated_at cannot precede evidence observation")
+        if self.validated_at >= self.evidence_expires_at:
+            raise ValueError("validated_at must precede evidence expiry")
         if self.observed_claim_ids != tuple(sorted(set(self.observed_claim_ids))):
             raise ValueError("observed_claim_ids must be sorted and unique")
         if self.mapped_claim_ids != tuple(sorted(set(self.mapped_claim_ids))):
@@ -87,9 +96,15 @@ def validate_datahub_evidence_derivations(
     Validation is freshness-aware and fails closed for future or expired evidence.
     """
 
-    current = _utc(now or datetime.now(timezone.utc))
-    observed_at = _utc(bundle.observed_at)
-    expires_at = _utc(bundle.expires_at)
+    try:
+        current = _utc(now or datetime.now(timezone.utc))
+        observed_at = _utc(bundle.observed_at)
+        expires_at = _utc(bundle.expires_at)
+        snapshot_observed_at = _utc(snapshot.observed_at)
+    except ValueError as exc:
+        raise DataHubDerivationValidationError(
+            "DataHub derivation validation requires timezone-aware timestamps"
+        ) from exc
 
     if observed_at > current:
         raise DataHubDerivationValidationError(
@@ -107,7 +122,7 @@ def validate_datahub_evidence_derivations(
         raise DataHubDerivationValidationError(
             "DataHub evidence catalog version does not match the trusted snapshot"
         )
-    if observed_at != _utc(snapshot.observed_at):
+    if observed_at != snapshot_observed_at:
         raise DataHubDerivationValidationError(
             "DataHub evidence observation time does not match the trusted snapshot"
         )
@@ -145,9 +160,13 @@ def validate_datahub_evidence_derivations(
         unexpected = sorted(candidate_keys - expected_keys)
         details: list[str] = []
         if missing:
-            details.append("missing=" + ",".join(missing))
+            details.append(
+                "missing=" + ",".join(_render_claim_key(key) for key in missing)
+            )
         if unexpected:
-            details.append("unexpected=" + ",".join(unexpected))
+            details.append(
+                "unexpected=" + ",".join(_render_claim_key(key) for key in unexpected)
+            )
         raise DataHubDerivationValidationError(
             "DataHub evidence claim set does not match deterministic replay"
             + (": " + "; ".join(details) if details else "")
@@ -161,7 +180,8 @@ def validate_datahub_evidence_derivations(
             or candidate_claim.content_sha256 != expected_claim.content_sha256
         ):
             raise DataHubDerivationValidationError(
-                f"DataHub evidence claim content does not match deterministic replay: {key}"
+                "DataHub evidence claim content does not match deterministic replay: "
+                + _render_claim_key(key)
             )
 
     if bundle.evidence_root_sha256 != expected.evidence_root_sha256:
@@ -194,6 +214,8 @@ def validate_datahub_evidence_derivations(
         "evidence_root_sha256": bundle.evidence_root_sha256,
         "snapshot_sha256": bundle.snapshot_sha256,
         "source_identity": bundle.source_identity,
+        "evidence_observed_at": _json_datetime(observed_at),
+        "evidence_expires_at": _json_datetime(expires_at),
         "validated_at": _json_datetime(current),
         "observed_claim_ids": list(observed_claim_ids),
         "mapped_claim_ids": list(mapped_claim_ids),
@@ -203,6 +225,8 @@ def validate_datahub_evidence_derivations(
         evidence_root_sha256=bundle.evidence_root_sha256,
         snapshot_sha256=bundle.snapshot_sha256,
         source_identity=bundle.source_identity,
+        evidence_observed_at=observed_at,
+        evidence_expires_at=expires_at,
         validated_at=current,
         observed_claim_ids=observed_claim_ids,
         mapped_claim_ids=mapped_claim_ids,
@@ -223,20 +247,26 @@ def _index_claims(
     claims: tuple[EvidenceClaim, ...],
     *,
     label: str,
-) -> dict[str, EvidenceClaim]:
-    indexed: dict[str, EvidenceClaim] = {}
+) -> dict[ClaimKey, EvidenceClaim]:
+    indexed: dict[ClaimKey, EvidenceClaim] = {}
     for claim in claims:
         key = _claim_key(claim)
         if key in indexed:
             raise DataHubDerivationValidationError(
-                f"{label} DataHub evidence contains duplicate semantic claim: {key}"
+                f"{label} DataHub evidence contains duplicate semantic claim: "
+                + _render_claim_key(key)
             )
         indexed[key] = claim
     return indexed
 
 
-def _claim_key(claim: EvidenceClaim) -> str:
-    return f"{claim.subject}\x00{claim.predicate}"
+def _claim_key(claim: EvidenceClaim) -> ClaimKey:
+    return claim.subject, claim.predicate
+
+
+def _render_claim_key(key: ClaimKey) -> str:
+    subject, predicate = key
+    return f"{subject!r}/{predicate!r}"
 
 
 def _utc(value: datetime) -> datetime:
