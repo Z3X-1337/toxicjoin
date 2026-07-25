@@ -1,22 +1,24 @@
 # ToxicJoin Judge Testing Guide
 
-This guide is designed for a reviewer who has not seen ToxicJoin before. The primary path takes about 90 seconds after the API is running.
+This guide is for a reviewer who has not seen ToxicJoin before. The primary fixture-mode path takes about 90 seconds after the service is running.
 
-## What ToxicJoin proves
+## What to verify
 
-Individually acceptable datasets can become sensitive when an AI data agent combines them. ToxicJoin inspects the SQL before execution, grounds the decision in governed column context, and returns one of three deterministic outcomes:
+ToxicJoin evaluates untrusted analytical SQL before execution, grounds the request in governed context, and returns one deterministic outcome:
 
-- `ALLOW`: execute through the hardened read-only path.
-- `REWRITE`: create a constrained safe query, analyze it again, then execute only after a final `ALLOW`.
-- `BLOCK`: stop before the database executor is called.
+- `ALLOW` — execute through the hardened read-only path.
+- `REWRITE` — generate a constrained safer query, then parse, ground, and evaluate it again.
+- `BLOCK` — stop before DuckDB is called.
 
-The LLM has no decision authority. The demo uses only synthetic data.
+The model has no authorization authority. The fixture demo uses only synthetic data.
 
-## Start the deterministic demo
+Current policy version: `0.2.0`.
+
+## Start the deterministic fixture demo
 
 Requirements: Python 3.11 or 3.12.
 
-Linux or macOS:
+Linux/macOS:
 
 ```bash
 bash run.sh
@@ -34,11 +36,11 @@ Open:
 http://127.0.0.1:8000/docs
 ```
 
-The health endpoint must disclose `mode: fixture`. Fixture mode is intentional for repeatable judge access and is not represented as a live DataHub run.
+The launchers are convenience paths. CI and Docker are the release-reproducible paths and consume the committed `uv.lock` with `uv sync --frozen`.
 
 ## 90-second verification path
 
-### 0:00–0:10 — Confirm the service and mode
+### 0:00–0:10 — Separate liveness from readiness
 
 Call:
 
@@ -46,13 +48,30 @@ Call:
 GET /api/health
 ```
 
-Expected evidence:
+Expected response:
 
-- `status: ok`
-- `mode: fixture`
-- `database_ready: true`
-- `receipt_store_ready: true`
-- policy version `0.1.0`
+```json
+{"status":"ok"}
+```
+
+This endpoint is intentionally process-liveness only. It does not disclose the runtime mode, package version, database state, policy version, receipt state, or DataHub state.
+
+Then call:
+
+```text
+GET /api/ready
+```
+
+In the zero-auth fixture demo, expected evidence includes:
+
+- `status: ok`;
+- `mode: fixture`;
+- `policy_version: 0.2.0`;
+- `database_ready: true`;
+- `receipt_store_ready: true`;
+- `governance_ready: true`.
+
+In authenticated/LIVE deployments, detailed readiness requires the `system:read` scope.
 
 ### 0:10–0:20 — Load the three curated scenarios
 
@@ -62,17 +81,17 @@ Call:
 GET /api/demo/scenarios
 ```
 
-The response contains exact request payloads for:
+The fixture response contains request payloads for:
 
-1. `block-sensitive-export`
-2. `rewrite-churn-regions`
-3. `allow-public-order-counts`
+1. `block-sensitive-export`;
+2. `rewrite-churn-regions`;
+3. `allow-public-order-counts`.
 
-Copy a scenario's `request` object into the next endpoint.
+Copy a scenario's `request` object into `POST /api/execute-safe`.
 
 ### 0:20–0:35 — Prove unsafe individual data never executes
 
-Use `block-sensitive-export` with:
+Run `block-sensitive-export` through:
 
 ```text
 POST /api/execute-safe
@@ -80,17 +99,19 @@ POST /api/execute-safe
 
 Expected evidence:
 
-- initial and effective decision: `BLOCK`
-- reason includes `COMPOSITIONAL_REIDENTIFICATION_RISK`
-- projected combination includes a stable pseudonym, two quasi-identifiers, and a sensitive support attribute
-- `verification` is null
-- receipt `execution` is null
+- initial decision `BLOCK`;
+- effective decision `BLOCK`;
+- reason includes `COMPOSITIONAL_REIDENTIFICATION_RISK`;
+- the exposure combines a stable pseudonym, quasi-identifiers, and a governed sensitive attribute;
+- no successful verification object;
+- receipt execution summary is null;
+- DuckDB is not reached.
 
-This is the key negative guarantee: the unsafe SQL never reaches DuckDB.
+The important guarantee is not merely that the response says BLOCK; the execution path is absent.
 
-### 0:35–1:05 — Prove real remediation and execution
+### 0:35–1:05 — Prove remediation is re-evaluated
 
-Use `rewrite-churn-regions` with:
+Run `rewrite-churn-regions` through:
 
 ```text
 POST /api/execute-safe
@@ -98,25 +119,25 @@ POST /api/execute-safe
 
 Expected evidence:
 
-- initial decision: `REWRITE`
-- reason: `SMALL_GROUP_RISK`
+- initial decision `REWRITE`;
+- initial reason includes `SMALL_GROUP_RISK`;
 - `safe_sql` contains:
 
 ```sql
 HAVING COUNT(DISTINCT c.customer_id) >= 20
 ```
 
-- final decision: `ALLOW`
-- verification passes
-- the real DuckDB result contains three coarse-region groups
-- every observed `subject_count` is 40
-- the receipt contains execution metadata but no result rows
+- final decision `ALLOW`;
+- independent verification passes;
+- three coarse-region result groups are observed;
+- each observed `subject_count` is 40;
+- the receipt contains execution metadata but not result rows.
 
-The rewritten SQL is reparsed, re-grounded, reevaluated, executed read-only, and independently verified. It is not trusted merely because ToxicJoin generated it.
+The generated SQL is reparsed, regrounded, reevaluated, authorized, executed read-only, and independently verified. ToxicJoin never trusts a rewrite merely because it generated it.
 
-### 1:05–1:20 — Prove benign work is not unnecessarily blocked
+### 1:05–1:20 — Prove benign work remains usable
 
-Use `allow-public-order-counts` with:
+Run `allow-public-order-counts` through:
 
 ```text
 POST /api/execute-safe
@@ -124,14 +145,17 @@ POST /api/execute-safe
 
 Expected evidence:
 
-- initial and effective decision: `ALLOW`
-- reason: `NO_COMPOSITIONAL_RISK`
-- no rewrite
-- real bounded result rows returned
+- initial decision `ALLOW`;
+- effective decision `ALLOW`;
+- reason includes `NO_COMPOSITIONAL_RISK`;
+- no rewrite;
+- bounded result rows are returned.
+
+This is the utility counterexample to a blanket-deny firewall.
 
 ### 1:20–1:30 — Verify receipt integrity
 
-Copy the `receipt_id` from any response and call:
+Copy a returned `receipt_id` and call:
 
 ```text
 GET /api/receipts/{receipt_id}
@@ -140,86 +164,121 @@ GET /api/receipts/{receipt_id}
 Expected evidence:
 
 - the receipt loads successfully;
-- SQL literals are redacted in display text;
-- the receipt stores hashes, governed columns, reason codes, verification checks, and execution summary;
-- there is no `rows` property in the persisted receipt;
-- the content SHA-256 is checked on every read.
+- SQL literals are redacted from display text;
+- hashes, governed evidence, decisions, verification checks, and execution summary are retained;
+- there is no raw `rows` property in the persisted receipt;
+- the content SHA-256 is verified on read.
 
-## Benchmark evidence
+Receipt ownership is principal-scoped in authenticated deployments; another principal receives the same 404 surface as a missing receipt.
+
+## Final benchmark evidence
+
+The exact release candidate `fe4f8da2579e09bdbfb1d998b92dfea86549733b` ran the checked-in 30-case benchmark in CI under policy `0.2.0`.
+
+Result:
+
+- 30 cases: 10 ALLOW / 10 REWRITE / 10 BLOCK;
+- 30/30 expected initial decisions;
+- 30/30 expected effective outcomes;
+- 30/30 expected reason codes;
+- zero false allows;
+- zero unsafe effective allows;
+- six rewrites remediated to verified ALLOW;
+- four rewrite paths failed closed;
+- 16 verified executions.
 
 Read:
 
-- [`docs/evidence/benchmark.md`](evidence/benchmark.md)
-- [`docs/evidence/benchmark-summary.json`](evidence/benchmark-summary.json)
+- [`evidence/benchmark.md`](evidence/benchmark.md)
+- [`evidence/benchmark-summary.json`](evidence/benchmark-summary.json)
+- [`evidence/release-candidate.md`](evidence/release-candidate.md)
 
-Or reproduce it:
+Reproduce:
 
 ```bash
 toxicjoin-benchmark --output-dir artifacts/benchmark
 ```
 
-The current CI-generated result is:
+## Final adversarial evidence
 
-- 30 cases: 10 `ALLOW`, 10 `REWRITE`, 10 `BLOCK`;
-- 100% initial decision accuracy on the declared corpus;
-- 100% effective outcome accuracy;
-- 100% expected reason-code coverage;
-- zero false allows;
-- zero unsafe effective allows;
-- six rewrites remediated and executed;
-- four rewrite paths failed closed;
-- 16 verified executions.
+The exact release candidate also passed the 144-case metamorphic mutation gate:
 
-The benchmark is a regression corpus for the declared supported profile, not a claim of universal privacy detection.
+- 144/144 initial BLOCK;
+- 144/144 effective BLOCK;
+- 144/144 intended compositional-risk reason;
+- zero database executions;
+- zero unsafe allows.
+
+See [`evidence/adversarial-mutations.md`](evidence/adversarial-mutations.md).
 
 ## Live DataHub verification
 
-The deterministic demo above can run without Docker. The final submission environment should also include the live DataHub proof described in:
+Fixture mode is not represented as live DataHub. The final release separately passed a real DataHub OSS + official MCP gate.
 
-[`docs/datahub-live-integration.md`](datahub-live-integration.md)
-
-The live verification commands are:
+For the reproducible live dependency profile:
 
 ```bash
-toxicjoin-datahub-seed --yes
-toxicjoin-datahub-spike --verify
+python -m pip install --disable-pip-version-check 'uv==0.8.4'
+uv sync --frozen --extra datahub
 ```
 
-A valid live run must prove:
+Then follow [`datahub-live-integration.md`](datahub-live-integration.md).
 
-1. configured DataHub assets were read;
-2. governed schema fields and sensitivity labels were read;
-3. upstream column lineage was read;
-4. a DataHub `Decision` document was written;
-5. the first MCP process was closed;
-6. a fresh MCP process read the document back and found the unique marker.
+The live flow must prove:
 
-That stable live proof is committed in [`docs/evidence/datahub-live.md`](evidence/datahub-live.md).
+1. five configured DataHub assets and all governed schema fields are read;
+2. governance tags/terms and upstream column lineage are acquired;
+3. the read process exposes no mutation tools;
+4. a separate writer is restricted by ToxicJoin to `save_document` only;
+5. a DataHub `Decision` is written;
+6. the writer process is closed;
+7. a fresh read-only MCP process independently reads the persisted marker back.
 
-### Optional preview: DataHub Agent Registry graph
+The final exact-head evidence reports:
 
-For reviewers interested in the reusable DataHub-native capability, inspect:
+- 5 datasets;
+- 19 governed fields;
+- 10 controlled tags;
+- 7 glossary terms;
+- 4 lineage writes;
+- spike schema `1.3`;
+- 3 upstream lineage relationships;
+- 2 lineage-bound fields;
+- 6 normalized lineage sources;
+- zero unclassified lineage sources;
+- effective writer inventory exactly `save_document`;
+- independent read-back verified.
 
-- [`skills/compositional-risk-review/SKILL.md`](../skills/compositional-risk-review/SKILL.md);
-- [`docs/evidence/datahub-agent-registry.md`](evidence/datahub-agent-registry.md).
+See [`evidence/datahub-live.md`](evidence/datahub-live.md).
 
-The separate preview proof registers five MCP tools as API entities, one git-backed Agent Skill, and one AI Agent consuming the five governed datasets. A fresh graph client verifies the persisted Agent→Skill→Tools and Agent→Datasets relationships. This proof uses the DataHub `quickstart` development channel and `acryl-datahub==1.6.0.16rc3`; it is not required for ToxicJoin's core enforcement or stable SDK/MCP integration.
+## Independent release validation
 
-## Security checks reviewers can inspect
+The release was not frozen on CI alone.
 
-- SQL boundary: `src/toxicjoin/sql/`
+The exact candidate also passed:
+
+- the unchanged frozen external 24-task v2 replay;
+- an exact-image black-box pentest with 24/24 probes passing;
+- disclosure-sequence evidence for cumulative cross-query privacy;
+- CodeQL, Bandit, dependency audits, SBOM generation, immutable Action pins, and digest-pinned Docker bases.
+
+The authoritative run IDs, artifact IDs/digests, and report hashes are in [`evidence/release-candidate.md`](evidence/release-candidate.md).
+
+## Security surfaces reviewers can inspect
+
+- SQL and semantic lineage: `src/toxicjoin/sql/`
 - deterministic policy: `src/toxicjoin/policy/`
 - safe rewrite: `src/toxicjoin/rewrite/`
-- read-only execution: `src/toxicjoin/execute/`
+- execution authorization/read-only DuckDB: `src/toxicjoin/execute/`
+- cumulative disclosure state: `src/toxicjoin/disclosure/`
 - independent verification: `src/toxicjoin/verify/`
-- immutable receipts: `src/toxicjoin/receipts/`
-- DataHub SDK/MCP integration: `src/toxicjoin/integrations/`
-- threat model: [`docs/threat-model.md`](threat-model.md)
-- build evidence: [`docs/hackathon-build/build-notes.md`](hackathon-build/build-notes.md)
+- integrity-checked receipts: `src/toxicjoin/receipts/`
+- DataHub integration: `src/toxicjoin/integrations/`
+- threat model: [`threat-model.md`](threat-model.md)
 
-## Known limitations
+## Known boundaries
 
-- The rewrite engine intentionally supports a narrow, auditable transformation: adding or strengthening a subject-bound minimum-group threshold on an already-grouped query.
-- ToxicJoin does not claim general SQL repair, differential privacy, universal re-identification detection, or automatic policy discovery.
+- The rewrite engine intentionally supports a narrow, auditable subject-threshold remediation rather than arbitrary SQL repair.
+- ToxicJoin does not claim differential privacy, universal re-identification detection, or legal-compliance certification.
 - Unsupported or ambiguous SQL fails closed.
-- Real organizations must supply their own governed classifications, subject keys, policies, and validation corpus.
+- Real organizations must provide their own governed classifications, subject keys, policies, identity/network controls, and validation corpus.
