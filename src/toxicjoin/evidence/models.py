@@ -69,10 +69,22 @@ class EvidencePolicy(StrictModel):
     trusted_rules: tuple[EvidenceRule, ...] = Field(min_length=1, max_length=64)
 
     @model_validator(mode="after")
-    def trusted_rules_are_canonical(self) -> "EvidencePolicy":
+    def trusted_rules_are_safe_and_canonical(self) -> "EvidencePolicy":
         keys = tuple(rule.key for rule in self.trusted_rules)
         if keys != tuple(sorted(set(keys))):
             raise ValueError("trusted_rules must be sorted and unique")
+        unsafe = [
+            rule.key
+            for rule in self.trusted_rules
+            if rule.source == EvidenceSource.AGENT
+            or rule.derivation
+            in {
+                DerivationKind.AGENT_ASSERTED,
+                DerivationKind.FUZZY_INFERRED,
+            }
+        ]
+        if unsafe:
+            raise ValueError("Agent or fuzzy evidence cannot establish trusted authority")
         return self
 
     def trusts(self, claim: "EvidenceClaim") -> bool:
@@ -127,12 +139,17 @@ class EvidenceClaim(StrictModel):
             raise ValueError("evidence claim id mismatch")
         return self
 
+    def is_not_yet_applicable(self, now: datetime) -> bool:
+        current = _utc(now)
+        if self.observed_at > current:
+            return True
+        return self.effective_from is not None and self.effective_from > current
+
     def is_stale(self, now: datetime) -> bool:
-        if now.tzinfo is None:
-            raise ValueError("evidence freshness clock must be timezone-aware")
-        if self.expires_at is None:
-            return False
-        return now.astimezone(timezone.utc) >= self.expires_at
+        current = _utc(now)
+        if self.expires_at is not None and current >= self.expires_at:
+            return True
+        return self.effective_until is not None and current >= self.effective_until
 
 
 class EvidenceResolution(StrictModel):
