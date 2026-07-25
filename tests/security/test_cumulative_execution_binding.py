@@ -111,7 +111,7 @@ def test_allow_allow_pair_becomes_blocked_only_after_first_release(tmp_path: Pat
     assert pipeline.disclosure_ledger.verify_all() == 1
 
 
-def test_identical_cohort_with_alias_change_can_repeat(tmp_path: Path) -> None:
+def test_identical_cohort_with_alias_change_is_blocked_after_release(tmp_path: Path) -> None:
     pipeline = _pipeline(tmp_path)
     first = PipelineRequest(
         task_purpose=_TASK,
@@ -129,17 +129,20 @@ def test_identical_cohort_with_alias_change_can_repeat(tmp_path: Path) -> None:
         repeat_result = pipeline.execute_safe(repeat)
 
     assert first_result.effective_decision == Decision.ALLOW
-    assert repeat_result.effective_decision == Decision.ALLOW
+    assert repeat_result.initial_decision.decision == Decision.ALLOW
+    assert repeat_result.effective_decision == Decision.BLOCK
     assert repeat_result.verification is not None
     cumulative = next(
         check
         for check in repeat_result.verification.checks
         if check.name == "cumulative_disclosure"
     )
-    assert cumulative.passed is True
-    assert "REPEAT_IDENTICAL_RELEASE" in cumulative.detail
+    assert cumulative.passed is False
+    assert "REPEAT_PROTECTED_RELEASE_BLOCK" in cumulative.detail
+    assert repeat_result.verification.execution_attempted is False
+    assert repeat_result.verification.execution is None
     assert pipeline.disclosure_ledger is not None
-    assert pipeline.disclosure_ledger.verify_all() == 2
+    assert pipeline.disclosure_ledger.verify_all() == 1
 
 
 def test_required_state_missing_fails_closed_before_execution(tmp_path: Path) -> None:
@@ -248,7 +251,6 @@ def test_direct_authorizer_cannot_bypass_or_replay_required_commitment(tmp_path:
             match="AUTH_DISCLOSURE_COMMITMENT_REQUIRED",
         ):
             authorizer.issue(sql, task_purpose=_TASK, subject_key=_SUBJECT)
-
         authorization = authorizer.issue(
             sql,
             task_purpose=_TASK,

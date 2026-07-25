@@ -30,7 +30,7 @@ from toxicjoin.execute import (
 from toxicjoin.models import Decision, PolicyDecision, ReasonCode
 from toxicjoin.pipeline import PipelineRequest, ToxicJoinPipeline
 from toxicjoin.policy import PolicyEngine, load_policy
-from toxicjoin.receipts import ReceiptMode, ReceiptStore, build_receipt
+from toxicjoin.receipts import ReceiptMode, ReceiptStore, build_receipt, compute_content_hash
 
 
 SYSTEM_KEY = "p3b-system-read-key-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -266,12 +266,14 @@ def test_receipt_governance_tampering_fails_integrity_check(tmp_path) -> None:
         receipt_id="tj_0123456789abcd01",
     )
     store = ReceiptStore(tmp_path / "receipts")
+    receipt = store.seal(receipt)
     path = store.write(receipt)
     raw = json.loads(path.read_text(encoding="utf-8"))
     raw["governance"]["snapshot_sha256"] = "e" * 64
+    raw["content_sha256"] = compute_content_hash(raw)
     path.write_text(json.dumps(raw), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="hash mismatch"):
+    with pytest.raises(ValueError, match="integrity HMAC mismatch"):
         store.read(receipt.receipt_id)
 
 

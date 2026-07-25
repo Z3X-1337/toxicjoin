@@ -85,6 +85,26 @@ def test_cohort_identity_ignores_root_output_alias_and_unlimited_order_but_not_p
     assert first_metadata.protected_release is True
 
 
+def test_cohort_identity_binds_conditional_aggregate_predicates() -> None:
+    first = (
+        "SELECT COUNT(CASE WHEN o.purchase_amount > 100 THEN 1 END) AS probe "
+        "FROM orders o"
+    )
+    changed = (
+        "SELECT COUNT(CASE WHEN o.purchase_amount > 200 THEN 1 END) AS probe "
+        "FROM orders o"
+    )
+    first_plan = analyze_sql(first, dialect="duckdb")
+    changed_plan = analyze_sql(changed, dialect="duckdb")
+    first_semantic = build_semantic_release(default_fixture_catalog(), first_plan)
+    changed_semantic = build_semantic_release(default_fixture_catalog(), changed_plan)
+
+    assert canonicalize_cohort_sql(first) != canonicalize_cohort_sql(changed)
+    first_metadata = build_composition_metadata(first_semantic, first, secret_key=_KEY)
+    changed_metadata = build_composition_metadata(changed_semantic, changed, secret_key=_KEY)
+    assert first_metadata.cohort_hmac_sha256 != changed_metadata.cohort_hmac_sha256
+
+
 def test_limited_query_order_changes_cohort_identity() -> None:
     ascending = (
         "SELECT o.purchase_amount FROM orders o "
@@ -104,7 +124,9 @@ def test_limited_query_order_changes_cohort_identity() -> None:
     assert ascending_metadata.cohort_hmac_sha256 != descending_metadata.cohort_hmac_sha256
 
 
-def test_first_protected_release_and_identical_repeat_are_allowed(tmp_path: Path) -> None:
+def test_first_protected_release_is_reserved_and_new_identical_release_is_blocked(
+    tmp_path: Path,
+) -> None:
     ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3")
     first_sql = _sensitive_sql("alpha", alias="first_alias")
     repeat_sql = (
@@ -118,11 +140,12 @@ def test_first_protected_release_and_identical_repeat_are_allowed(tmp_path: Path
     assert first.allowed is True
     assert first.rule == CompositionRule.FIRST_PROTECTED_RELEASE
     assert first.commitment is not None
-    assert repeat.allowed is True
-    assert repeat.rule == CompositionRule.REPEAT_IDENTICAL_RELEASE
+    assert ledger.release_state(first.commitment) == "PENDING"
+    assert repeat.allowed is False
+    assert repeat.rule == CompositionRule.REPEAT_PROTECTED_RELEASE_BLOCK
     assert repeat.prior_protected_count == 1
-    assert repeat.commitment is not None
-    assert ledger.verify_all() == 2
+    assert repeat.commitment is None
+    assert ledger.verify_all() == 1
 
 
 def test_changed_cohort_is_blocked_without_append(tmp_path: Path) -> None:
@@ -167,6 +190,8 @@ def test_public_nonaggregate_variation_remains_unprotected(tmp_path: Path) -> No
     second_sql = "SELECT o.category FROM orders o WHERE o.category = 'beta'"
 
     first = ledger.evaluate_and_commit(_event(first_sql, 7), sql=first_sql)
+    assert first.commitment is not None
+    ledger.mark_aborted(first.commitment)
     second = ledger.evaluate_and_commit(_event(second_sql, 8), sql=second_sql)
 
     assert first.allowed is True
@@ -196,21 +221,24 @@ def test_concurrent_different_protected_cohorts_cannot_both_commit(tmp_path: Pat
     assert ledger.verify_all() == 1
 
 
-def test_history_survives_restart_and_key_loss_or_replacement_fails_closed(
+def test_history_survives_restart_and_blocks_new_protected_release(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "disclosures.sqlite3"
     first_sql = _sensitive_sql("alpha")
     changed_sql = _sensitive_sql("beta")
     ledger = DisclosureLedger(path)
-    assert ledger.evaluate_and_commit(_event(first_sql, 11), sql=first_sql).allowed
+    first = ledger.evaluate_and_commit(_event(first_sql, 11), sql=first_sql)
+    assert first.allowed
     key_path = ledger.cohort_key_path
 
     restarted = DisclosureLedger(path)
     repeat = restarted.evaluate_and_commit(_event(first_sql, 12), sql=first_sql)
-    blocked = restarted.evaluate_and_commit(_event(changed_sql, 13), sql=changed_sql)
-    assert repeat.allowed is True
-    assert blocked.allowed is False
+    changed = restarted.evaluate_and_commit(_event(changed_sql, 13), sql=changed_sql)
+    assert repeat.allowed is False
+    assert repeat.rule == CompositionRule.REPEAT_PROTECTED_RELEASE_BLOCK
+    assert changed.allowed is False
+    assert changed.rule == CompositionRule.CUMULATIVE_VARIATION_BLOCK
 
     original_key = key_path.read_bytes()
     key_path.unlink()
@@ -222,7 +250,40 @@ def test_history_survives_restart_and_key_loss_or_replacement_fails_closed(
         DisclosureLedger(path)
 
     key_path.write_bytes(original_key)
-    assert DisclosureLedger(path).verify_all() == 2
+    assert DisclosureLedger(path).verify_all() == 1
+
+
+def test_aborted_release_does_not_poison_future_composition(tmp_path: Path) -> None:
+    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3")
+    first_sql = _sensitive_sql("alpha")
+    second_sql = _sensitive_sql("beta")
+
+    first = ledger.evaluate_and_commit(_event(first_sql, 19), sql=first_sql)
+    assert first.commitment is not None
+    ledger.mark_aborted(first.commitment)
+    assert ledger.release_state(first.commitment) == "ABORTED"
+
+    second = ledger.evaluate_and_commit(_event(second_sql, 20), sql=second_sql)
+    assert second.allowed is True
+    assert second.rule == CompositionRule.FIRST_PROTECTED_RELEASE
+    assert second.commitment is not None
+    assert ledger.verify_all() == 2
+
+
+def test_release_state_journal_is_append_only(tmp_path: Path) -> None:
+    path = tmp_path / "disclosures.sqlite3"
+    ledger = DisclosureLedger(path)
+    sql = _sensitive_sql("alpha")
+    decision = ledger.evaluate_and_commit(_event(sql, 21), sql=sql)
+    assert decision.commitment is not None
+
+    with sqlite3.connect(path) as connection:
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            connection.execute("DELETE FROM disclosure_release_transitions")
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            connection.execute(
+                "UPDATE disclosure_release_transitions SET state = 'RELEASED'"
+            )
 
 
 def test_legacy_protected_history_blocks_new_protected_release(tmp_path: Path) -> None:
@@ -281,6 +342,8 @@ def test_authorization_claim_is_append_only_and_bound_to_commitment(tmp_path: Pa
             connection.execute("DELETE FROM disclosure_authorization_claims")
 
     ledger.verify_authorization_claim(decision.commitment, authorization_id)
+    ledger.mark_released(decision.commitment)
+    assert ledger.release_state(decision.commitment) == "RELEASED"
     assert ledger.verify_all() == 1
 
 

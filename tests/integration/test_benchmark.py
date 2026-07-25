@@ -8,6 +8,16 @@ from toxicjoin.benchmark import BENCHMARK_CASES, run_benchmark
 from toxicjoin.models import Decision
 
 
+def _semantic_report_payload(report) -> dict:
+    """Remove intentionally run-specific audit identities from benchmark comparison."""
+
+    payload = report.model_dump(mode="json")
+    payload.pop("report_sha256", None)
+    for case in payload["cases"]:
+        case.pop("receipt_content_sha256", None)
+    return payload
+
+
 def test_benchmark_corpus_is_unique_and_balanced() -> None:
     assert len(BENCHMARK_CASES) == 30
     assert len({case.case_id for case in BENCHMARK_CASES}) == 30
@@ -77,13 +87,14 @@ def test_full_benchmark_passes_all_security_gates(tmp_path: Path) -> None:
     assert "Initial decision confusion matrix" in markdown
 
 
-def test_benchmark_report_is_semantically_deterministic(tmp_path: Path) -> None:
+def test_benchmark_security_outcomes_are_semantically_deterministic(tmp_path: Path) -> None:
     first = run_benchmark(output_dir=tmp_path / "first")
     second = run_benchmark(output_dir=tmp_path / "second")
 
-    assert first == second
-    assert first.report_sha256 == second.report_sha256
+    # Receipt IDs and creation timestamps are deliberately part of each receipt's
+    # integrity hash. Those audit identities must vary between independent runs and
+    # therefore are not part of benchmark semantic determinism.
+    assert _semantic_report_payload(first) == _semantic_report_payload(second)
     assert first.data_fingerprint == second.data_fingerprint
-    assert [case.receipt_content_sha256 for case in first.cases] == [
-        case.receipt_content_sha256 for case in second.cases
-    ]
+    assert all(len(case.receipt_content_sha256) == 64 for case in first.cases)
+    assert all(len(case.receipt_content_sha256) == 64 for case in second.cases)

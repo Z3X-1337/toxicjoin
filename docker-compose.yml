@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     image: toxicjoin:local
     ports:
-      - "${TOXICJOIN_PUBLIC_PORT:-8000}:8000"
+      - "127.0.0.1:${TOXICJOIN_PUBLIC_PORT:-8000}:8000"
     environment:
       TOXICJOIN_HOST: 0.0.0.0
       TOXICJOIN_PORT: 8000

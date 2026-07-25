@@ -443,6 +443,7 @@ class ToxicJoinPipeline:
             ),
             dialect=request.dialect,
         )
+        receipt = self.receipt_store.seal(receipt)
         self.receipt_store.write(receipt)
         return PipelineResult(
             original_plan=original_plan,

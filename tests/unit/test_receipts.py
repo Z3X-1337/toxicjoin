@@ -23,6 +23,7 @@ from toxicjoin.receipts import (
     ReceiptStore,
     build_receipt,
     compute_content_hash,
+    compute_integrity_hmac,
     sanitize_sql,
 )
 from toxicjoin.verify import VerificationCheck, VerificationResult
@@ -39,6 +40,7 @@ GROUP BY c.coarse_region
 
 SAFE_SQL = ORIGINAL_SQL + "\nHAVING COUNT(DISTINCT c.customer_id) >= 20"
 SUBJECT = ColumnRef(dataset="customers", field_path="customer_id", alias="c")
+TEST_INTEGRITY_KEY = b"receipt-integrity-regression-key-0000000000000001"
 PLAN = QueryPlan(
     statement_type="SELECT",
     source_datasets=("customers", "retention_scores"),
@@ -214,9 +216,19 @@ def _receipt(
     )
 
 
+def _store(root) -> ReceiptStore:
+    return ReceiptStore(root, integrity_key=TEST_INTEGRITY_KEY)
+
+
+def _sealed_receipt(store: ReceiptStore, **kwargs) -> DecisionReceipt:
+    return store.seal(_receipt(**kwargs))
+
+
 def test_receipt_preserves_rewrite_to_allow_lifecycle() -> None:
     receipt = _receipt()
 
+    assert receipt.schema_version == "1.5"
+    assert receipt.integrity_hmac_sha256 is None
     assert receipt.initial_decision == Decision.REWRITE
     assert receipt.initial_reason_codes == (ReasonCode.SMALL_GROUP_RISK,)
     assert receipt.final_decision == Decision.ALLOW
@@ -243,21 +255,34 @@ def test_sanitized_sql_redacts_literal_values() -> None:
     assert "?" in sanitized
 
 
-def test_content_hash_is_independent_of_id_and_time() -> None:
+def test_content_hash_binds_receipt_id_and_created_at() -> None:
     first = _receipt()
-    second = _receipt(
-        receipt_id="tj_fedcba9876543210",
+    changed_id = _receipt(receipt_id="tj_fedcba9876543210")
+    changed_time = _receipt(
         created_at=datetime(2026, 7, 23, 20, 0, tzinfo=timezone.utc),
     )
 
-    assert first.content_sha256 == second.content_sha256
+    assert first.content_sha256 != changed_id.content_sha256
+    assert first.content_sha256 != changed_time.content_sha256
     assert compute_content_hash(first) == first.content_sha256
-    assert compute_content_hash(second) == second.content_sha256
+    assert compute_content_hash(changed_id) == changed_id.content_sha256
+    assert compute_content_hash(changed_time) == changed_time.content_sha256
+
+
+def test_integrity_hmac_binds_complete_receipt_payload() -> None:
+    store = _store("ignored")
+    receipt = store.seal(_receipt())
+
+    assert receipt.integrity_hmac_sha256 is not None
+    assert receipt.integrity_hmac_sha256 == compute_integrity_hmac(
+        receipt,
+        integrity_key=TEST_INTEGRITY_KEY,
+    )
 
 
 def test_store_writes_reads_and_is_idempotent(tmp_path) -> None:
-    receipt = _receipt()
-    store = ReceiptStore(tmp_path / "receipts")
+    store = _store(tmp_path / "receipts")
+    receipt = _sealed_receipt(store)
 
     first_path = store.write(receipt)
     second_path = store.write(receipt)
@@ -268,9 +293,16 @@ def test_store_writes_reads_and_is_idempotent(tmp_path) -> None:
     assert first_path.stat().st_size > 0
 
 
-def test_store_detects_tampering(tmp_path) -> None:
-    receipt = _receipt()
-    store = ReceiptStore(tmp_path)
+def test_store_rejects_unsigned_receipt(tmp_path) -> None:
+    store = _store(tmp_path / "receipts")
+
+    with pytest.raises(ValueError, match="integrity HMAC is missing"):
+        store.write(_receipt())
+
+
+def test_store_detects_semantic_tampering(tmp_path) -> None:
+    store = _store(tmp_path / "receipts")
+    receipt = _sealed_receipt(store)
     path = store.write(receipt)
     raw = json.loads(path.read_text(encoding="utf-8"))
     raw["task_purpose"] = "tampered purpose"
@@ -280,8 +312,100 @@ def test_store_detects_tampering(tmp_path) -> None:
         store.read(receipt.receipt_id)
 
 
+def test_store_detects_receipt_id_tampering(tmp_path) -> None:
+    store = _store(tmp_path / "receipts")
+    receipt = _sealed_receipt(store)
+    path = store.write(receipt)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["receipt_id"] = "tj_fedcba9876543210"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="identity mismatch|hash mismatch"):
+        store.read(receipt.receipt_id)
+
+
+def test_store_detects_created_at_tampering(tmp_path) -> None:
+    store = _store(tmp_path / "receipts")
+    receipt = _sealed_receipt(store)
+    path = store.write(receipt)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["created_at"] = "2026-01-01T00:00:00Z"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="hash mismatch"):
+        store.read(receipt.receipt_id)
+
+
+def test_attacker_rehash_cannot_forge_semantic_receipt_without_hmac_key(tmp_path) -> None:
+    store = _store(tmp_path / "receipts")
+    receipt = _sealed_receipt(store)
+    path = store.write(receipt)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["task_purpose"] = "attacker-changed-purpose"
+    raw["content_sha256"] = compute_content_hash(raw)
+    # Attacker can recompute the public SHA-256 but cannot recompute the keyed HMAC.
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="integrity HMAC mismatch"):
+        store.read(receipt.receipt_id)
+
+
+def test_attacker_rehash_cannot_forge_created_at_without_hmac_key(tmp_path) -> None:
+    store = _store(tmp_path / "receipts")
+    receipt = _sealed_receipt(store)
+    path = store.write(receipt)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["created_at"] = "2026-01-01T00:00:00+00:00"
+    raw["content_sha256"] = compute_content_hash(raw)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="integrity HMAC mismatch"):
+        store.read(receipt.receipt_id)
+
+
+def test_filename_identity_binding_survives_attacker_rehash(tmp_path) -> None:
+    store = _store(tmp_path / "receipts")
+    receipt = _sealed_receipt(store)
+    path = store.write(receipt)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["receipt_id"] = "tj_fedcba9876543210"
+    raw["content_sha256"] = compute_content_hash(raw)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="receipt identity mismatch"):
+        store.read(receipt.receipt_id)
+
+
+def test_generated_integrity_key_survives_restart_and_missing_key_fails_closed(tmp_path) -> None:
+    root = tmp_path / "receipts"
+    first_store = ReceiptStore(root, environ={})
+    receipt = first_store.seal(_receipt())
+    first_store.write(receipt)
+    key_path = first_store.integrity_key_path
+
+    assert key_path.is_file()
+    assert key_path.parent == root.parent
+    restarted = ReceiptStore(root, environ={})
+    assert restarted.read(receipt.receipt_id) == receipt
+
+    key_path.unlink()
+    with pytest.raises(ValueError, match="integrity key is missing"):
+        ReceiptStore(root, environ={})
+
+
+def test_wrong_integrity_key_cannot_validate_existing_receipt(tmp_path) -> None:
+    root = tmp_path / "receipts"
+    writer = ReceiptStore(root, integrity_key=TEST_INTEGRITY_KEY)
+    receipt = writer.seal(_receipt())
+    writer.write(receipt)
+
+    reader = ReceiptStore(root, integrity_key=b"different-integrity-key-000000000000000000000")
+    with pytest.raises(ValueError, match="integrity HMAC mismatch"):
+        reader.read(receipt.receipt_id)
+
+
 def test_store_rejects_path_traversal_ids(tmp_path) -> None:
-    store = ReceiptStore(tmp_path)
+    store = _store(tmp_path)
 
     with pytest.raises(ValueError, match="invalid receipt ID"):
         store.read("../../etc/passwd")

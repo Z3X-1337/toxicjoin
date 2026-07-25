@@ -1,11 +1,14 @@
-"""Build, hash, persist, and verify immutable ToxicJoin receipts."""
+"""Build, authenticate, persist, and verify immutable ToxicJoin receipts."""
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
+import stat
 import tempfile
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -34,7 +37,10 @@ from toxicjoin.verify import VerificationResult
 
 
 _RECEIPT_ID = re.compile(r"^tj_[0-9a-f]{16}$")
-_HASH_EXCLUDED_FIELDS = {"receipt_id", "created_at", "content_sha256"}
+_RECEIPT_HMAC_ENV = "TOXICJOIN_RECEIPT_HMAC_KEY"
+_CONTENT_HASH_EXCLUDED_FIELDS = {"content_sha256", "integrity_hmac_sha256"}
+_HMAC_EXCLUDED_FIELDS = {"integrity_hmac_sha256"}
+_MIN_INTEGRITY_KEY_BYTES = 32
 
 
 def allocate_receipt_id() -> str:
@@ -78,7 +84,12 @@ def build_receipt(
     receipt_id: str | None = None,
     created_at: datetime | None = None,
 ) -> DecisionReceipt:
-    """Build a strict receipt without copying raw result rows into the payload."""
+    """Build an unsigned strict receipt without copying raw result rows.
+
+    ``ReceiptStore.seal`` must authenticate the receipt before persistence or release.
+    Keeping construction and authentication separate lets the store own the integrity
+    secret instead of passing key material through policy/execution layers.
+    """
 
     resolved_receipt_id = receipt_id or allocate_receipt_id()
     resolved_created_at = (created_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -139,7 +150,7 @@ def build_receipt(
         )
 
     payload: dict[str, Any] = {
-        "schema_version": "1.3",
+        "schema_version": "1.5",
         "receipt_id": resolved_receipt_id,
         "created_at": resolved_created_at,
         "mode": mode,
@@ -165,13 +176,14 @@ def build_receipt(
         "execution": execution_summary,
         "writeback": writeback or ReceiptWriteback(),
         "content_sha256": "0" * 64,
+        "integrity_hmac_sha256": None,
     }
     payload["content_sha256"] = compute_content_hash(payload)
     return DecisionReceipt.model_validate(payload)
 
 
 def compute_content_hash(receipt_or_payload: BaseModel | Mapping[str, Any]) -> str:
-    """Hash deterministic receipt content, excluding ID, time, and the hash field."""
+    """Hash the complete receipt identity/content except integrity fields themselves."""
 
     if isinstance(receipt_or_payload, BaseModel):
         payload = receipt_or_payload.model_dump(mode="json")
@@ -181,26 +193,82 @@ def compute_content_hash(receipt_or_payload: BaseModel | Mapping[str, Any]) -> s
     canonical_payload = {
         key: value
         for key, value in payload.items()
-        if key not in _HASH_EXCLUDED_FIELDS
+        if key not in _CONTENT_HASH_EXCLUDED_FIELDS
         and not (key == "identity" and value is None)
     }
-    canonical = json.dumps(
-        canonical_payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    ).encode("utf-8")
+    canonical = _canonical_json(canonical_payload)
     return hashlib.sha256(canonical).hexdigest()
 
 
-class ReceiptStore:
-    """Filesystem receipt store with exclusive atomic creation and tamper checks."""
+def compute_integrity_hmac(
+    receipt_or_payload: BaseModel | Mapping[str, Any],
+    *,
+    integrity_key: bytes,
+) -> str:
+    """Authenticate the persisted receipt with a key not stored in receipt JSON."""
 
-    def __init__(self, root: str | Path) -> None:
+    _validate_integrity_key(integrity_key)
+    if isinstance(receipt_or_payload, BaseModel):
+        payload = receipt_or_payload.model_dump(mode="json")
+    else:
+        payload = _json_compatible(dict(receipt_or_payload))
+    canonical_payload = {
+        key: value for key, value in payload.items() if key not in _HMAC_EXCLUDED_FIELDS
+    }
+    return hmac.new(
+        integrity_key,
+        _canonical_json(canonical_payload),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+class ReceiptStore:
+    """Filesystem receipt store with keyed authenticity and exclusive atomic creation.
+
+    A caller may provide ``integrity_key`` directly, or configure
+    ``TOXICJOIN_RECEIPT_HMAC_KEY`` with at least 32 UTF-8 bytes. Otherwise a random
+    256-bit key is persisted outside the receipt directory in a sibling 0600 key file.
+    If receipts already exist and that key disappears, initialization fails closed rather
+    than silently generating a new key that would make old audit evidence unverifiable.
+    """
+
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        integrity_key: bytes | None = None,
+        integrity_key_path: str | Path | None = None,
+        environ: Mapping[str, str] | None = None,
+    ) -> None:
         self.root = Path(root)
+        self.integrity_key_path = (
+            Path(integrity_key_path)
+            if integrity_key_path is not None
+            else self.root.parent / f".{self.root.name}.receipt-hmac.key"
+        )
+        self._integrity_key = self._resolve_integrity_key(
+            integrity_key=integrity_key,
+            environ=os.environ if environ is None else environ,
+        )
+
+    def seal(self, receipt: DecisionReceipt) -> DecisionReceipt:
+        """Return a receipt authenticated by this store's integrity key."""
+
+        self._verify_hash(receipt)
+        sealed = receipt.model_copy(
+            update={
+                "integrity_hmac_sha256": compute_integrity_hmac(
+                    receipt,
+                    integrity_key=self._integrity_key,
+                )
+            }
+        )
+        self._verify_hmac(sealed)
+        return sealed
 
     def write(self, receipt: DecisionReceipt) -> Path:
         self._verify_hash(receipt)
+        self._verify_hmac(receipt)
         self.root.mkdir(parents=True, exist_ok=True)
         target = self._path_for(receipt.receipt_id)
         encoded = (
@@ -275,7 +343,12 @@ class ReceiptStore:
             raise ValueError(f"receipt is not valid JSON: {receipt_id}") from exc
 
         receipt = DecisionReceipt.model_validate(raw)
+        if receipt.receipt_id != receipt_id:
+            raise ValueError(
+                f"receipt identity mismatch: requested {receipt_id}, payload {receipt.receipt_id}"
+            )
         self._verify_hash(receipt)
+        self._verify_hmac(receipt)
         return receipt
 
     def _path_for(self, receipt_id: str) -> Path:
@@ -291,6 +364,97 @@ class ReceiptStore:
                 f"receipt content hash mismatch: expected {expected}, "
                 f"received {receipt.content_sha256}"
             )
+
+    def _verify_hmac(self, receipt: DecisionReceipt) -> None:
+        presented = receipt.integrity_hmac_sha256
+        if presented is None:
+            raise ValueError("receipt integrity HMAC is missing")
+        expected = compute_integrity_hmac(
+            receipt,
+            integrity_key=self._integrity_key,
+        )
+        if not hmac.compare_digest(presented, expected):
+            raise ValueError("receipt integrity HMAC mismatch")
+
+    def _resolve_integrity_key(
+        self,
+        *,
+        integrity_key: bytes | None,
+        environ: Mapping[str, str],
+    ) -> bytes:
+        if integrity_key is not None:
+            _validate_integrity_key(integrity_key)
+            return bytes(integrity_key)
+
+        configured = environ.get(_RECEIPT_HMAC_ENV)
+        if configured is not None:
+            if not configured:
+                raise ValueError(f"{_RECEIPT_HMAC_ENV} must not be empty when configured")
+            encoded = configured.encode("utf-8")
+            _validate_integrity_key(encoded)
+            return encoded
+
+        return self._load_or_create_integrity_key_file()
+
+    def _load_or_create_integrity_key_file(self) -> bytes:
+        self.integrity_key_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.integrity_key_path.exists() or self.integrity_key_path.is_symlink():
+            return self._read_integrity_key_file()
+        if self.root.is_dir() and any(self.root.glob("tj_*.json")):
+            raise ValueError(
+                "receipt integrity key is missing while persisted receipts already exist"
+            )
+
+        generated = secrets.token_bytes(_MIN_INTEGRITY_KEY_BYTES)
+        try:
+            descriptor = os.open(
+                self.integrity_key_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+        except FileExistsError:
+            return self._read_integrity_key_file()
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(generated)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except Exception:
+            self.integrity_key_path.unlink(missing_ok=True)
+            raise
+        return generated
+
+    def _read_integrity_key_file(self) -> bytes:
+        path = self.integrity_key_path
+        if path.is_symlink():
+            raise ValueError("receipt integrity key path must not be a symbolic link")
+        try:
+            metadata = path.stat()
+            key = path.read_bytes()
+        except OSError as exc:
+            raise ValueError("unable to read receipt integrity key") from exc
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("receipt integrity key must be a regular file")
+        if os.name == "posix" and stat.S_IMODE(metadata.st_mode) & 0o077:
+            raise ValueError("receipt integrity key permissions must not allow group/world access")
+        _validate_integrity_key(key)
+        return key
+
+
+def _validate_integrity_key(key: bytes) -> None:
+    if len(key) < _MIN_INTEGRITY_KEY_BYTES:
+        raise ValueError(
+            f"receipt integrity key must contain at least {_MIN_INTEGRITY_KEY_BYTES} bytes"
+        )
+
+
+def _canonical_json(payload: Mapping[str, Any]) -> bytes:
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
 
 
 def _sha256_text(value: str | None) -> str | None:

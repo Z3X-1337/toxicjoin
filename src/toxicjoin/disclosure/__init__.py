@@ -9,7 +9,6 @@ from toxicjoin.disclosure.composition import (
 )
 from toxicjoin.disclosure.ledger import (
     DisclosureCommitmentReplay,
-    DisclosureLedger,
     DisclosureLedgerConflict,
     DisclosureLedgerError,
     DisclosureLedgerIntegrityError,
@@ -28,6 +27,7 @@ from toxicjoin.disclosure.models import (
     GovernedSubjectDomain,
     SemanticOutput,
 )
+from toxicjoin.disclosure.secure_ledger import DisclosureLedger
 from toxicjoin.disclosure.semantic import (
     DisclosureSemanticError,
     build_disclosure_event,

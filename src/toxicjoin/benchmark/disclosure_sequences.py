@@ -122,12 +122,15 @@ def generate_report() -> dict[str, Any]:
         )
         cases.append(
             {
-                "id": "same_cohort_alias_and_credential_rotation",
+                "id": "same_cohort_repeat_block",
                 "first": first,
                 "second": repeat,
                 "assertion": first["effective_decision"] == "ALLOW"
-                and repeat["effective_decision"] == "ALLOW"
-                and repeat["execution_released"],
+                and repeat["initial_decision"] == "ALLOW"
+                and repeat["effective_decision"] == "BLOCK"
+                and "CUMULATIVE_DISCLOSURE_RISK" in repeat["final_reason_codes"]
+                and not repeat["execution_released"]
+                and not repeat["execution_attempted"],
             }
         )
 
@@ -194,10 +197,10 @@ def generate_report() -> dict[str, Any]:
         )
 
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "release_candidate_sha": os.getenv("TOXICJOIN_RELEASE_CANDIDATE_SHA"),
         "policy_version": load_policy().version,
-        "model": "controlled-query cumulative composition",
+        "model": "single-protected-release cumulative composition",
         "cases": cases,
         "passed": all(case["assertion"] for case in cases),
     }
