@@ -2,10 +2,10 @@
 
 Secure/live ToxicJoin paths must not use an ambiguous MCP process that can both acquire
 policy context and mutate DataHub. Read-only and mutation roles use distinct credential
-environment variables and application-level capabilities. The upstream DataHub MCP 0.6.x
-server registers ``save_document`` inside its general mutation registration path, so the
-isolated writer must start that path but ToxicJoin places a transport-level allowlist in
-front of it and exposes only ``save_document`` to the writer client.
+environment variables, concrete credential types, and application-level capabilities. The
+upstream DataHub MCP 0.6.x server registers ``save_document`` inside its general mutation
+registration path, so the isolated writer must start that path but ToxicJoin places a
+transport-level allowlist in front of it and exposes only ``save_document`` to the writer client.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import shlex
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import SecretStr
 
@@ -52,12 +52,14 @@ _REQUIRED_SAVE_DOCUMENT_PROPERTIES = {
     "related_assets",
 }
 _WRITER_ALLOWED_TOOLS = frozenset({"save_document"})
+_PROTECTED_ROLE_FIELDS = frozenset({"role", "mutation_enabled", "credential_source"})
 
 
 class RoleBoundDataHubMcpSettings(DataHubMcpSettings):
-    """MCP settings that force upstream tool registration for one authority role."""
+    """Base settings whose concrete subclass identifies credential authority provenance."""
 
     role: DataHubMcpRole
+    credential_source: str
 
     def child_environment(self) -> dict[str, str]:
         environment = super().child_environment()
@@ -78,6 +80,7 @@ class RoleBoundDataHubMcpSettings(DataHubMcpSettings):
     def redacted_summary(self) -> dict[str, Any]:
         summary = super().redacted_summary()
         summary["role"] = self.role.value
+        summary["credential_source"] = self.credential_source
         summary["document_write_enabled"] = self.role == DataHubMcpRole.MUTATION
         summary["writer_transport_allowlist"] = (
             sorted(_WRITER_ALLOWED_TOOLS)
@@ -86,8 +89,41 @@ class RoleBoundDataHubMcpSettings(DataHubMcpSettings):
         )
         return summary
 
+    def model_copy(
+        self,
+        *,
+        update: dict[str, Any] | None = None,
+        deep: bool = False,
+    ) -> Self:
+        """Forbid relabeling an existing credential into a different authority role.
 
-def read_only_settings_from_env() -> RoleBoundDataHubMcpSettings:
+        Pydantic's default ``model_copy(update=...)`` intentionally does not validate updates.
+        Authority-bearing fields therefore cannot be changed through that API. Non-authority
+        fields may still be copied for ordinary configuration use.
+        """
+
+        if update and _PROTECTED_ROLE_FIELDS.intersection(update):
+            raise ValueError("DataHub credential authority fields cannot be changed by model_copy")
+        return super().model_copy(update=update, deep=deep)
+
+
+class ReadOnlyDataHubMcpSettings(RoleBoundDataHubMcpSettings):
+    """Credential type sourced only from the dedicated DataHub read-token channel."""
+
+    role: Literal[DataHubMcpRole.READ_ONLY] = DataHubMcpRole.READ_ONLY
+    mutation_enabled: Literal[False] = False
+    credential_source: Literal["DATAHUB_GMS_READ_TOKEN"] = _READ_TOKEN_ENV
+
+
+class MutationDataHubMcpSettings(RoleBoundDataHubMcpSettings):
+    """Credential type sourced only from the dedicated DataHub writer-token channel."""
+
+    role: Literal[DataHubMcpRole.MUTATION] = DataHubMcpRole.MUTATION
+    mutation_enabled: Literal[True] = True
+    credential_source: Literal["DATAHUB_GMS_WRITE_TOKEN"] = _WRITE_TOKEN_ENV
+
+
+def read_only_settings_from_env() -> ReadOnlyDataHubMcpSettings:
     """Build settings for a context/read-back process with all writes disabled."""
 
     return _settings_from_env(
@@ -96,7 +132,7 @@ def read_only_settings_from_env() -> RoleBoundDataHubMcpSettings:
     )
 
 
-def mutation_settings_from_env() -> RoleBoundDataHubMcpSettings:
+def mutation_settings_from_env() -> MutationDataHubMcpSettings:
     """Build settings for the isolated Decision writer process."""
 
     return _settings_from_env(
@@ -109,7 +145,7 @@ def _settings_from_env(
     *,
     token_env: str,
     role: DataHubMcpRole,
-) -> RoleBoundDataHubMcpSettings:
+) -> ReadOnlyDataHubMcpSettings | MutationDataHubMcpSettings:
     url = os.getenv("DATAHUB_GMS_URL")
     if not url:
         raise DataHubMcpError("DATAHUB_GMS_URL is required")
@@ -125,15 +161,20 @@ def _settings_from_env(
     except ValueError as exc:
         raise DataHubMcpError("DATAHUB_MCP_TIMEOUT_SECONDS must be numeric") from exc
 
-    return RoleBoundDataHubMcpSettings(
-        gms_url=url,
-        gms_token=SecretStr(os.environ[token_env]),
-        command=command,
-        args=args,
-        timeout_seconds=timeout,
-        mutation_enabled=role == DataHubMcpRole.MUTATION,
-        role=role,
-    )
+    common = {
+        "gms_url": url,
+        "gms_token": SecretStr(os.environ[token_env]),
+        "command": command,
+        "args": args,
+        "timeout_seconds": timeout,
+    }
+    if role == DataHubMcpRole.READ_ONLY:
+        if token_env != _READ_TOKEN_ENV:
+            raise DataHubMcpError("read-only DataHub role requires the dedicated read token")
+        return ReadOnlyDataHubMcpSettings(**common)
+    if token_env != _WRITE_TOKEN_ENV:
+        raise DataHubMcpError("mutation DataHub role requires the dedicated write token")
+    return MutationDataHubMcpSettings(**common)
 
 
 class ToolAllowlistTransport:
