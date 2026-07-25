@@ -33,6 +33,10 @@ _HASH_PATTERN = r"^[0-9a-f]{64}$"
 _DEFAULT_EVIDENCE_TTL_SECONDS = 300.0
 _MAX_EVIDENCE_TTL_SECONDS = 3600.0
 _MAX_CLAIM_VALUE_LENGTH = 4096
+_ALLOWED_DERIVATIONS = {
+    DerivationKind.RUNTIME_OBSERVED,
+    DerivationKind.EXPLICIT_MAPPING,
+}
 
 
 class DataHubEvidenceError(RuntimeError):
@@ -75,6 +79,7 @@ class DataHubEvidenceBundle(StrictModel):
             if claim.subject == self.source_identity
             and claim.predicate == "datahub.snapshot_sha256"
             and claim.value == self.snapshot_sha256
+            and claim.derivation == DerivationKind.RUNTIME_OBSERVED
         ]
         if len(roots) != 1:
             raise ValueError("DataHub evidence requires exactly one snapshot root claim")
@@ -83,8 +88,8 @@ class DataHubEvidenceBundle(StrictModel):
         for claim in self.claims:
             if claim.source != EvidenceSource.DATAHUB_MCP:
                 raise ValueError("DataHub evidence bundle contains a non-DataHub source")
-            if claim.derivation != DerivationKind.RUNTIME_OBSERVED:
-                raise ValueError("DataHub evidence claims must be runtime observed")
+            if claim.derivation not in _ALLOWED_DERIVATIONS:
+                raise ValueError("DataHub evidence claim uses an unsupported derivation")
             if claim.source_identity != self.source_identity:
                 raise ValueError("DataHub evidence source identity mismatch")
             if claim.observed_at != self.observed_at or claim.expires_at != self.expires_at:
@@ -92,7 +97,7 @@ class DataHubEvidenceBundle(StrictModel):
             if claim.claim_id == root.claim_id:
                 if claim.supporting_claim_ids:
                     raise ValueError("DataHub snapshot root claim must not depend on another claim")
-            elif claim.supporting_claim_ids != (root.claim_id,):
+            elif root.claim_id not in claim.supporting_claim_ids:
                 raise ValueError("DataHub evidence claims must depend on the snapshot root claim")
 
         expected_root = compute_datahub_evidence_root(self)
@@ -154,7 +159,7 @@ def build_datahub_evidence_bundle(
     )
 
     claims: list[EvidenceClaim] = [root]
-    support = (root.claim_id,)
+    root_support = (root.claim_id,)
     claims.append(
         _claim(
             subject=source_identity,
@@ -163,7 +168,7 @@ def build_datahub_evidence_bundle(
             source_identity=source_identity,
             observed_at=observed_at,
             expires_at=expires_at,
-            supporting_claim_ids=support,
+            supporting_claim_ids=root_support,
         )
     )
 
@@ -177,7 +182,8 @@ def build_datahub_evidence_bundle(
                 source_identity=source_identity,
                 observed_at=observed_at,
                 expires_at=expires_at,
-                supporting_claim_ids=support,
+                supporting_claim_ids=root_support,
+                derivation=DerivationKind.EXPLICIT_MAPPING,
             )
         )
         if dataset.owner is not None:
@@ -189,7 +195,7 @@ def build_datahub_evidence_bundle(
                     source_identity=source_identity,
                     observed_at=observed_at,
                     expires_at=expires_at,
-                    supporting_claim_ids=support,
+                    supporting_claim_ids=root_support,
                 )
             )
         if dataset.domain is not None:
@@ -201,13 +207,36 @@ def build_datahub_evidence_bundle(
                     source_identity=source_identity,
                     observed_at=observed_at,
                     expires_at=expires_at,
-                    supporting_claim_ids=support,
+                    supporting_claim_ids=root_support,
                 )
             )
 
         for field_path, field in sorted(dataset.fields.items()):
             field_subject = f"{dataset.urn}#{field_path}"
+            tags_claim = _claim(
+                subject=field_subject,
+                predicate="datahub.tags",
+                value=_compact_json(field.tags),
+                source_identity=source_identity,
+                observed_at=observed_at,
+                expires_at=expires_at,
+                supporting_claim_ids=root_support,
+            )
+            glossary_claim = _claim(
+                subject=field_subject,
+                predicate="datahub.glossary_terms",
+                value=_compact_json(field.glossary_terms),
+                source_identity=source_identity,
+                observed_at=observed_at,
+                expires_at=expires_at,
+                supporting_claim_ids=root_support,
+            )
+            claims.extend((tags_claim, glossary_claim))
+
             classification_complete = field.category != SensitivityCategory.UNCLASSIFIED
+            classification_support = tuple(
+                sorted((root.claim_id, tags_claim.claim_id, glossary_claim.claim_id))
+            )
             claims.append(
                 _claim(
                     subject=field_subject,
@@ -216,30 +245,9 @@ def build_datahub_evidence_bundle(
                     source_identity=source_identity,
                     observed_at=observed_at,
                     expires_at=expires_at,
-                    supporting_claim_ids=support,
+                    supporting_claim_ids=classification_support,
                     complete=classification_complete,
-                )
-            )
-            claims.append(
-                _claim(
-                    subject=field_subject,
-                    predicate="datahub.tags",
-                    value=_compact_json(field.tags),
-                    source_identity=source_identity,
-                    observed_at=observed_at,
-                    expires_at=expires_at,
-                    supporting_claim_ids=support,
-                )
-            )
-            claims.append(
-                _claim(
-                    subject=field_subject,
-                    predicate="datahub.glossary_terms",
-                    value=_compact_json(field.glossary_terms),
-                    source_identity=source_identity,
-                    observed_at=observed_at,
-                    expires_at=expires_at,
-                    supporting_claim_ids=support,
+                    derivation=DerivationKind.EXPLICIT_MAPPING,
                 )
             )
 
@@ -259,7 +267,8 @@ def build_datahub_evidence_bundle(
                     source_identity=source_identity,
                     observed_at=observed_at,
                     expires_at=expires_at,
-                    supporting_claim_ids=support,
+                    supporting_claim_ids=root_support,
+                    derivation=DerivationKind.EXPLICIT_MAPPING,
                 )
             )
             claims.append(
@@ -270,7 +279,8 @@ def build_datahub_evidence_bundle(
                     source_identity=source_identity,
                     observed_at=observed_at,
                     expires_at=expires_at,
-                    supporting_claim_ids=support,
+                    supporting_claim_ids=root_support,
+                    derivation=DerivationKind.EXPLICIT_MAPPING,
                 )
             )
 
@@ -290,7 +300,7 @@ def build_datahub_evidence_bundle(
                         source_identity=source_identity,
                         observed_at=observed_at,
                         expires_at=expires_at,
-                        supporting_claim_ids=support,
+                        supporting_claim_ids=root_support,
                         complete=lineage_complete,
                     )
                 )
@@ -302,8 +312,9 @@ def build_datahub_evidence_bundle(
                         source_identity=source_identity,
                         observed_at=observed_at,
                         expires_at=expires_at,
-                        supporting_claim_ids=support,
+                        supporting_claim_ids=root_support,
                         complete=lineage_complete,
+                        derivation=DerivationKind.EXPLICIT_MAPPING,
                     )
                 )
                 if lineage_source.datahub_urn is not None:
@@ -315,7 +326,7 @@ def build_datahub_evidence_bundle(
                             source_identity=source_identity,
                             observed_at=observed_at,
                             expires_at=expires_at,
-                            supporting_claim_ids=support,
+                            supporting_claim_ids=root_support,
                             complete=lineage_complete,
                         )
                     )
@@ -367,6 +378,7 @@ def _claim(
     expires_at: datetime,
     supporting_claim_ids: tuple[str, ...],
     complete: bool = True,
+    derivation: DerivationKind = DerivationKind.RUNTIME_OBSERVED,
 ) -> EvidenceClaim:
     if len(value) > _MAX_CLAIM_VALUE_LENGTH:
         raise DataHubEvidenceError(
@@ -377,7 +389,7 @@ def _claim(
         predicate=predicate,
         value=value,
         source=EvidenceSource.DATAHUB_MCP,
-        derivation=DerivationKind.RUNTIME_OBSERVED,
+        derivation=derivation,
         source_identity=source_identity,
         observed_at=observed_at,
         expires_at=expires_at,
