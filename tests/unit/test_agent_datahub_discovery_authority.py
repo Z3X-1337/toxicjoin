@@ -12,11 +12,15 @@ from toxicjoin.integrations.datahub_authority import (
     DataHubMcpRole,
     MutationDataHubMcpSettings,
     ReadOnlyDataHubMcpSettings,
+    mutation_settings_from_env,
+    read_only_credential_provenance_valid,
+    read_only_settings_from_env,
 )
 from toxicjoin.integrations.datahub_mcp import DataHubMcpSettings, McpToolDefinition
 
 PATIENTS_URN = "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients,PROD)"
 _SECRET = "role-bound-agent-secret"
+_WRITE_SECRET = "role-bound-writer-secret"
 _ENDPOINT = "https://role-bound-datahub.example"
 
 
@@ -29,24 +33,23 @@ def _asset_map() -> DataHubAssetMap:
     )
 
 
-def _read_settings() -> ReadOnlyDataHubMcpSettings:
-    return ReadOnlyDataHubMcpSettings(
-        gms_url=_ENDPOINT,
-        gms_token=SecretStr(_SECRET),
-        command="uvx",
-        args=("mcp-server-datahub",),
-        timeout_seconds=30,
-    )
+def _configure_role_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATAHUB_GMS_URL", _ENDPOINT)
+    monkeypatch.setenv("DATAHUB_GMS_READ_TOKEN", _SECRET)
+    monkeypatch.setenv("DATAHUB_GMS_WRITE_TOKEN", _WRITE_SECRET)
+    monkeypatch.setenv("DATAHUB_MCP_COMMAND", "uvx")
+    monkeypatch.setenv("DATAHUB_MCP_ARGS", "mcp-server-datahub")
+    monkeypatch.setenv("DATAHUB_MCP_TIMEOUT_SECONDS", "30")
 
 
-def _mutation_settings() -> MutationDataHubMcpSettings:
-    return MutationDataHubMcpSettings(
-        gms_url=_ENDPOINT,
-        gms_token=SecretStr(_SECRET),
-        command="uvx",
-        args=("mcp-server-datahub",),
-        timeout_seconds=30,
-    )
+def _read_settings(monkeypatch: pytest.MonkeyPatch) -> ReadOnlyDataHubMcpSettings:
+    _configure_role_env(monkeypatch)
+    return read_only_settings_from_env()
+
+
+def _mutation_settings(monkeypatch: pytest.MonkeyPatch) -> MutationDataHubMcpSettings:
+    _configure_role_env(monkeypatch)
+    return mutation_settings_from_env()
 
 
 def _legacy_settings(*, mutation_enabled: bool) -> DataHubMcpSettings:
@@ -109,8 +112,11 @@ class MutationExposingTransport:
         raise AssertionError("mutation-exposure rejection must occur before any tool call")
 
 
-def test_read_credential_type_retains_child_protections() -> None:
-    original = _read_settings()
+def test_factory_issued_read_credential_retains_child_protections(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = _read_settings(monkeypatch)
+    assert read_only_credential_provenance_valid(original) is True
     discoverer = DataHubAgentDiscoverer(
         settings=original,
         asset_map=_asset_map(),
@@ -120,12 +126,31 @@ def test_read_credential_type_retains_child_protections() -> None:
     settings = discoverer._settings
     assert type(settings) is ReadOnlyDataHubMcpSettings
     assert settings is not original
+    assert read_only_credential_provenance_valid(settings) is True
     assert settings.role == DataHubMcpRole.READ_ONLY
     assert settings.credential_source == "DATAHUB_GMS_READ_TOKEN"
     assert settings.mutation_enabled is False
     child_env = settings.child_environment()
     assert child_env["TOOLS_IS_MUTATION_ENABLED"] == "false"
     assert child_env["SAVE_DOCUMENT_TOOL_ENABLED"] == "false"
+
+
+def test_direct_read_constructor_is_not_factory_issued() -> None:
+    direct = ReadOnlyDataHubMcpSettings(
+        gms_url=_ENDPOINT,
+        gms_token=SecretStr(_SECRET),
+        command="uvx",
+        args=("mcp-server-datahub",),
+        timeout_seconds=30,
+    )
+    assert read_only_credential_provenance_valid(direct) is False
+    with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
+        DataHubAgentDiscoverer(
+            settings=direct,
+            asset_map=_asset_map(),
+            transport_factory=lambda _: MutationExposingTransport(),
+        )
+    assert exc_info.value.code == "AGENT_DATAHUB_READ_ROLE_REQUIRED"
 
 
 @pytest.mark.parametrize("mutation_enabled", [False, True])
@@ -141,19 +166,24 @@ def test_legacy_base_credential_is_never_repurposed_for_discovery(
     assert exc_info.value.code == "AGENT_DATAHUB_READ_ROLE_REQUIRED"
 
 
-def test_mutation_credential_type_is_not_repurposed_for_discovery() -> None:
+def test_mutation_credential_type_is_not_repurposed_for_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
         DataHubAgentDiscoverer(  # type: ignore[arg-type]
-            settings=_mutation_settings(),
+            settings=_mutation_settings(monkeypatch),
             asset_map=_asset_map(),
             transport_factory=lambda _: MutationExposingTransport(),
         )
     assert exc_info.value.code == "AGENT_DATAHUB_READ_ROLE_REQUIRED"
 
 
-def test_role_bound_model_copy_cannot_relabel_writer_credential() -> None:
-    writer = _mutation_settings()
-    with pytest.raises(ValueError, match="authority fields cannot be changed"):
+def test_role_bound_model_copy_cannot_relabel_or_replace_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writer = _mutation_settings(monkeypatch)
+    reader = _read_settings(monkeypatch)
+    with pytest.raises(ValueError, match="authority/token fields cannot be changed"):
         writer.model_copy(
             update={
                 "role": DataHubMcpRole.READ_ONLY,
@@ -161,10 +191,14 @@ def test_role_bound_model_copy_cannot_relabel_writer_credential() -> None:
                 "credential_source": "DATAHUB_GMS_READ_TOKEN",
             }
         )
+    with pytest.raises(ValueError, match="authority/token fields cannot be changed"):
+        reader.model_copy(update={"gms_token": writer.gms_token})
 
 
-def test_concrete_type_rejects_writer_even_if_base_model_copy_bypasses_override() -> None:
-    writer = _mutation_settings()
+def test_concrete_type_rejects_writer_even_if_base_model_copy_bypasses_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writer = _mutation_settings(monkeypatch)
     relabelled = BaseModel.model_copy(
         writer,
         update={
@@ -185,12 +219,36 @@ def test_concrete_type_rejects_writer_even_if_base_model_copy_bypasses_override(
     assert exc_info.value.code == "AGENT_DATAHUB_READ_ROLE_REQUIRED"
 
 
-def test_read_client_fails_closed_when_server_exposes_mutation_tool() -> None:
+def test_token_swap_via_base_model_copy_breaks_private_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reader = _read_settings(monkeypatch)
+    writer = _mutation_settings(monkeypatch)
+    swapped = BaseModel.model_copy(reader, update={"gms_token": writer.gms_token})
+
+    assert type(swapped) is ReadOnlyDataHubMcpSettings
+    assert swapped.role == DataHubMcpRole.READ_ONLY
+    assert swapped.credential_source == "DATAHUB_GMS_READ_TOKEN"
+    assert swapped.gms_token.get_secret_value() == _WRITE_SECRET
+    assert read_only_credential_provenance_valid(swapped) is False
+
+    with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
+        DataHubAgentDiscoverer(
+            settings=swapped,
+            asset_map=_asset_map(),
+            transport_factory=lambda _: MutationExposingTransport(),
+        )
+    assert exc_info.value.code == "AGENT_DATAHUB_READ_ROLE_REQUIRED"
+
+
+def test_read_client_fails_closed_when_server_exposes_mutation_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     transport = MutationExposingTransport()
     with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
         asyncio.run(
             DataHubAgentDiscoverer(
-                settings=_read_settings(),
+                settings=_read_settings(monkeypatch),
                 asset_map=_asset_map(),
                 transport_factory=lambda _: transport,
             ).discover()
@@ -200,7 +258,9 @@ def test_read_client_fails_closed_when_server_exposes_mutation_tool() -> None:
     assert transport.call_count == 0
 
 
-def test_transport_cannot_forge_exported_error_to_bypass_redaction() -> None:
+def test_transport_cannot_forge_exported_error_to_bypass_redaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     forged_code = f"forged {_SECRET} {_ENDPOINT}"
 
     def malicious_factory(_settings):
@@ -212,7 +272,7 @@ def test_transport_cannot_forge_exported_error_to_bypass_redaction() -> None:
     with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
         asyncio.run(
             DataHubAgentDiscoverer(
-                settings=_read_settings(),
+                settings=_read_settings(monkeypatch),
                 asset_map=_asset_map(),
                 transport_factory=malicious_factory,
             ).discover()
