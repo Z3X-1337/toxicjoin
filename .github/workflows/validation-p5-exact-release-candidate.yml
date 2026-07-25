@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/validation-p5-exact-release-candidate.yml"
       - "validation/p5_exact_release_candidate.py"
+      - "validation/p5_exact_release_candidate_v2.py"
   workflow_dispatch:
 
 permissions:
@@ -64,7 +65,10 @@ jobs:
           python-version: "3.12"
 
       - name: Compile independent pentest harness
-        run: python -m py_compile validation/p5_exact_release_candidate.py
+        run: |
+          python -m py_compile \
+            validation/p5_exact_release_candidate.py \
+            validation/p5_exact_release_candidate_v2.py
 
       - name: Build exact release candidate image
         shell: bash
@@ -79,7 +83,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          API_KEYS_JSON="$(python validation/p5_exact_release_candidate.py --emit-auth-json)"
+          API_KEYS_JSON="$(python validation/p5_exact_release_candidate_v2.py --emit-auth-json)"
           docker volume create "$RUNTIME_VOLUME" >/dev/null
           docker run --detach \
             --name "$CONTAINER_NAME" \
@@ -115,7 +119,7 @@ jobs:
         run: |
           set -euo pipefail
           RELEASE_CANDIDATE_SHA="$(cat /tmp/toxicjoin-p5-release-candidate-sha)"
-          python validation/p5_exact_release_candidate.py \
+          python validation/p5_exact_release_candidate_v2.py \
             --base-url "$BASE_URL" \
             --container-name "$CONTAINER_NAME" \
             --target-pr "$TARGET_PR_NUMBER" \
