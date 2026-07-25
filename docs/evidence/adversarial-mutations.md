@@ -1,7 +1,7 @@
 # ToxicJoin Adversarial Mutation Suite
 
 **Gate:** PASS  
-**Exact release candidate:** `fe4f8da2579e09bdbfb1d998b92dfea86549733b`  
+**Exact runtime candidate:** `e139fa99bd666505ed83a18188423722405695a2`  
 **Policy version:** `0.2.0`  
 **Cases:** 144  
 **Initial BLOCK:** 144/144  
@@ -11,11 +11,11 @@
 **Unsafe initial allows:** 0  
 **Unsafe effective allows:** 0
 
-Final provenance:
+Exact-head provenance:
 
-- workflow run `30136824442`;
-- artifact ID `8613091317`;
-- artifact digest `sha256:cffba65a8394ddb6fc497f6e93d3934d1a12cc20f5e08e82b1e28bf775cb8a65`;
+- workflow run `30140102676`;
+- artifact ID `8614165343`;
+- artifact digest `sha256:41cf4a8203cbb11fb331c3e78630113de7d498e4732d77c0605dd78f0563ebd1`;
 - report SHA-256 `86011fc74ef6ca03e7b83d21e8770037fb32ddb22d41b750abc09aeabe443565`.
 
 ## Mutation matrix
@@ -38,4 +38,4 @@ This suite asks whether superficial SQL variation changes the security outcome f
 
 This is a bounded metamorphic security evaluation, not a claim of universal SQL coverage or universal re-identification detection.
 
-For the full exact-head validation chain, see [`release-candidate.md`](release-candidate.md).
+For the full validation chain, see [`release-candidate.md`](release-candidate.md).
