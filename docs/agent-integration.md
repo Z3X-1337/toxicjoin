@@ -1,35 +1,40 @@
 # Integrating ToxicJoin in an AI Data Agent Workflow
 
-ToxicJoin is designed to sit on the **execution boundary**, not inside the agent's free-form reasoning loop.
-
-The integration rule is simple:
+ToxicJoin belongs on the **execution boundary**, not inside an agent's free-form reasoning loop.
 
 ```text
 agent proposes analytical SQL
         ↓
-ToxicJoin evaluates governed context
+ToxicJoin resolves governed context and evaluates policy
         ↓
-only effective ALLOW may produce accepted data
+only effective ALLOW may release accepted data
 ```
 
-An agent or orchestration framework must never treat its own SQL generation, tool-selection reasoning, or confidence score as authorization.
+The agent's model output, tool-selection reasoning, or confidence score is never authorization.
 
-## Recommended control-plane contract
-
-For an external data agent, treat these HTTP endpoints as the public boundary:
+## Recommended HTTP boundary
 
 | Endpoint | Purpose | Database execution |
 |---|---|---:|
-| `GET /api/health` | Confirm the configured runtime and receipt store are ready | No |
-| `POST /api/analyze` | Preview the deterministic policy result and any supported safe rewrite | No |
-| `POST /api/execute-safe` | Run the full policy → rewrite → re-evaluate → execute → verify path | Only after effective `ALLOW` |
-| `GET /api/receipts/{receipt_id}` | Retrieve and integrity-check the persisted decision receipt | No |
+| `GET /api/health` | Minimal process liveness only | No |
+| `GET /api/ready` | Detailed enforcement readiness | No |
+| `POST /api/analyze` | Preview deterministic policy and any supported rewrite | No |
+| `POST /api/execute-safe` | Full policy → rewrite → re-evaluate → authorize → execute → verify path | Only after effective `ALLOW` |
+| `GET /api/receipts/{receipt_id}` | Retrieve and integrity-check an owned decision receipt | No |
 
-The API contracts are strict Pydantic models with unknown fields rejected.
+`/api/health` intentionally returns only:
+
+```json
+{"status":"ok"}
+```
+
+Do not use liveness as proof that the database, receipt store, governance snapshot, or stateful privacy ledger is ready.
+
+Use `/api/ready` for that. In authenticated/LIVE deployments it requires the `system:read` scope; the zero-auth fixture judge can call it directly.
 
 ## Request contract
 
-Both `/api/analyze` and `/api/execute-safe` accept the same request shape:
+`/api/analyze` and `/api/execute-safe` accept the same strict request model:
 
 ```json
 {
@@ -44,20 +49,17 @@ Both `/api/analyze` and `/api/execute-safe` accept the same request shape:
 }
 ```
 
-Required semantics:
+Important semantics:
 
-- `task_purpose` describes the analytical intent;
-- `sql` is the **proposed**, untrusted SQL;
-- `subject_key` identifies the expected distinct subject used by threshold policy and verification;
-- `dialect` defaults to `duckdb` in the current reference implementation.
+- `sql` is untrusted input;
+- governed execution is DuckDB-only;
+- `subject_key` identifies the governed subject namespace used by threshold and cumulative-disclosure controls;
+- the subject key must bind to the query's physical source domain; ambiguity fails closed;
+- unknown request fields are rejected.
 
-The subject alias may be omitted when the physical binding is unambiguous. Ambiguity is a fail-closed condition, not a reason to guess.
+## Preferred one-call pattern
 
-## One-call execution pattern
-
-For an autonomous agent, prefer `/api/execute-safe` over an `analyze → manually execute` pattern.
-
-Example:
+For an autonomous agent, prefer `/api/execute-safe` rather than `analyze → execute elsewhere`.
 
 ```bash
 curl --fail-with-body \
@@ -75,125 +77,111 @@ curl --fail-with-body \
   }'
 ```
 
-The caller should branch on `effective_decision` only:
+Branch on `effective_decision`:
 
 ```text
-ALLOW   → the ToxicJoin-controlled execution path completed or was authorized;
-          inspect verification before consuming an executed result.
-
-BLOCK   → stop. Do not execute the original SQL through another tool.
-
-REWRITE → do not execute outside ToxicJoin. A successful supported rewrite is
-          reparsed and reevaluated by ToxicJoin; the accepted path must end in
-          effective ALLOW before execution.
+ALLOW   → consume data only when the ToxicJoin-controlled execution and verification path succeeded.
+BLOCK   → stop; never retry the original SQL through another warehouse tool.
+REWRITE → do not execute externally; ToxicJoin must reparse, reground, reevaluate, and reach effective ALLOW itself.
 ```
 
-In the flagship path, the initial decision is `REWRITE`, but the effective decision becomes `ALLOW` only after the generated query passes the same parser, governed-context resolution, deterministic policy, and independent verification gates.
+A `safe_sql` string alone is not authority.
 
-## Response contract
+## Authentication and scope separation
 
-`POST /api/analyze` and `POST /api/execute-safe` return a stable `PipelineResponse` containing:
+When API authentication is configured, ToxicJoin separates:
 
-- `effective_decision` — the final authorization state;
-- `initial_decision` — deterministic decision and reason evidence for the proposed SQL;
-- `final_decision` — the reevaluated decision when a rewrite occurred;
-- `safe_sql` — the supported rewritten SQL when available;
-- `original_plan` and `final_plan` — parsed query evidence;
-- `verification` — independent execution/result verification when execution occurred;
-- `receipt` — the sanitized immutable decision receipt.
+- `analyze`;
+- `execute`;
+- `receipts:read`;
+- `system:read`.
 
-An orchestration layer should not infer success merely from the presence of `safe_sql`. The controlling conditions are the effective decision and, when execution occurred, the verification result.
+Receipts are principal-owned. Cross-principal lookup returns the same `404 RECEIPT_NOT_FOUND` surface as a nonexistent receipt.
 
-## Agent-side pseudocode
+Authenticated execution also activates persistent cumulative-disclosure state. Credential or session rotation cannot be used to reset the governed privacy history for the same principal/agent/subject scope.
 
-```python
-proposal = agent.propose_sql(task)
+## Response authority
 
-response = toxicjoin.execute_safe(
-    task_purpose=task.purpose,
-    sql=proposal.sql,
-    subject_key=task.subject_key,
-)
+`POST /api/analyze` and `POST /api/execute-safe` return a `PipelineResponse` containing deterministic decision evidence, parsed plans, optional safe SQL, verification evidence, and a sanitized receipt.
 
-if response.effective_decision != "ALLOW":
-    return agent.report_denial(response.initial_decision.reason_codes)
+The controlling conditions are:
 
-if response.verification is not None and not response.verification.passed:
-    raise RuntimeError("ToxicJoin verification did not pass")
+1. final `effective_decision == ALLOW`;
+2. if execution occurred, independent verification passed;
+3. the returned/persisted receipt passed integrity validation.
 
-return agent.consume_verified_result(response)
-```
-
-The pseudocode illustrates orchestration semantics; it is not a separate SDK shipped by this repository.
+Do not infer success from HTTP 200 alone; controlled BLOCK responses intentionally use a normal response body.
 
 ## Critical anti-bypass rule
 
-A platform integration is unsafe if it does this:
+This integration is unsafe:
 
 ```text
 ToxicJoin BLOCK
       ↓
-agent retries the original SQL using another warehouse tool
+agent retries the same SQL with another warehouse credential/tool
 ```
 
-The enforcement boundary only has value when **all protected analytical execution is routed through the guarded path**.
+All protected analytical execution must be routed through the guarded boundary. In a real deployment, identity, network, and warehouse permissions should prevent the autonomous agent from bypassing ToxicJoin.
 
-For a real deployment, the warehouse credential available to the autonomous agent should therefore be constrained so the agent cannot silently bypass the control plane. ToxicJoin's reference Docker path demonstrates the enforcement logic and read-only execution model; organization-specific identity, network, and warehouse authorization controls remain deployment responsibilities.
+## Governance boundary
 
-## Governance integration boundary
+The packaged fixture judge uses deterministic local governance for repeatability. It is never presented as live DataHub.
 
-The zero-configuration packaged application starts in deterministic **fixture mode** for reproducible judging. It does not silently represent fixture metadata as live DataHub.
-
-The stable live integration is proven separately against DataHub OSS and the official DataHub MCP Server. ToxicJoin's pipeline is built around a context-resolver boundary so governed context can be supplied independently of the policy engine.
-
-A production integration should preserve these invariants:
+The stable live path is proven separately against DataHub OSS and the official MCP Server. Production integrations should preserve these invariants:
 
 1. parse SQL before governance lookup;
-2. resolve every referenced physical dataset and field;
-3. map DataHub governance only through deterministic configured classifications;
-4. fail closed on missing, conflicting, incomplete, or ambiguous context;
-5. never send raw sensitive warehouse rows to an LLM;
-6. keep the deterministic policy as authorization authority;
-7. write sanitized institutional memory back to DataHub only after the decision path is complete.
+2. resolve referenced physical datasets and fields;
+3. acquire governed tags, terms, and lineage from a bounded snapshot;
+4. fail closed on missing, conflicting, incomplete, stale, or ambiguous context;
+5. bind governance provenance through authorization and execution;
+6. never send raw sensitive warehouse rows to an LLM;
+7. keep deterministic policy outside model control;
+8. write only sanitized institutional memory back to DataHub;
+9. verify write-back from a fresh read-only process.
 
 See:
 
-- [architecture and trust boundaries](architecture.md);
-- [live DataHub evidence](evidence/datahub-live.md);
-- [governance-dependency evidence](evidence/governance-dependency.md);
-- [Compositional Risk Review Agent Skill](../skills/compositional-risk-review/SKILL.md).
+- [`architecture.md`](architecture.md)
+- [`evidence/datahub-live.md`](evidence/datahub-live.md)
+- [`evidence/governance-dependency.md`](evidence/governance-dependency.md)
+- [`evidence/release-candidate.md`](evidence/release-candidate.md)
+- [`../skills/compositional-risk-review/SKILL.md`](../skills/compositional-risk-review/SKILL.md)
 
 ## Receipt handling
 
-Every decision path creates a content-hashed receipt. Retrieve one with:
+Retrieve an owned receipt with:
 
 ```bash
 curl --fail-with-body http://127.0.0.1:8000/api/receipts/<receipt_id>
 ```
 
-The receipt store verifies integrity when reading a receipt. A missing receipt returns `404`; an integrity failure returns `409`.
+The receipt store verifies the content hash on read. Missing/invisible receipts return 404; integrity failure returns 409. Returned warehouse rows are deliberately excluded from persisted receipts.
 
-Returned warehouse rows are deliberately excluded from receipts.
+## Operational readiness
 
-## Operational readiness checks
-
-Before allowing an agent to send protected work, require:
+Use both endpoints for different purposes:
 
 ```bash
 curl --fail-with-body http://127.0.0.1:8000/api/health
+curl --fail-with-body http://127.0.0.1:8000/api/ready
 ```
 
-The runtime reports `ok` only when the configured database is present and the receipt store is writable. A deployment should treat a degraded enforcement service as unavailable and fail closed rather than routing around it.
+- `/api/health` answers only whether the process is alive.
+- `/api/ready` verifies the configured database, receipt store, stateful privacy state when required, and live-governance freshness when in LIVE mode.
 
-## What this integration does not claim
+A degraded enforcement service must be treated as unavailable rather than bypassed.
+
+## Explicit boundaries
 
 The reference implementation does not claim:
 
 - universal SQL support;
 - universal re-identification detection;
 - arbitrary SQL repair;
+- differential privacy;
 - a hosted multi-tenant production control plane;
-- that the public deterministic Replay is live execution;
-- that organization-specific IAM, warehouse credentials, or network enforcement are solved by the demo package.
+- that the deterministic hosted Replay is live execution;
+- that organization-specific IAM, network, or warehouse authorization is solved by the demo package.
 
-Its contract is narrower: for the declared supported SQL and policy profile, an AI data agent can propose work, while governed deterministic authorization and verification remain outside the model's control.
+The final exact-head validation record is in [`evidence/release-candidate.md`](evidence/release-candidate.md).
