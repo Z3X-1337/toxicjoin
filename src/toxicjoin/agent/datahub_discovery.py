@@ -7,6 +7,8 @@ import unicodedata
 from collections.abc import Callable
 from urllib.parse import quote, unquote_to_bytes
 
+from pydantic import BaseModel, SecretStr
+
 from toxicjoin.agent.models import (
     AgentDataContext,
     AgentDatasetView,
@@ -181,17 +183,24 @@ def _project_trusted_snapshot(snapshot: DataHubSnapshot) -> AgentDataContext:
 
 
 def _read_only_settings(settings: ReadOnlyDataHubMcpSettings) -> ReadOnlyDataHubMcpSettings:
-    """Return a private copy only when factory-issued read-token provenance is intact."""
+    """Return a detached private copy only when factory-issued read provenance is intact."""
 
     if not read_only_credential_provenance_valid(settings):
         raise AgentDataHubDiscoveryError("AGENT_DATAHUB_READ_ROLE_REQUIRED")
 
     try:
-        copied = settings.model_copy(deep=False)
+        token_value = settings.gms_token.get_secret_value()
+        copied = BaseModel.model_copy(
+            settings,
+            update={"gms_token": SecretStr(token_value)},
+            deep=False,
+        )
     except Exception:
         raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID") from None
     if not read_only_credential_provenance_valid(copied):
         raise AgentDataHubDiscoveryError("AGENT_DATAHUB_READ_ROLE_REQUIRED")
+    if copied.gms_token is settings.gms_token:
+        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID")
     return copied
 
 
