@@ -36,13 +36,13 @@ _MAX_CLAIM_VALUE_LENGTH = 4096
 
 _PREDICATE_DERIVATIONS: dict[str, DerivationKind] = {
     "datahub.snapshot_sha256": DerivationKind.RUNTIME_OBSERVED,
-    "datahub.owner": DerivationKind.RUNTIME_OBSERVED,
-    "datahub.domain": DerivationKind.RUNTIME_OBSERVED,
     "datahub.tags": DerivationKind.RUNTIME_OBSERVED,
     "datahub.glossary_terms": DerivationKind.RUNTIME_OBSERVED,
     "datahub.lineage_source_urn": DerivationKind.RUNTIME_OBSERVED,
     "datahub.catalog_version": DerivationKind.EXPLICIT_MAPPING,
     "datahub.logical_name": DerivationKind.EXPLICIT_MAPPING,
+    "datahub.owner": DerivationKind.EXPLICIT_MAPPING,
+    "datahub.domain": DerivationKind.EXPLICIT_MAPPING,
     "toxicjoin.sensitivity_category": DerivationKind.EXPLICIT_MAPPING,
     "datahub.lineage_transport_complete": DerivationKind.EXPLICIT_MAPPING,
     "toxicjoin.lineage_governance_complete": DerivationKind.EXPLICIT_MAPPING,
@@ -219,6 +219,7 @@ def build_datahub_evidence_bundle(
                     observed_at=observed_at,
                     expires_at=expires_at,
                     supporting_claim_ids=root_support,
+                    derivation=DerivationKind.EXPLICIT_MAPPING,
                 )
             )
         if dataset.domain is not None:
@@ -231,6 +232,7 @@ def build_datahub_evidence_bundle(
                     observed_at=observed_at,
                     expires_at=expires_at,
                     supporting_claim_ids=root_support,
+                    derivation=DerivationKind.EXPLICIT_MAPPING,
                 )
             )
 
