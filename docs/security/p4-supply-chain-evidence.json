@@ -1,19 +1,19 @@
 {
   "action_pins": {
-    "actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955": "08eba0b27e820071cde6df949e0beb9ba4906955",
-    "actions/checkout@11d5960a326750d5838078e36cf38b85af677262": "11d5960a326750d5838078e36cf38b85af677262",
-    "actions/checkout@v4": "11d5960a326750d5838078e36cf38b85af677262",
-    "actions/dependency-review-action@v4": "2031cfc080254a8a887f58cffee85186f0e49e48",
-    "actions/setup-node@v4": "49933ea5288caeca8642d1e84afbd3f7d6820020",
-    "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065": "a26af69be951a213d495a4c3e4e4022e16d87065",
-    "actions/setup-python@v5": "a26af69be951a213d495a4c3e4e4022e16d87065",
-    "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02": "ea165f8d65b6e75b540449e92b4886f43607fa02",
-    "actions/upload-artifact@v4": "ea165f8d65b6e75b540449e92b4886f43607fa02",
-    "github/codeql-action/analyze@v4": "e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81",
-    "github/codeql-action/init@v4": "e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81"
+    "actions/checkout": "11d5960a326750d5838078e36cf38b85af677262",
+    "actions/dependency-review-action": "a1d282b36b6f3519aa1f3fc636f609c47dddb294",
+    "actions/setup-node": "49933ea5288caeca8642d1e84afbd3f7d6820020",
+    "actions/setup-python": "a26af69be951a213d495a4c3e4e4022e16d87065",
+    "actions/upload-artifact": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+    "github/codeql-action": "e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81"
   },
   "dependency_audits": {
-    "npm": {
+    "npm_hosted_replay": {
+      "exit_code": 0,
+      "finding_count": 0,
+      "findings": []
+    },
+    "npm_web": {
       "exit_code": 0,
       "finding_count": 0,
       "findings": [],
@@ -51,11 +51,28 @@
       ]
     }
   },
+  "dependency_review": {
+    "preferred_mode": "github-dependency-review-action-v5",
+    "probe_api_version": "2026-03-10",
+    "observed_http_status": 403,
+    "observed_message": "Forbidden",
+    "diagnostic_run_id": 30136194033,
+    "diagnostic_artifact_id": 8612853802,
+    "diagnostic_artifact_digest": "sha256:688cd02d3a6106388a2cb79ad928308f9945ac54cb87de2eec19afc219021f30",
+    "fallback_mode": "exact-lock-local-fallback",
+    "fallback_controls": [
+      "record dependency manifest diff from pull-request base to exact head",
+      "re-run pip-audit for locked datahub and agent-registry profiles",
+      "re-run npm audit for root Hosted Replay lock and apps/web lock",
+      "reject every finding not covered by the single machine-validated temporary exception",
+      "fail closed for any Dependency Review API status other than 200 or 403"
+    ],
+    "platform_limitation_is_not_a_vulnerability_exception": true
+  },
   "docker_base_images": [
     "node:22.16.0-alpine=node@sha256:41e4389f3d988d2ed55392df4db1420ad048ae53324a8e2b7c6d19508288107e",
     "python:3.12-slim=python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de"
   ],
-  "finalizer_start_sha": "7a3ec00a2b2d5e981cb1be834a6ef7fd5c6abbe7",
   "materialized_source_sha": "beda45878674a0192de95fed0735f2b7f17cd7d8",
   "risk_exceptions": [
     {
@@ -80,5 +97,5 @@
       "upstream_constraint": "acryl-datahub requires setuptools<82.0.0 because its runtime still depends on pkg_resources, which setuptools 82 removed"
     }
   ],
-  "schema_version": "1.0"
+  "schema_version": "1.1"
 }
