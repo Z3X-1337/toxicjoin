@@ -1,7 +1,11 @@
 {
   "schema_version": "1.0",
   "evaluation_version": "1.0",
-  "policy_version": "0.1.0",
+  "policy_version": "0.2.0",
+  "tested_commit": "fe4f8da2579e09bdbfb1d998b92dfea86549733b",
+  "workflow_run": 30136824433,
+  "artifact_id": 8613089999,
+  "artifact_digest": "sha256:a73eafdd701019f36eac27a1fcc5a81df52f697bfe66e5961295ab77d6bcb690",
   "data_fingerprint": "bfeae85c4b238e38012aadc6f4c95d24c7a28bcb1da1c35e8eeef5be28be7d16",
   "sql_sha256": "85d4a0c328e14d234ef1b589e8d36d5e40c53a2510b3ca2c6aa4bbad40d12e51",
   "cases": [
@@ -10,17 +14,11 @@
       "governance_change": "none; canonical governed context",
       "initial_decision": "REWRITE",
       "effective_decision": "ALLOW",
-      "initial_reason_codes": [
-        "SMALL_GROUP_RISK"
-      ],
+      "initial_reason_codes": ["SMALL_GROUP_RISK"],
       "executed": true,
       "verification_passed": true,
       "output_group_count": 3,
-      "observed_subject_counts": [
-        40,
-        40,
-        40
-      ],
+      "observed_subject_counts": [40, 40, 40],
       "passed": true
     },
     {
@@ -28,9 +26,7 @@
       "governance_change": "retention_scores.churn_score has no governed sensitivity classification",
       "initial_decision": "BLOCK",
       "effective_decision": "BLOCK",
-      "initial_reason_codes": [
-        "UNCLASSIFIED_COLUMN"
-      ],
+      "initial_reason_codes": ["UNCLASSIFIED_COLUMN"],
       "executed": false,
       "verification_passed": null,
       "output_group_count": null,
@@ -42,10 +38,7 @@
       "governance_change": "retention_scores.churn_score is absent from governed schema metadata",
       "initial_decision": "BLOCK",
       "effective_decision": "BLOCK",
-      "initial_reason_codes": [
-        "UNRESOLVED_COLUMN",
-        "UNCLASSIFIED_COLUMN"
-      ],
+      "initial_reason_codes": ["UNRESOLVED_COLUMN", "UNCLASSIFIED_COLUMN"],
       "executed": false,
       "verification_passed": null,
       "output_group_count": null,
@@ -57,10 +50,7 @@
       "governance_change": "retention_scores is absent from governed dataset metadata",
       "initial_decision": "BLOCK",
       "effective_decision": "BLOCK",
-      "initial_reason_codes": [
-        "UNRESOLVED_DATASET",
-        "UNCLASSIFIED_COLUMN"
-      ],
+      "initial_reason_codes": ["UNRESOLVED_DATASET", "UNCLASSIFIED_COLUMN"],
       "executed": false,
       "verification_passed": null,
       "output_group_count": null,
@@ -70,5 +60,5 @@
   ],
   "unsafe_effective_allow_count": 0,
   "gate_failures": [],
-  "report_sha256": "5466c06f7ff926eafb897ab18c121ef241a4bc539bd2cf037c4437637ea414a5"
+  "report_sha256": "25c1b7c189a8ca248723138df2065ddb0669a9f4f46f6e7abe8f81b7b1a48d9f"
 }
