@@ -5,10 +5,16 @@ The core verifier remains provider-neutral. This wrapper strengthens providers t
 before verification, pinning that binding for the verification phase, and forcing the
 same binding into execution-authorization issuance. Any freshness failure or snapshot
 replacement before authorization fails closed without reaching execution.
+
+This wrapper is also the release boundary for stateful privacy. The disclosure ledger
+reserves a PENDING release before execution; only a fully passed verification transitions
+that reservation to RELEASED. Every failed or exceptional path transitions it to ABORTED,
+so requests that never release rows cannot poison future privacy history.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from typing import Any, Protocol
 
@@ -21,7 +27,7 @@ from toxicjoin.context.governance import (
     resolve_with_governance_binding,
 )
 from toxicjoin.context.models import ContextResolution
-from toxicjoin.disclosure import DisclosureLedger
+from toxicjoin.disclosure import DisclosureCommitment, DisclosureLedger
 from toxicjoin.execute import DuckDBExecutor
 from toxicjoin.models import ColumnRef, QueryPlan, ReasonCode
 from toxicjoin.policy import PolicyEngine
@@ -31,6 +37,9 @@ from toxicjoin.verify.engine import (
     VerificationResult,
     verify_and_execute as _verify_and_execute,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class ContextResolver(Protocol):
@@ -192,32 +201,38 @@ def verify_and_execute(
             try:
                 query_plan = analyze_sql(sql, dialect=dialect)
             except SqlAnalysisError:
-                return _verify_and_execute(
+                return _run_core(
                     sql,
                     context_resolver=context_resolver,
                     executor=executor,
-                    **common,
+                    disclosure_ledger=disclosure_ledger,
+                    receipt_id=receipt_id,
+                    common=common,
                 )
             return _governance_failure(
                 query_plan,
                 reason=ReasonCode.DATAHUB_CONTEXT_DRIFT,
                 detail="expected governance provenance is unavailable from the resolver",
             )
-        return _verify_and_execute(
+        return _run_core(
             sql,
             context_resolver=context_resolver,
             executor=executor,
-            **common,
+            disclosure_ledger=disclosure_ledger,
+            receipt_id=receipt_id,
+            common=common,
         )
 
     try:
         query_plan = analyze_sql(sql, dialect=dialect)
     except SqlAnalysisError:
-        return _verify_and_execute(
+        return _run_core(
             sql,
             context_resolver=context_resolver,
             executor=executor,
-            **common,
+            disclosure_ledger=disclosure_ledger,
+            receipt_id=receipt_id,
+            common=common,
         )
 
     try:
@@ -242,11 +257,13 @@ def verify_and_execute(
             authority_resolver=context_resolver,
             binding=binding,
         )
-        return _verify_and_execute(
+        return _run_core(
             sql,
             context_resolver=pinned_resolver,
             executor=bound_executor,
-            **common,
+            disclosure_ledger=disclosure_ledger,
+            receipt_id=receipt_id,
+            common=common,
         )
     except GovernanceContextStaleError as exc:
         return _governance_failure(
@@ -260,6 +277,152 @@ def verify_and_execute(
             reason=ReasonCode.DATAHUB_CONTEXT_DRIFT,
             detail=str(exc),
         )
+
+
+def _run_core(
+    sql: str,
+    *,
+    context_resolver: ContextResolver,
+    executor: Any,
+    disclosure_ledger: DisclosureLedger | None,
+    receipt_id: str | None,
+    common: dict[str, Any],
+) -> VerificationResult:
+    """Run the core verifier and finalize any reserved disclosure state."""
+
+    try:
+        result = _verify_and_execute(
+            sql,
+            context_resolver=context_resolver,
+            executor=executor,
+            **common,
+        )
+    except Exception:
+        _abort_pending_receipt(disclosure_ledger, receipt_id)
+        raise
+    result = _sanitize_execution_failure(result)
+    return _finalize_release_state(
+        result,
+        disclosure_ledger=disclosure_ledger,
+        receipt_id=receipt_id,
+    )
+
+
+def _finalize_release_state(
+    result: VerificationResult,
+    *,
+    disclosure_ledger: DisclosureLedger | None,
+    receipt_id: str | None,
+) -> VerificationResult:
+    if disclosure_ledger is None or receipt_id is None:
+        return result
+
+    commitment = _commitment_for_receipt(disclosure_ledger, receipt_id)
+    if commitment is None:
+        return result
+
+    try:
+        if result.passed and result.execution is not None:
+            disclosure_ledger.mark_released(commitment)
+        else:
+            disclosure_ledger.mark_aborted(commitment)
+    except Exception:
+        logger.exception("failed to finalize disclosure release state")
+        return _disclosure_state_failure(result)
+    return result
+
+
+def _abort_pending_receipt(
+    disclosure_ledger: DisclosureLedger | None,
+    receipt_id: str | None,
+) -> None:
+    if disclosure_ledger is None or receipt_id is None:
+        return
+    commitment = _commitment_for_receipt(disclosure_ledger, receipt_id)
+    if commitment is None:
+        return
+    try:
+        disclosure_ledger.mark_aborted(commitment)
+    except Exception:
+        logger.exception("failed to abort disclosure reservation after verifier exception")
+
+
+def _commitment_for_receipt(
+    disclosure_ledger: DisclosureLedger,
+    receipt_id: str,
+) -> DisclosureCommitment | None:
+    try:
+        record = disclosure_ledger.read_receipt(receipt_id)
+    except KeyError:
+        return None
+    return DisclosureCommitment(
+        record_id=record.record_id,
+        receipt_id=record.event.receipt_id,
+        scope_sha256=record.event.scope.scope_sha256,
+        event_sha256=record.event_sha256,
+        content_sha256=record.content_sha256,
+    )
+
+
+def _sanitize_execution_failure(result: VerificationResult) -> VerificationResult:
+    """Keep engine/database exception text server-side and expose stable codes only."""
+
+    failed_execution_checks = {
+        check.name
+        for check in result.checks
+        if not check.passed and check.name in {"execution", "execution_authorization"}
+    }
+    if not failed_execution_checks and result.execution_error is None:
+        return result
+
+    if result.execution_error is not None:
+        logger.warning("protected execution failure: %s", result.execution_error)
+
+    code = (
+        result.failure_reason_codes[0].value
+        if result.failure_reason_codes
+        else ReasonCode.VERIFICATION_FAILED.value
+    )
+    public_detail = f"{code}: protected execution failed"
+    checks = tuple(
+        check.model_copy(update={"detail": public_detail})
+        if check.name in failed_execution_checks
+        else check
+        for check in result.checks
+    )
+    return result.model_copy(
+        update={
+            "checks": checks,
+            "execution_error": public_detail if result.execution_error is not None else None,
+        }
+    )
+
+
+def _disclosure_state_failure(result: VerificationResult) -> VerificationResult:
+    detail = "DISCLOSURE_STATE_UNAVAILABLE: release state could not be finalized safely"
+    checks = tuple(result.checks) + (
+        VerificationCheck(
+            name="disclosure_release_state",
+            passed=False,
+            detail=detail,
+        ),
+    )
+    reasons = tuple(
+        dict.fromkeys(
+            result.failure_reason_codes + (ReasonCode.DISCLOSURE_STATE_UNAVAILABLE,)
+        )
+    )
+    return VerificationResult(
+        passed=False,
+        query_plan=result.query_plan,
+        policy_decision=result.policy_decision,
+        checks=checks,
+        execution=None,
+        execution_attempted=result.execution_attempted,
+        execution_quarantined=result.execution_attempted,
+        execution_error=detail,
+        failure_reason_codes=reasons,
+    )
 
 
 def _governance_failure(
