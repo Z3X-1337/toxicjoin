@@ -126,6 +126,7 @@ def test_factory_issued_read_credential_retains_child_protections(
     settings = discoverer._settings
     assert type(settings) is ReadOnlyDataHubMcpSettings
     assert settings is not original
+    assert settings.gms_token is not original.gms_token
     assert read_only_credential_provenance_valid(settings) is True
     assert settings.role == DataHubMcpRole.READ_ONLY
     assert settings.credential_source == "DATAHUB_GMS_READ_TOKEN"
@@ -239,6 +240,39 @@ def test_token_swap_via_base_model_copy_breaks_private_provenance(
             transport_factory=lambda _: MutationExposingTransport(),
         )
     assert exc_info.value.code == "AGENT_DATAHUB_READ_ROLE_REQUIRED"
+
+
+def test_discoverer_detaches_bearer_secret_from_caller_after_construction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reader = _read_settings(monkeypatch)
+    writer = _mutation_settings(monkeypatch)
+    observed_tokens: list[str] = []
+
+    def factory(settings: ReadOnlyDataHubMcpSettings) -> MutationExposingTransport:
+        observed_tokens.append(settings.gms_token.get_secret_value())
+        return MutationExposingTransport()
+
+    discoverer = DataHubAgentDiscoverer(
+        settings=reader,
+        asset_map=_asset_map(),
+        transport_factory=factory,
+    )
+    internal = discoverer._settings
+    assert internal.gms_token is not reader.gms_token
+    assert internal.gms_token.get_secret_value() == _SECRET
+    assert read_only_credential_provenance_valid(internal) is True
+
+    reader.gms_token._secret_value = writer.gms_token.get_secret_value()
+    assert reader.gms_token.get_secret_value() == _WRITE_SECRET
+    assert read_only_credential_provenance_valid(reader) is False
+    assert internal.gms_token.get_secret_value() == _SECRET
+    assert read_only_credential_provenance_valid(internal) is True
+
+    with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
+        asyncio.run(discoverer.discover())
+    assert exc_info.value.code == "AGENT_DATAHUB_DISCOVERY_FAILED"
+    assert observed_tokens == [_SECRET]
 
 
 def test_read_client_fails_closed_when_server_exposes_mutation_tool(
