@@ -46,11 +46,25 @@ def _safe_validation(candidate_sha256: str) -> CpccCandidateValidation:
     )
 
 
-def _reject(candidate_sha256: str, stage=CpccValidationStage.GENERATE):
+def _reject(
+    candidate_sha256: str,
+    stage: CpccValidationStage = CpccValidationStage.GENERATE,
+) -> CpccCandidateValidation:
     return build_cpcc_candidate_validation(
         candidate_sha256=candidate_sha256,
         outcome=CpccValidationOutcome.INELIGIBLE,
         failure_stage=stage,
+    )
+
+
+def _uncertain(candidate_sha256: str) -> CpccCandidateValidation:
+    return build_cpcc_candidate_validation(
+        candidate_sha256=candidate_sha256,
+        outcome=CpccValidationOutcome.FAIL_CLOSED,
+        failure_stage=CpccValidationStage.REBUILD_EVIDENCE,
+        generated_sql_sha256=H1,
+        reparsed_plan_sha256=H2,
+        reground_governance_sha256=H3,
     )
 
 
@@ -83,7 +97,7 @@ def test_operator_specific_parameters_fail_closed() -> None:
         build_remediation_action(RemediationOperator.ADD_MINIMUM_GROUP_THRESHOLD)
 
 
-def test_remediation_space_and_candidate_enumeration_are_deterministic_and_exhaustive() -> None:
+def test_remediation_space_and_candidate_enumeration_are_deterministic() -> None:
     actions = (
         build_remediation_action(
             RemediationOperator.REMOVE_PROJECTION,
@@ -105,13 +119,18 @@ def test_remediation_space_and_candidate_enumeration_are_deterministic_and_exhau
 
     assert first == second
     candidates = enumerate_cpcc_candidates(first)
-    assert len(candidates) == 4 + 6
-    assert candidates == tuple(sorted(candidates, key=lambda item: item.ordering_key))
-    action_sets = {tuple(action.action_sha256 for action in item.actions) for item in candidates}
+    assert len(candidates) == 10
+    assert candidates == tuple(
+        sorted(candidates, key=lambda item: item.ordering_key)
+    )
+    action_sets = {
+        tuple(action.action_sha256 for action in item.actions)
+        for item in candidates
+    }
     assert len(action_sets) == 10
 
 
-def test_cpcc_validates_entire_space_before_selecting_minimum_cost_safe_candidate() -> None:
+def test_cpcc_validates_entire_space_before_selecting_minimum_cost() -> None:
     threshold = build_remediation_action(
         RemediationOperator.ADD_MINIMUM_GROUP_THRESHOLD,
         minimum_group_size=20,
@@ -159,7 +178,9 @@ def test_cpcc_tie_breaks_equal_cost_with_canonical_candidate_hash() -> None:
         field_key="urn:dataset#b",
     )
     space = build_remediation_space((first_action, second_action))
-    singles = [item for item in enumerate_cpcc_candidates(space) if len(item.actions) == 1]
+    singles = [
+        item for item in enumerate_cpcc_candidates(space) if len(item.actions) == 1
+    ]
 
     def validator(candidate):
         if len(candidate.actions) == 1:
@@ -172,7 +193,7 @@ def test_cpcc_tie_breaks_equal_cost_with_canonical_candidate_hash() -> None:
     assert result.selected_candidate == expected
 
 
-def test_cpcc_returns_no_repair_only_after_every_candidate_is_explicitly_ineligible() -> None:
+def test_cpcc_no_repair_requires_every_candidate_explicitly_ineligible() -> None:
     space = build_remediation_space(
         (
             build_remediation_action(RemediationOperator.REMOVE_STABLE_IDENTIFIER),
@@ -185,7 +206,7 @@ def test_cpcc_returns_no_repair_only_after_every_candidate_is_explicitly_ineligi
     def validator(candidate):
         nonlocal calls
         calls += 1
-        return _reject(candidate.candidate_sha256, CpccValidationStage.PPMC)
+        return _reject(candidate.candidate_sha256)
 
     result = run_cpcc(remediation_space=space, validator=validator)
 
@@ -193,6 +214,30 @@ def test_cpcc_returns_no_repair_only_after_every_candidate_is_explicitly_ineligi
     assert result.status == CpccStatus.NO_ELIGIBLE_REPAIR
     assert result.selected_candidate is None
     assert result.eligible_candidate_sha256s == ()
+
+
+def test_cpcc_fails_closed_if_candidate_validation_is_uncertain() -> None:
+    cheap = build_remediation_action(
+        RemediationOperator.ADD_MINIMUM_GROUP_THRESHOLD,
+        minimum_group_size=20,
+    )
+    expensive = build_remediation_action(
+        RemediationOperator.REMOVE_SENSITIVE_PROJECTION,
+    )
+    space = build_remediation_space((cheap, expensive))
+    candidates = enumerate_cpcc_candidates(space)
+
+    def validator(candidate):
+        if candidate == candidates[0]:
+            return _uncertain(candidate.candidate_sha256)
+        return _safe_validation(candidate.candidate_sha256)
+
+    result = run_cpcc(remediation_space=space, validator=validator)
+
+    assert result.status == CpccStatus.FAIL_CLOSED
+    assert result.failed_candidate_sha256 == candidates[0].candidate_sha256
+    assert result.selected_candidate is None
+    assert result.candidates_considered == 1
 
 
 def test_cpcc_fails_closed_if_validator_raises_or_binds_wrong_candidate() -> None:
@@ -240,6 +285,40 @@ def test_eligible_validation_requires_all_mandatory_chain_commitments() -> None:
             ppmc_result_sha256=H7,
             ppmc_status=PpmcStatus.NO_COUNTEREXAMPLE_WITHIN_BOUND,
         )
+
+
+def test_ppmc_ineligible_is_distinct_from_ppmc_fail_closed() -> None:
+    unsafe = build_cpcc_candidate_validation(
+        candidate_sha256=H1,
+        outcome=CpccValidationOutcome.INELIGIBLE,
+        failure_stage=CpccValidationStage.PPMC,
+        generated_sql_sha256=H1,
+        reparsed_plan_sha256=H2,
+        reground_governance_sha256=H3,
+        evidence_root_sha256=H4,
+        local_policy_decision_sha256=H5,
+        local_policy_allowed=True,
+        disclosure_state_sha256=H6,
+        ppmc_result_sha256=H7,
+        ppmc_status=PpmcStatus.PROSPECTIVE_UNSAFE,
+    )
+    assert unsafe.outcome == CpccValidationOutcome.INELIGIBLE
+
+    uncertain = build_cpcc_candidate_validation(
+        candidate_sha256=H1,
+        outcome=CpccValidationOutcome.FAIL_CLOSED,
+        failure_stage=CpccValidationStage.PPMC,
+        generated_sql_sha256=H1,
+        reparsed_plan_sha256=H2,
+        reground_governance_sha256=H3,
+        evidence_root_sha256=H4,
+        local_policy_decision_sha256=H5,
+        local_policy_allowed=True,
+        disclosure_state_sha256=H6,
+        ppmc_result_sha256=H7,
+        ppmc_status=PpmcStatus.FAIL_CLOSED,
+    )
+    assert uncertain.outcome == CpccValidationOutcome.FAIL_CLOSED
 
 
 def test_cpcc_result_integrity_tampering_is_rejected() -> None:
