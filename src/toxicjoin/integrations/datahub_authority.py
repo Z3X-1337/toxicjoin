@@ -10,12 +10,14 @@ transport-level allowlist in front of it and exposes only ``save_document`` to t
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import shlex
 from enum import StrEnum
 from typing import Any, Literal, Self
 
-from pydantic import SecretStr
+from pydantic import PrivateAttr, SecretStr
 
 from toxicjoin.integrations.datahub_mcp import (
     DataHubMcpClient,
@@ -34,6 +36,8 @@ class DataHubMcpRole(StrEnum):
 
 _READ_TOKEN_ENV = "DATAHUB_GMS_READ_TOKEN"
 _WRITE_TOKEN_ENV = "DATAHUB_GMS_WRITE_TOKEN"
+_READ_CREDENTIAL_SEAL = object()
+_WRITE_CREDENTIAL_SEAL = object()
 _MUTATION_PREFIXES = (
     "add_",
     "remove_",
@@ -52,7 +56,9 @@ _REQUIRED_SAVE_DOCUMENT_PROPERTIES = {
     "related_assets",
 }
 _WRITER_ALLOWED_TOOLS = frozenset({"save_document"})
-_PROTECTED_ROLE_FIELDS = frozenset({"role", "mutation_enabled", "credential_source"})
+_PROTECTED_ROLE_FIELDS = frozenset(
+    {"role", "mutation_enabled", "credential_source", "gms_token"}
+)
 
 
 class RoleBoundDataHubMcpSettings(DataHubMcpSettings):
@@ -60,6 +66,8 @@ class RoleBoundDataHubMcpSettings(DataHubMcpSettings):
 
     role: DataHubMcpRole
     credential_source: str
+    _factory_seal: object | None = PrivateAttr(default=None)
+    _token_fingerprint: str | None = PrivateAttr(default=None)
 
     def child_environment(self) -> dict[str, str]:
         environment = super().child_environment()
@@ -91,11 +99,25 @@ class RoleBoundDataHubMcpSettings(DataHubMcpSettings):
         update: dict[str, Any] | None = None,
         deep: bool = False,
     ) -> Self:
-        """Forbid relabeling an existing credential into a different authority role."""
+        """Forbid changing credential authority or bearer-token material through model_copy."""
 
         if update and _PROTECTED_ROLE_FIELDS.intersection(update):
-            raise ValueError("DataHub credential authority fields cannot be changed by model_copy")
+            raise ValueError(
+                "DataHub credential authority/token fields cannot be changed by model_copy"
+            )
         return super().model_copy(update=update, deep=deep)
+
+    def _bind_factory_provenance(self, *, seal: object) -> None:
+        self._factory_seal = seal
+        self._token_fingerprint = _credential_fingerprint(self.gms_token)
+
+    def _factory_provenance_matches(self, *, seal: object) -> bool:
+        if self._factory_seal is not seal or self._token_fingerprint is None:
+            return False
+        return hmac.compare_digest(
+            self._token_fingerprint,
+            _credential_fingerprint(self.gms_token),
+        )
 
 
 class ReadOnlyDataHubMcpSettings(RoleBoundDataHubMcpSettings):
@@ -114,22 +136,38 @@ class MutationDataHubMcpSettings(RoleBoundDataHubMcpSettings):
     credential_source: Literal["DATAHUB_GMS_WRITE_TOKEN"] = _WRITE_TOKEN_ENV
 
 
+def read_only_credential_provenance_valid(settings: Any) -> bool:
+    """Return whether settings were issued from the dedicated read-token factory unchanged."""
+
+    return (
+        type(settings) is ReadOnlyDataHubMcpSettings
+        and settings.role == DataHubMcpRole.READ_ONLY
+        and settings.mutation_enabled is False
+        and settings.credential_source == _READ_TOKEN_ENV
+        and settings._factory_provenance_matches(seal=_READ_CREDENTIAL_SEAL)
+    )
+
+
 def read_only_settings_from_env() -> ReadOnlyDataHubMcpSettings:
     """Build settings for a context/read-back process with all writes disabled."""
 
-    return _settings_from_env(
+    settings = _settings_from_env(
         token_env=_READ_TOKEN_ENV,
         role=DataHubMcpRole.READ_ONLY,
     )
+    assert isinstance(settings, ReadOnlyDataHubMcpSettings)
+    return settings
 
 
 def mutation_settings_from_env() -> MutationDataHubMcpSettings:
     """Build settings for the isolated Decision writer process."""
 
-    return _settings_from_env(
+    settings = _settings_from_env(
         token_env=_WRITE_TOKEN_ENV,
         role=DataHubMcpRole.MUTATION,
     )
+    assert isinstance(settings, MutationDataHubMcpSettings)
+    return settings
 
 
 def _settings_from_env(
@@ -162,10 +200,19 @@ def _settings_from_env(
     if role == DataHubMcpRole.READ_ONLY:
         if token_env != _READ_TOKEN_ENV:
             raise DataHubMcpError("read-only DataHub role requires the dedicated read token")
-        return ReadOnlyDataHubMcpSettings(**common)
+        settings = ReadOnlyDataHubMcpSettings(**common)
+        settings._bind_factory_provenance(seal=_READ_CREDENTIAL_SEAL)
+        return settings
     if token_env != _WRITE_TOKEN_ENV:
         raise DataHubMcpError("mutation DataHub role requires the dedicated write token")
-    return MutationDataHubMcpSettings(**common)
+    settings = MutationDataHubMcpSettings(**common)
+    settings._bind_factory_provenance(seal=_WRITE_CREDENTIAL_SEAL)
+    return settings
+
+
+def _credential_fingerprint(token: SecretStr) -> str:
+    value = token.get_secret_value().encode("utf-8")
+    return hashlib.sha256(b"toxicjoin:datahub-credential:v1\x00" + value).hexdigest()
 
 
 class ToolAllowlistTransport:
