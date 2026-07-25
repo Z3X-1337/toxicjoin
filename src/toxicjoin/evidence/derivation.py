@@ -1,15 +1,15 @@
 """Independent replay validation for DataHub-derived EvidenceClaims.
 
 The validator deliberately remains outside authorization. It replays the deterministic
-DataHub evidence adapter from the exact trusted local snapshot and configured MCP read
-path, then requires semantic and cryptographic identity with the candidate bundle before
-issuing a canonical validation commitment.
+DataHub evidence adapter from the exact trusted local snapshot, configured MCP read path,
+and trusted freshness policy, then requires semantic and cryptographic identity with the
+candidate bundle before issuing a canonical validation commitment.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -27,7 +27,11 @@ from toxicjoin.models import StrictModel
 
 
 _HASH_PATTERN = r"^[0-9a-f]{64}$"
+_CLAIM_ID_PATTERN = r"^evc_[0-9a-f]{32}$"
 _VALIDATOR_VERSION = "1.0"
+_DEFAULT_MAX_AGE_SECONDS = 300.0
+_MAX_MAX_AGE_SECONDS = 3600.0
+ClaimId = Annotated[str, Field(pattern=_CLAIM_ID_PATTERN)]
 ClaimKey = tuple[str, str]
 
 
@@ -50,9 +54,10 @@ class DataHubDerivationValidation(StrictModel):
     source_identity: str = Field(min_length=1, max_length=2048)
     evidence_observed_at: datetime
     evidence_expires_at: datetime
+    freshness_policy_seconds: float = Field(gt=0, le=_MAX_MAX_AGE_SECONDS)
     validated_at: datetime
-    observed_claim_ids: tuple[str, ...] = ()
-    mapped_claim_ids: tuple[str, ...] = ()
+    observed_claim_ids: tuple[ClaimId, ...] = Field(min_length=1)
+    mapped_claim_ids: tuple[ClaimId, ...] = Field(min_length=1)
     validation_sha256: str = Field(pattern=_HASH_PATTERN)
 
     @field_validator("evidence_observed_at", "evidence_expires_at", "validated_at")
@@ -66,6 +71,11 @@ class DataHubDerivationValidation(StrictModel):
     def validate_commitment(self) -> "DataHubDerivationValidation":
         if self.evidence_expires_at <= self.evidence_observed_at:
             raise ValueError("evidence_expires_at must follow evidence_observed_at")
+        declared_lifetime = (
+            self.evidence_expires_at - self.evidence_observed_at
+        ).total_seconds()
+        if round(declared_lifetime, 6) != round(self.freshness_policy_seconds, 6):
+            raise ValueError("evidence lifetime must match freshness_policy_seconds")
         if self.validated_at < self.evidence_observed_at:
             raise ValueError("validated_at cannot precede evidence observation")
         if self.validated_at >= self.evidence_expires_at:
@@ -87,13 +97,14 @@ def validate_datahub_evidence_derivations(
     snapshot: DataHubSnapshot,
     settings: DataHubMcpSettings,
     *,
+    max_age_seconds: float = _DEFAULT_MAX_AGE_SECONDS,
     now: datetime | None = None,
 ) -> DataHubDerivationValidation:
     """Replay the DataHub evidence adapter and require an exact deterministic match.
 
-    The caller must supply the locally trusted ``DataHubSnapshot`` and configured MCP
-    settings. Serialized bundle content is never allowed to choose those trust anchors.
-    Validation is freshness-aware and fails closed for future or expired evidence.
+    The caller supplies the locally trusted ``DataHubSnapshot``, configured MCP settings,
+    and freshness policy. Serialized bundle content is never allowed to choose those trust
+    anchors. Validation fails closed for future or expired evidence.
     """
 
     try:
@@ -138,17 +149,22 @@ def validate_datahub_evidence_derivations(
             "DataHub evidence source identity does not match configured MCP settings"
         )
 
-    ttl_seconds = (expires_at - observed_at).total_seconds()
     try:
         expected = build_datahub_evidence_bundle(
             snapshot,
             settings,
-            max_age_seconds=ttl_seconds,
+            max_age_seconds=max_age_seconds,
         )
     except (DataHubEvidenceError, ValueError) as exc:
         raise DataHubDerivationValidationError(
-            "DataHub evidence cannot be replayed under the declared freshness window"
+            "trusted DataHub evidence freshness policy is invalid"
         ) from exc
+
+    expected_expires_at = _utc(expected.expires_at)
+    if expires_at != expected_expires_at:
+        raise DataHubDerivationValidationError(
+            "DataHub evidence freshness window does not match trusted validator policy"
+        )
 
     candidate_by_key = _index_claims(bundle.claims, label="candidate")
     expected_by_key = _index_claims(expected.claims, label="expected")
@@ -208,6 +224,11 @@ def validate_datahub_evidence_derivations(
             "DataHub evidence contains a derivation outside the validated partition"
         )
 
+    freshness_policy_seconds = (
+        expected.evidence_expires_at - expected.evidence_observed_at
+        if isinstance(expected, DataHubDerivationValidation)
+        else expected.expires_at - expected.observed_at
+    ).total_seconds()
     payload = {
         "schema_version": "1.0",
         "validator_version": _VALIDATOR_VERSION,
@@ -216,6 +237,7 @@ def validate_datahub_evidence_derivations(
         "source_identity": bundle.source_identity,
         "evidence_observed_at": _json_datetime(observed_at),
         "evidence_expires_at": _json_datetime(expires_at),
+        "freshness_policy_seconds": freshness_policy_seconds,
         "validated_at": _json_datetime(current),
         "observed_claim_ids": list(observed_claim_ids),
         "mapped_claim_ids": list(mapped_claim_ids),
@@ -227,6 +249,7 @@ def validate_datahub_evidence_derivations(
         source_identity=bundle.source_identity,
         evidence_observed_at=observed_at,
         evidence_expires_at=expires_at,
+        freshness_policy_seconds=freshness_policy_seconds,
         validated_at=current,
         observed_claim_ids=observed_claim_ids,
         mapped_claim_ids=mapped_claim_ids,
