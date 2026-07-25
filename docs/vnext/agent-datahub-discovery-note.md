@@ -7,10 +7,14 @@ This slice connects the planning-only Governed Agent context model to the existi
 The security-owned path is:
 
 ```text
-local DataHubMcpSettings
-  -> force mutation_enabled=false on a private copy
+local DataHub MCP settings
+  -> private RoleBoundDataHubMcpSettings(role=READ_ONLY)
+  -> mutation_enabled=false
+  -> TOOLS_IS_MUTATION_ENABLED=false
+  -> SAVE_DOCUMENT_TOOL_ENABLED=false
   -> official MCP stdio transport
-  -> DataHubMcpClient
+  -> RoleBoundDataHubMcpClient(role=READ_ONLY)
+  -> reject any mutation-shaped tool exposure
   -> DataHubSnapshotLoader.load(require_mutations=false)
   -> validated DataHubSnapshot
   -> deterministic sanitized projection
@@ -24,17 +28,17 @@ The existing `DataHubSnapshotLoader` remains the ingestion/normalization authori
 
 The planner never receives:
 
-- `DATAHUB_GMS_TOKEN`;
+- DataHub credentials;
 - raw GMS endpoint;
-- `DataHubMcpSettings`;
+- `DataHubMcpSettings` or `RoleBoundDataHubMcpSettings`;
 - MCP transport/session/client objects;
 - discovered MCP tool definitions;
 - callable tools;
 - mutation handles.
 
-`DataHubAgentDiscoverer` creates a private revalidated settings copy and always forces `mutation_enabled=false`, which makes the child MCP environment emit `TOOLS_IS_MUTATION_ENABLED=false` regardless of the caller's original setting.
+`DataHubAgentDiscoverer` creates a private role-bound READ_ONLY settings copy. Existing `RoleBoundDataHubMcpSettings` retain their role semantics; a MUTATION-role settings object is rejected rather than repurposing a writer credential for discovery. Legacy base settings are upgraded to the same application-level READ_ONLY boundary for compatibility.
 
-Snapshot loading is invoked with `require_mutations=false`. A server may advertise additional tools, but the agent context does not serialize the discovered tool list and the discovery path never invokes `save_document` or another write operation.
+The read child always emits both `TOOLS_IS_MUTATION_ENABLED=false` and `SAVE_DOCUMENT_TOOL_ENABLED=false`. Snapshot loading is invoked with `require_mutations=false` through `RoleBoundDataHubMcpClient(role=READ_ONLY)`. If the read server nevertheless exposes `save_document` or another mutation-shaped tool, discovery fails closed before any metadata tool call is accepted.
 
 ## Sanitized planning projection
 
@@ -63,7 +67,9 @@ An upstream edge with an exact DataHub dataset URN but category `UNCLASSIFIED` m
 
 ## Error redaction
 
-Transport and DataHub errors are converted to stable agent-discovery codes. External exception text and exception chaining are suppressed at this boundary because either may contain endpoint, credential, or payload details. Regression coverage renders the full propagated traceback and verifies that credential/endpoint material is absent.
+The pluggable transport/factory and MCP snapshot acquisition execute inside one untrusted I/O boundary. Any exception escaping that boundary—including a forged `AgentDataHubDiscoveryError`—is replaced with the stable `AGENT_DATAHUB_DISCOVERY_FAILED` error and raised `from None`. External exception text/chaining therefore cannot be trusted to cross into the agent-facing boundary.
+
+Projection occurs only after the transport boundary has closed, allowing the security-owned projector to preserve its own finite stable rejection codes. Regression coverage renders full propagated tracebacks and verifies that planted credential/endpoint/error material is absent.
 
 ## Non-goals
 
