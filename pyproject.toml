@@ -28,10 +28,10 @@ toxicjoin-ablation = "toxicjoin.benchmark.ablation:main"
 [project.optional-dependencies]
 datahub = [
   "mcp>=1.27,<2",
-  "acryl-datahub==1.6.0.15",
+  "acryl-datahub==1.6.0.16rc7",
 ]
 agent-registry = [
-  "acryl-datahub==1.6.0.16rc3",
+  "acryl-datahub==1.6.0.16rc7",
 ]
 dev = [
   "pytest>=9.1.1,<10",
