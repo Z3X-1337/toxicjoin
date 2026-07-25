@@ -1,97 +1,151 @@
 # ToxicJoin Live DataHub Evidence
 
-## Result
+## Final result
 
-The complete live integration gate passed against a real DataHub OSS quickstart on **July 23, 2026**.
+The stable ToxicJoin integration passed against a real DataHub OSS quickstart on the exact release candidate:
 
-- GitHub Actions run: https://github.com/Z3X-1337/toxicjoin/actions/runs/29975433969
-- Tested branch commit: `26a4322130a6f56a7e3fd71e831e27b924bb433d`
-- Verified evidence Artifact: `toxicjoin-live-datahub-evidence`
-- Artifact ID: `8551281664`
-- Artifact digest: `sha256:5d7d8e33b9d47dbd3cab1fa74a29789f3c76268d2cae57896ea94c09bbada0f9`
+```text
+fe4f8da2579e09bdbfb1d998b92dfea86549733b
+```
 
-The retained reports are committed beside this document:
+Final GitHub Actions run: `30136824466`.
+
+Evidence artifact:
+
+- name `toxicjoin-live-datahub-evidence`;
+- artifact ID `8613145981`;
+- digest `sha256:b90596ffc15f298511abd1e79c97e987f92f5fdb820bf9525a7ac3fc0bce27f8`.
+
+Diagnostics artifact:
+
+- artifact ID `8613146120`;
+- digest `sha256:075d9fb6b01f55013068ec08717bd522af6724898d081540eaf0401521a2872c`.
+
+The sanitized reports from that final run are committed beside this document:
 
 - [`datahub-live-seed.json`](datahub-live-seed.json)
 - [`datahub-live-spike.json`](datahub-live-spike.json)
 
-## What was proven
+## Official DataHub SDK seed
 
-### Official DataHub SDK seed
+The locked stable DataHub profile created the deterministic ToxicJoin governance graph:
 
-The official DataHub Python SDK created the deterministic ToxicJoin governance graph:
+- **5 datasets**;
+- **19 governed schema fields**;
+- **10 controlled tags**;
+- **7 glossary terms**;
+- **4 lineage writes**.
 
-- **5** datasets;
-- **19** governed schema fields;
-- **9** controlled tags;
-- **7** glossary terms;
-- **4** column-lineage writes.
-
-Seed report content hash:
+Seed report SHA-256:
 
 ```text
-b0141731ffd72f8e33b7e447e80f1f359b6bf795fac9f059dca1e769ec4546d8
+161788c3f70caa37ddaa5972759eb498f10dae6631e9bb4f74fc22893dfd9e47
 ```
 
-### Official DataHub MCP read, write, and independent read-back
+The seed contains only synthetic ToxicJoin metadata.
 
-The official DataHub MCP Server was launched from the pinned Python package:
+## Official MCP role-separated protocol
+
+The official DataHub MCP Server was pinned as:
 
 ```text
 uvx --from mcp-server-datahub==0.6.0 mcp-server-datahub
 ```
 
-ToxicJoin then:
+ToxicJoin then executed this authority sequence:
 
-1. discovered the runtime MCP tools and validated their input contracts;
-2. read the five configured dataset entities;
-3. paginated and normalized all governed schema fields;
-4. read **3** upstream column-lineage relationships for the flagship `retention_scores.churn_score` field;
-5. wrote a DataHub `Decision` document through `save_document`;
-6. closed the MCP process that performed the write;
-7. opened a fresh MCP process;
-8. used `grep_documents` with the returned document URN;
-9. found the unique verification marker inside the persisted document content.
+1. launch a **read-only** MCP process;
+2. reject mutation-tool exposure in the read process;
+3. read the configured dataset entities and all governed schema fields;
+4. acquire upstream column lineage and normalize it into the governed snapshot;
+5. close the read process;
+6. launch an isolated writer using the separate write authority;
+7. retain the raw upstream writer inventory honestly;
+8. wrap that writer with a mandatory ToxicJoin allowlist whose effective inventory is exactly `save_document`;
+9. write one sanitized DataHub `Decision`;
+10. close the writer process;
+11. launch a fresh read-only MCP process;
+12. independently verify the persisted Decision marker.
 
-Persisted Decision document URN:
+The write response itself is not accepted as persistence proof.
+
+## Final spike schema 1.3
+
+The exact release run verified:
+
+- `status = verified`;
+- `independent_readback_verified = true`;
+- 5 verified dataset entities;
+- 3 upstream lineage relationships;
+- 2 lineage-bound fields;
+- 6 normalized lineage sources;
+- 0 unclassified lineage sources;
+- read and fresh-read-back inventories contain no mutation tools;
+- raw writer inventory contains the upstream mutation surface required by MCP 0.6.x;
+- effective ToxicJoin writer inventory is exactly `["save_document"]`.
+
+Flagship upstream source keys for `retention_scores.churn_score`:
 
 ```text
-urn:li:document:shared-8d25384c-c52d-4864-a103-1203b0c34bf6
+location_activity.activity_count
+location_activity.precise_area
+orders.purchase_amount
+support_cases.case_category
+support_cases.sensitivity_level
 ```
 
-MCP report content hash:
+Normalized flagship upstream categories:
 
 ```text
-7ddcfa735d574ecc96c89dc82f357248efc58e96c9fd338be9eb6084b33ddc4b
+PUBLIC_OR_LOW_RISK
+QUASI_IDENTIFIER
+SENSITIVE_ATTRIBUTE
 ```
 
-## Hash verification
-
-Both `report_sha256` values are calculated over canonical JSON with the `report_sha256` property removed. UTC timestamps use the same `Z` representation in both the calculated payload and persisted JSON.
-
-A regression test reconstructs each report through its strict Pydantic model, serializes it exactly as persisted, and requires the hash to remain reproducible:
+Spike report SHA-256:
 
 ```text
-tests/unit/test_datahub_report_hashes.py
+d3650b38505870e0cb864913c1f9dfa56665a209f9c95cee637f32b003cf3b5e
 ```
 
-Manual inspection of the final Artifact independently reproduced both report hashes.
+## Why this matters to authorization
+
+This is not a metadata screenshot. The same final release gate loads a DataHub snapshot through the read-only MCP boundary and passes that normalized governed context into the actual policy path.
+
+The flagship lineage is asserted before evaluating a known unsafe individual composition, and the live policy must return `BLOCK` with `COMPOSITIONAL_REIDENTIFICATION_RISK`.
+
+The governance snapshot is freshness-bounded. Governance provenance is carried through policy, execution authorization, pre-execution revalidation, and receipts so changed/stale metadata cannot silently authorize a different context.
+
+## Upstream writer constraint
+
+`mcp-server-datahub 0.6.x` registers `save_document` inside the broader mutation-registration path. Therefore the raw writer server can expose other mutation tools.
+
+ToxicJoin does not hide or misrepresent that constraint. It records the raw upstream inventory and enforces a narrower effective capability through `ToolAllowlistTransport`:
+
+```text
+write_discovered_tools == ["save_document"]
+```
+
+A broad raw server inventory is an upstream fact. A broad effective ToxicJoin writer inventory is a security failure.
 
 ## Sanitization review
 
-The retained evidence does not contain:
+The retained evidence contains no:
 
-- the DataHub token value;
-- passwords or unrelated application secrets;
-- the local DataHub endpoint;
-- raw warehouse rows;
-- receipt result rows;
-- local filesystem paths.
+- DataHub credential value;
+- password;
+- private/local endpoint value;
+- raw warehouse row;
+- receipt result row;
+- unrelated application secret;
+- local filesystem path.
 
-The report states only that a token was present, the URL scheme, the pinned MCP launch arguments, bounded timeout configuration, governed entity URNs, counts, hashes, and the Decision verification evidence.
+The reports retain only bounded configuration facts, URNs, counts, tool names, lineage evidence, status, and content hashes required to audit the integration.
 
 ## Scope and limitation
 
-This evidence proves ToxicJoin's SDK and MCP integration against a real ephemeral DataHub OSS deployment created inside GitHub Actions. The temporary DataHub UI and Decision URN are not a permanently hosted public DataHub environment.
+This evidence proves the stable SDK/MCP integration against a real ephemeral DataHub OSS deployment inside GitHub Actions. It does not claim that the temporary DataHub UI or Decision URN is permanently hosted.
 
-The public hosted site remains a clearly labeled deterministic Replay for immediate judge access. The Docker/FastAPI package remains the executable ToxicJoin product path. This document must not be used to describe the hosted Replay as a live DataHub session.
+The public browser site remains a clearly labeled deterministic Replay. The Docker/FastAPI package remains the executable product path.
+
+For the complete exact-head production gates, frozen external replay, and black-box pentest evidence, see [`release-candidate.md`](release-candidate.md).
