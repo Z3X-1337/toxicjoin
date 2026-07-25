@@ -5,7 +5,6 @@ import traceback
 from datetime import datetime, timezone
 
 import pytest
-from pydantic import SecretStr
 
 from toxicjoin.agent import (
     AgentDataHubDiscoveryError,
@@ -14,7 +13,10 @@ from toxicjoin.agent import (
 )
 from toxicjoin.context.datahub import DataHubAssetMap, DataHubSnapshot
 from toxicjoin.context.fixture import FixtureCatalog, FixtureDataset, FixtureField
-from toxicjoin.integrations.datahub_authority import ReadOnlyDataHubMcpSettings
+from toxicjoin.integrations.datahub_authority import (
+    ReadOnlyDataHubMcpSettings,
+    read_only_settings_from_env,
+)
 from toxicjoin.models import SensitivityCategory
 
 PATIENTS_URN = "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients,PROD)"
@@ -41,21 +43,22 @@ class NonSerializableMetadata:
         return f"NonSerializableMetadata({_SECRET!r}, {_ENDPOINT!r})"
 
 
-def _read_settings() -> ReadOnlyDataHubMcpSettings:
-    return ReadOnlyDataHubMcpSettings(
-        gms_url=_ENDPOINT,
-        gms_token=SecretStr(_SECRET),
-        command="uvx",
-        args=("mcp-server-datahub",),
-        timeout_seconds=30,
-    )
+def _read_settings(monkeypatch: pytest.MonkeyPatch) -> ReadOnlyDataHubMcpSettings:
+    monkeypatch.setenv("DATAHUB_GMS_URL", _ENDPOINT)
+    monkeypatch.setenv("DATAHUB_GMS_READ_TOKEN", _SECRET)
+    monkeypatch.setenv("DATAHUB_MCP_COMMAND", "uvx")
+    monkeypatch.setenv("DATAHUB_MCP_ARGS", "mcp-server-datahub")
+    monkeypatch.setenv("DATAHUB_MCP_TIMEOUT_SECONDS", "30")
+    return read_only_settings_from_env()
 
 
 def _render_exception(exc: BaseException) -> str:
     return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
 
 
-def test_discovery_suppresses_sensitive_transport_exception_chain() -> None:
+def test_discovery_suppresses_sensitive_transport_exception_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     asset_map = DataHubAssetMap(
         version="traceback-redaction-v1",
         datasets={"patients": PATIENTS_URN},
@@ -66,7 +69,7 @@ def test_discovery_suppresses_sensitive_transport_exception_chain() -> None:
     with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
         asyncio.run(
             DataHubAgentDiscoverer(
-                settings=_read_settings(),
+                settings=_read_settings(monkeypatch),
                 asset_map=asset_map,
                 transport_factory=lambda _: LeakingTransport(),
             ).discover()
