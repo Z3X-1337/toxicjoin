@@ -1,7 +1,7 @@
 # ToxicJoin Benchmark
 
 **Gate:** PASS  
-**Exact release candidate:** `fe4f8da2579e09bdbfb1d998b92dfea86549733b`  
+**Exact runtime candidate:** `e139fa99bd666505ed83a18188423722405695a2`  
 **Policy version:** `0.2.0`  
 **Cases:** 30 (10 ALLOW / 10 REWRITE / 10 BLOCK)  
 **Initial decision accuracy:** 100.0%  
@@ -15,11 +15,11 @@
 **Data fingerprint:** `bfeae85c4b238e38012aadc6f4c95d24c7a28bcb1da1c35e8eeef5be28be7d16`  
 **Report SHA-256:** `3aadc0b357db50641c8ffdc0525dde0e3d9159f933abf62a31a6a74b777d1b08`
 
-Final CI provenance:
+Exact-head CI provenance:
 
-- workflow run `30136824481`;
-- artifact ID `8613113482`;
-- artifact digest `sha256:4f46fdf293e2e6fc8174a30cfa7b825e4e65028483808db6f2732607360363a5`.
+- workflow run `30140102648`;
+- artifact ID `8614180997`;
+- artifact digest `sha256:3adec180defa9338fe970068f47bc3a479ceae2817941f41b8c7f32c8f4a10d6`.
 
 ## Initial decision confusion matrix
 
