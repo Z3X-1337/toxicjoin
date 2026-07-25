@@ -18,9 +18,12 @@ from toxicjoin.context.datahub import (
     DataHubSnapshot,
     DataHubSnapshotLoader,
 )
+from toxicjoin.integrations.datahub_authority import (
+    DataHubMcpRole,
+    RoleBoundDataHubMcpClient,
+    RoleBoundDataHubMcpSettings,
+)
 from toxicjoin.integrations.datahub_mcp import (
-    DataHubMcpClient,
-    DataHubMcpError,
     DataHubMcpSettings,
     DataHubMcpTransport,
     StdioDataHubMcpTransport,
@@ -37,15 +40,16 @@ class AgentDataHubDiscoveryError(RuntimeError):
         super().__init__(code)
 
 
-TransportFactory = Callable[[DataHubMcpSettings], DataHubMcpTransport]
+TransportFactory = Callable[[RoleBoundDataHubMcpSettings], DataHubMcpTransport]
 
 
 class DataHubAgentDiscoverer:
     """Acquire one trusted DataHub snapshot and expose only a sanitized planning view.
 
     The planner never receives this object, the MCP settings, credentials, transport, client,
-    tool definitions, or mutation handles. The discoverer always creates a private settings
-    copy with mutations disabled before opening the MCP transport.
+    tool definitions, or mutation handles. The discoverer always creates a private role-bound
+    READ_ONLY settings copy before opening the MCP transport and uses the role-bound read client
+    so mutation-tool exposure fails closed.
     """
 
     def __init__(
@@ -62,23 +66,27 @@ class DataHubAgentDiscoverer:
     async def discover(self) -> AgentDataContext:
         """Return one immutable, explicitly non-authoritative planning context."""
 
+        # Everything inside this block is an external/pluggable I/O boundary. Never trust an
+        # exception type raised from it, including AgentDataHubDiscoveryError itself: a malicious
+        # transport could forge that exported type and attach credentials or endpoint material.
         try:
             transport = self._transport_factory(self._settings)
             async with transport:
-                client = DataHubMcpClient(transport)
+                client = RoleBoundDataHubMcpClient(
+                    transport,
+                    role=DataHubMcpRole.READ_ONLY,
+                )
                 snapshot = await DataHubSnapshotLoader(
                     client,
                     self._asset_map,
                 ).load(require_mutations=False)
-            return build_agent_data_context_from_snapshot(snapshot)
-        except AgentDataHubDiscoveryError:
-            raise
-        except (DataHubMcpError, ValidationError, ValueError, TypeError):
-            raise AgentDataHubDiscoveryError("AGENT_DATAHUB_DISCOVERY_FAILED") from None
         except Exception:
-            # External transport implementations are untrusted I/O boundaries. Suppress the
-            # exception chain because it may contain endpoint, credential, or payload data.
             raise AgentDataHubDiscoveryError("AGENT_DATAHUB_DISCOVERY_FAILED") from None
+
+        # Projection happens only after the untrusted transport boundary has closed. Specific
+        # stable projection errors may therefore propagate without allowing a transport to forge
+        # them and bypass redaction.
+        return build_agent_data_context_from_snapshot(snapshot)
 
 
 def build_agent_data_context_from_snapshot(snapshot: DataHubSnapshot) -> AgentDataContext:
@@ -160,17 +168,27 @@ def build_agent_data_context_from_snapshot(snapshot: DataHubSnapshot) -> AgentDa
     )
 
 
-def _read_only_settings(settings: DataHubMcpSettings) -> DataHubMcpSettings:
-    """Revalidate settings while forcing a private mutation-disabled credential surface."""
+def _read_only_settings(settings: DataHubMcpSettings) -> RoleBoundDataHubMcpSettings:
+    """Return a private role-bound READ_ONLY settings copy.
+
+    Existing read-role settings retain their stronger role semantics. Mutation-role settings are
+    rejected rather than repurposing a write credential for discovery. Legacy base settings are
+    upgraded to the same application-level READ_ONLY boundary for compatibility.
+    """
+
+    if isinstance(settings, RoleBoundDataHubMcpSettings):
+        if settings.role != DataHubMcpRole.READ_ONLY or settings.mutation_enabled:
+            raise AgentDataHubDiscoveryError("AGENT_DATAHUB_READ_ROLE_REQUIRED")
 
     try:
-        return DataHubMcpSettings(
+        return RoleBoundDataHubMcpSettings(
             gms_url=settings.gms_url,
             gms_token=SecretStr(settings.gms_token.get_secret_value()),
             command=settings.command,
             args=tuple(settings.args),
             timeout_seconds=settings.timeout_seconds,
             mutation_enabled=False,
+            role=DataHubMcpRole.READ_ONLY,
         )
     except (AttributeError, ValidationError, ValueError):
         raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID") from None
