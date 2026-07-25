@@ -14,10 +14,7 @@ from toxicjoin.agent import (
 )
 from toxicjoin.context.datahub import DataHubAssetMap, DataHubSnapshot
 from toxicjoin.context.fixture import FixtureCatalog, FixtureDataset, FixtureField
-from toxicjoin.integrations.datahub_authority import (
-    DataHubMcpRole,
-    RoleBoundDataHubMcpSettings,
-)
+from toxicjoin.integrations.datahub_authority import ReadOnlyDataHubMcpSettings
 from toxicjoin.models import SensitivityCategory
 
 PATIENTS_URN = "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients,PROD)"
@@ -39,15 +36,18 @@ class LeakingTransport:
         raise AssertionError("call_tool must not be reached after list_tools failure")
 
 
-def _read_settings() -> RoleBoundDataHubMcpSettings:
-    return RoleBoundDataHubMcpSettings(
+class NonSerializableMetadata:
+    def __repr__(self) -> str:
+        return f"NonSerializableMetadata({_SECRET!r}, {_ENDPOINT!r})"
+
+
+def _read_settings() -> ReadOnlyDataHubMcpSettings:
+    return ReadOnlyDataHubMcpSettings(
         gms_url=_ENDPOINT,
         gms_token=SecretStr(_SECRET),
         command="uvx",
         args=("mcp-server-datahub",),
         timeout_seconds=30,
-        mutation_enabled=False,
-        role=DataHubMcpRole.READ_ONLY,
     )
 
 
@@ -77,6 +77,43 @@ def test_discovery_suppresses_sensitive_transport_exception_chain() -> None:
     assert _SECRET not in rendered
     assert _ENDPOINT not in rendered
     assert "transport leaked" not in rendered
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__suppress_context__ is True
+
+
+def test_snapshot_serialization_failure_does_not_echo_raw_metadata() -> None:
+    snapshot = DataHubSnapshot(
+        catalog=FixtureCatalog(
+            version="datahub-mcp:serialization-redaction",
+            datasets={
+                "patients": FixtureDataset(
+                    urn=PATIENTS_URN,
+                    fields={
+                        "customer_id": FixtureField(
+                            category=SensitivityCategory.STABLE_PSEUDONYM,
+                        )
+                    },
+                )
+            },
+        ),
+        verified_entities=(PATIENTS_URN,),
+        field_counts={"patients": 1},
+        lineage_sample={
+            "relationships": [],
+            "opaque": NonSerializableMetadata(),
+        },
+        discovered_tools=("get_entities", "get_lineage", "list_schema_fields"),
+        observed_at=datetime(2026, 7, 25, 14, 0, tzinfo=timezone.utc),
+    )
+
+    with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
+        build_agent_data_context_from_snapshot(snapshot)
+
+    assert exc_info.value.code == "AGENT_DATAHUB_SNAPSHOT_INVALID"
+    rendered = _render_exception(exc_info.value)
+    assert _SECRET not in rendered
+    assert _ENDPOINT not in rendered
+    assert "NonSerializableMetadata" not in rendered
     assert exc_info.value.__cause__ is None
     assert exc_info.value.__suppress_context__ is True
 
