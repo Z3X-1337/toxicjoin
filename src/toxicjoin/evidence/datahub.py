@@ -102,24 +102,26 @@ class DataHubEvidenceBundle(StrictModel):
 
 
 def datahub_source_identity(settings: DataHubMcpSettings) -> str:
-    """Return a redacted deterministic identity for the configured DataHub read path.
+    """Return a redacted commitment to the configured DataHub read path.
 
-    This identifies the configured GMS endpoint plus MCP launcher command/arguments. It
-    deliberately excludes the GMS token. It is a configuration identity, not remote-code
-    attestation or a claim that the endpoint is objectively truthful.
+    The identity commits to the normalized GMS endpoint plus MCP launcher command and
+    arguments while exposing neither the endpoint nor the GMS token. It is a local
+    configuration identity, not remote-code attestation or proof that DataHub metadata is
+    objectively true.
     """
 
     endpoint = _normalize_gms_endpoint(settings.gms_url)
+    endpoint_sha256 = canonical_json_sha256({"gms_endpoint": endpoint})
     launcher_sha256 = canonical_json_sha256(
         {
             "command": settings.command,
             "args": list(settings.args),
         }
     )
-    identity = f"datahub-mcp:{endpoint}|launcher_sha256={launcher_sha256}"
-    if len(identity) > 2048:
-        raise DataHubEvidenceError("DataHub evidence source identity exceeds model limit")
-    return identity
+    return (
+        "datahub-mcp:"
+        f"gms_sha256={endpoint_sha256}|launcher_sha256={launcher_sha256}"
+    )
 
 
 def build_datahub_evidence_bundle(
