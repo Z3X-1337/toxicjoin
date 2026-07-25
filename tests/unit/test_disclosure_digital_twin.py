@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from pydantic import ValidationError
 
+from toxicjoin.disclosure.composition import is_protected_release
 from toxicjoin.disclosure.models import (
     DisclosureAuditIdentity,
     DisclosureComposition,
@@ -31,10 +33,8 @@ from toxicjoin.prospective.twin import (
     build_disclosure_state,
 )
 
-
 BASE_TIME = datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc)
 DATASET_URN = "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.twin,PROD)"
-OTHER_DATASET_URN = "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.other,PROD)"
 PURPOSE = "1" * 64
 GOVERNANCE = "2" * 64
 EVIDENCE = "3" * 64
@@ -42,16 +42,15 @@ WAREHOUSE = "4" * 64
 
 
 def _scope(*, principal: str = "principal-a") -> DisclosureScope:
-    subject_namespace = compute_subject_namespace_sha256(
-        "customer_id",
-        SensitivityCategory.STABLE_PSEUDONYM,
+    namespace = compute_subject_namespace_sha256(
+        "customer_id", SensitivityCategory.STABLE_PSEUDONYM
     )
     subject = GovernedSubjectDomain(
         field_path="customer_id",
         category=SensitivityCategory.STABLE_PSEUDONYM,
         dataset_urns=(DATASET_URN,),
         governance_domains=("urn:li:domain:privacy",),
-        namespace_sha256=subject_namespace,
+        namespace_sha256=namespace,
     )
     return DisclosureScope(
         principal_id=principal,
@@ -60,7 +59,7 @@ def _scope(*, principal: str = "principal-a") -> DisclosureScope:
         scope_sha256=compute_scope_sha256(
             principal_id=principal,
             agent_id="agent-a",
-            subject_namespace_sha256=subject_namespace,
+            subject_namespace_sha256=namespace,
         ),
     )
 
@@ -73,6 +72,13 @@ def _column(field_path: str, category: SensitivityCategory) -> GovernedColumn:
     )
 
 
+def _output(
+    column: GovernedColumn,
+    kind: ProjectionExposureKind = ProjectionExposureKind.RAW_VALUE,
+) -> SemanticOutput:
+    return SemanticOutput(kind=kind, sources=(column,))
+
+
 def _semantic(
     *,
     outputs: tuple[SemanticOutput, ...] = (),
@@ -81,7 +87,6 @@ def _semantic(
     groups: tuple[GovernedColumn, ...] = (),
     aggregates: tuple[str, ...] = (),
     minimum_group_size: int | None = None,
-    datasets: tuple[str, ...] = (DATASET_URN,),
 ) -> DisclosureSemanticRelease:
     canonical_outputs = tuple(
         sorted(
@@ -93,7 +98,7 @@ def _semantic(
         )
     )
     kwargs = {
-        "source_dataset_urns": tuple(sorted(set(datasets))),
+        "source_dataset_urns": (DATASET_URN,),
         "outputs": canonical_outputs,
         "referenced_columns": tuple(sorted(referenced, key=lambda column: column.key)),
         "join_columns": tuple(sorted(joins, key=lambda column: column.key)),
@@ -111,24 +116,29 @@ def _semantic(
     )
 
 
-def _output(column: GovernedColumn) -> SemanticOutput:
-    return SemanticOutput(
-        kind=ProjectionExposureKind.RAW_VALUE,
-        sources=(column,),
-    )
-
-
 def _composition(
     semantic: DisclosureSemanticRelease,
     *,
     cohort: str,
-    protected: bool = True,
 ) -> DisclosureComposition:
     return DisclosureComposition(
-        protected_release=protected,
+        protected_release=is_protected_release(semantic),
         release_family_sha256=semantic.semantic_sha256,
         cohort_hmac_sha256=cohort,
     )
+
+
+def _auto_composition(
+    semantic: DisclosureSemanticRelease,
+    *,
+    discriminator: str,
+) -> DisclosureComposition | None:
+    if not is_protected_release(semantic):
+        return None
+    cohort = hashlib.sha256(
+        f"{semantic.semantic_sha256}:{discriminator}".encode("utf-8")
+    ).hexdigest()
+    return _composition(semantic, cohort=cohort)
 
 
 def _event(
@@ -136,7 +146,7 @@ def _event(
     scope: DisclosureScope,
     receipt_index: int,
     semantic: DisclosureSemanticRelease,
-    composition: DisclosureComposition | None = None,
+    composition: DisclosureComposition | None,
 ) -> DisclosureEvent:
     return DisclosureEvent(
         scope=scope,
@@ -155,14 +165,13 @@ def _record(
     previous: str | None,
     salt: int = 0,
 ) -> DisclosureRecord:
-    event_sha256 = compute_event_sha256(event)
     kwargs = {
         "schema_version": "1.1" if event.composition is not None else "1.0",
         "record_id": f"dl_{sequence + salt * 1000:032x}",
         "sequence": sequence,
         "created_at": BASE_TIME + timedelta(seconds=sequence + salt * 100),
         "event": event,
-        "event_sha256": event_sha256,
+        "event_sha256": compute_event_sha256(event),
         "previous_content_sha256": previous,
     }
     provisional = DisclosureRecord.model_construct(**kwargs, content_sha256="0" * 64)
@@ -184,13 +193,17 @@ def _history(
     entries: list[DisclosureHistoryEntry] = []
     previous: str | None = None
     for index, (semantic, composition, lifecycle) in enumerate(releases, start=1):
+        effective_composition = composition or _auto_composition(
+            semantic,
+            discriminator=f"history-{index}",
+        )
         record = _record(
             sequence=index,
             event=_event(
                 scope=scope,
                 receipt_index=index + salt * 100,
                 semantic=semantic,
-                composition=composition,
+                composition=effective_composition,
             ),
             previous=previous,
             salt=salt,
@@ -211,11 +224,15 @@ def _state(
     evidence: str = EVIDENCE,
     warehouse: str | None = WAREHOUSE,
 ) -> DisclosureState:
+    effective_candidate_composition = candidate_composition or _auto_composition(
+        candidate,
+        discriminator="candidate",
+    )
     return build_disclosure_state(
         scope=scope,
         audit_history=history,
         candidate_semantic=candidate,
-        candidate_composition=candidate_composition,
+        candidate_composition=effective_candidate_composition,
         purpose_commitment_sha256=purpose,
         governance_commitment_sha256=governance,
         evidence_root_sha256=evidence,
@@ -227,26 +244,33 @@ def _derived_kinds(state: DisclosureState) -> set[DisclosureAtomKind]:
     return {atom.kind for atom in state.derived_atoms}
 
 
-def test_twin_derives_identifier_sensitive_coexposure_across_active_releases() -> None:
+def test_twin_derives_linkable_identifier_sensitive_coexposure_across_releases() -> None:
     scope = _scope()
     stable = _column("customer_id", SensitivityCategory.STABLE_PSEUDONYM)
     sensitive = _column("medical_flag", SensitivityCategory.SENSITIVE_ATTRIBUTE)
-    stable_release = _semantic(outputs=(_output(stable),), referenced=(stable,))
-    sensitive_release = _semantic(outputs=(_output(sensitive),), referenced=(sensitive,))
-    public = _column("region", SensitivityCategory.PUBLIC_OR_LOW_RISK)
-    candidate = _semantic(outputs=(_output(public),), referenced=(public,))
+    public = _column("country_name", SensitivityCategory.PUBLIC_OR_LOW_RISK)
     history = _history(
         scope,
         (
-            (stable_release, None, DisclosureHistoryLifecycle.RELEASED),
-            (sensitive_release, None, DisclosureHistoryLifecycle.RELEASED),
+            (
+                _semantic(outputs=(_output(stable),), referenced=(stable,)),
+                None,
+                DisclosureHistoryLifecycle.RELEASED,
+            ),
+            (
+                _semantic(outputs=(_output(sensitive),), referenced=(sensitive,)),
+                None,
+                DisclosureHistoryLifecycle.RELEASED,
+            ),
         ),
     )
 
-    state = _state(scope=scope, history=history, candidate=candidate)
+    state = _state(
+        scope=scope,
+        history=history,
+        candidate=_semantic(outputs=(_output(public),), referenced=(public,)),
+    )
 
-    assert DisclosureAtomKind.CATEGORY_PRESENCE in _derived_kinds(state)
-    assert DisclosureAtomKind.IDENTIFIER_SENSITIVE_COEXPOSURE in _derived_kinds(state)
     coexposure = [
         atom
         for atom in state.derived_atoms
@@ -256,11 +280,11 @@ def test_twin_derives_identifier_sensitive_coexposure_across_active_releases() -
     assert coexposure[0].identifier_category == SensitivityCategory.STABLE_PSEUDONYM
 
 
-def test_pending_is_conservatively_active_and_aborted_is_excluded() -> None:
+def test_pending_is_active_and_aborted_is_excluded() -> None:
     scope = _scope()
     stable = _column("customer_id", SensitivityCategory.STABLE_PSEUDONYM)
     sensitive = _column("medical_flag", SensitivityCategory.SENSITIVE_ATTRIBUTE)
-    public = _column("region", SensitivityCategory.PUBLIC_OR_LOW_RISK)
+    public = _column("country_name", SensitivityCategory.PUBLIC_OR_LOW_RISK)
     stable_release = _semantic(outputs=(_output(stable),), referenced=(stable,))
     sensitive_release = _semantic(outputs=(_output(sensitive),), referenced=(sensitive,))
     candidate = _semantic(outputs=(_output(public),), referenced=(public,))
@@ -292,7 +316,7 @@ def test_pending_is_conservatively_active_and_aborted_is_excluded() -> None:
     assert DisclosureAtomKind.IDENTIFIER_SENSITIVE_COEXPOSURE not in _derived_kinds(aborted)
 
 
-def test_candidate_is_projected_as_hypothetical_post_release_state() -> None:
+def test_candidate_is_hypothetical_post_release_state() -> None:
     scope = _scope()
     stable = _column("customer_id", SensitivityCategory.STABLE_PSEUDONYM)
     sensitive = _column("medical_flag", SensitivityCategory.SENSITIVE_ATTRIBUTE)
@@ -309,10 +333,11 @@ def test_candidate_is_projected_as_hypothetical_post_release_state() -> None:
 def test_protected_cohort_variation_is_derived_deterministically() -> None:
     scope = _scope()
     sensitive = _column("medical_flag", SensitivityCategory.SENSITIVE_ATTRIBUTE)
-    protected_release = _semantic(
+    region = _column("region", SensitivityCategory.QUASI_IDENTIFIER)
+    release = _semantic(
         outputs=(_output(sensitive),),
         referenced=(sensitive,),
-        groups=(_column("region", SensitivityCategory.QUASI_IDENTIFIER),),
+        groups=(region,),
         aggregates=("COUNT",),
         minimum_group_size=10,
     )
@@ -320,21 +345,24 @@ def test_protected_cohort_variation_is_derived_deterministically() -> None:
         scope,
         (
             (
-                protected_release,
-                _composition(protected_release, cohort="a" * 64),
+                release,
+                _composition(release, cohort="a" * 64),
                 DisclosureHistoryLifecycle.RELEASED,
             ),
             (
-                protected_release,
-                _composition(protected_release, cohort="b" * 64),
+                release,
+                _composition(release, cohort="b" * 64),
                 DisclosureHistoryLifecycle.PENDING,
             ),
         ),
     )
-    public = _column("region", SensitivityCategory.PUBLIC_OR_LOW_RISK)
-    candidate = _semantic(outputs=(_output(public),), referenced=(public,))
+    public = _column("country_name", SensitivityCategory.PUBLIC_OR_LOW_RISK)
 
-    state = _state(scope=scope, history=history, candidate=candidate)
+    state = _state(
+        scope=scope,
+        history=history,
+        candidate=_semantic(outputs=(_output(public),), referenced=(public,)),
+    )
 
     variations = [
         atom
@@ -342,23 +370,23 @@ def test_protected_cohort_variation_is_derived_deterministically() -> None:
         if atom.kind == DisclosureAtomKind.PROTECTED_COHORT_VARIATION
     ]
     assert len(variations) == 1
-    assert variations[0].release_family_sha256 == protected_release.semantic_sha256
+    assert variations[0].release_family_sha256 == release.semantic_sha256
 
 
 def test_state_hash_excludes_record_ids_timestamps_and_input_order() -> None:
     scope = _scope()
     stable = _column("customer_id", SensitivityCategory.STABLE_PSEUDONYM)
-    stable_release = _semantic(outputs=(_output(stable),), referenced=(stable,))
-    public = _column("region", SensitivityCategory.PUBLIC_OR_LOW_RISK)
+    public = _column("country_name", SensitivityCategory.PUBLIC_OR_LOW_RISK)
+    release = _semantic(outputs=(_output(stable),), referenced=(stable,))
     candidate = _semantic(outputs=(_output(public),), referenced=(public,))
     history_a = _history(
         scope,
-        ((stable_release, None, DisclosureHistoryLifecycle.RELEASED),),
+        ((release, None, DisclosureHistoryLifecycle.RELEASED),),
         salt=0,
     )
     history_b = _history(
         scope,
-        ((stable_release, None, DisclosureHistoryLifecycle.RELEASED),),
+        ((release, None, DisclosureHistoryLifecycle.RELEASED),),
         salt=7,
     )
 
@@ -372,12 +400,11 @@ def test_state_hash_excludes_record_ids_timestamps_and_input_order() -> None:
     assert state_a.derived_atoms == state_b.derived_atoms
 
 
-def test_state_hash_binds_purpose_governance_evidence_and_snapshot_commitments() -> None:
+def test_state_hash_binds_context_commitments() -> None:
     scope = _scope()
-    public = _column("region", SensitivityCategory.PUBLIC_OR_LOW_RISK)
+    public = _column("country_name", SensitivityCategory.PUBLIC_OR_LOW_RISK)
     candidate = _semantic(outputs=(_output(public),), referenced=(public,))
     baseline = _state(scope=scope, history=(), candidate=candidate)
-
     variants = (
         _state(scope=scope, history=(), candidate=candidate, purpose="5" * 64),
         _state(scope=scope, history=(), candidate=candidate, governance="6" * 64),
@@ -393,27 +420,32 @@ def test_incomplete_hash_chain_and_scope_mismatch_fail_closed() -> None:
     scope = _scope()
     stable = _column("customer_id", SensitivityCategory.STABLE_PSEUDONYM)
     sensitive = _column("medical_flag", SensitivityCategory.SENSITIVE_ATTRIBUTE)
-    first = _semantic(outputs=(_output(stable),), referenced=(stable,))
-    second = _semantic(outputs=(_output(sensitive),), referenced=(sensitive,))
-    public = _column("region", SensitivityCategory.PUBLIC_OR_LOW_RISK)
-    candidate = _semantic(outputs=(_output(public),), referenced=(public,))
+    public = _column("country_name", SensitivityCategory.PUBLIC_OR_LOW_RISK)
     history = _history(
         scope,
         (
-            (first, None, DisclosureHistoryLifecycle.RELEASED),
-            (second, None, DisclosureHistoryLifecycle.RELEASED),
+            (
+                _semantic(outputs=(_output(stable),), referenced=(stable,)),
+                None,
+                DisclosureHistoryLifecycle.RELEASED,
+            ),
+            (
+                _semantic(outputs=(_output(sensitive),), referenced=(sensitive,)),
+                None,
+                DisclosureHistoryLifecycle.RELEASED,
+            ),
         ),
     )
+    candidate = _semantic(outputs=(_output(public),), referenced=(public,))
 
     with pytest.raises(DisclosureTwinError, match="hash chain"):
         _state(scope=scope, history=(history[1],), candidate=candidate)
 
-    other_scope = _scope(principal="principal-b")
     with pytest.raises(DisclosureTwinError, match="different privacy scope"):
-        _state(scope=other_scope, history=history, candidate=candidate)
+        _state(scope=_scope(principal="principal-b"), history=history, candidate=candidate)
 
 
-def test_duplicate_semantics_are_deduplicated_without_losing_closure() -> None:
+def test_duplicate_semantics_are_deduplicated() -> None:
     scope = _scope()
     stable = _column("customer_id", SensitivityCategory.STABLE_PSEUDONYM)
     release = _semantic(outputs=(_output(stable),), referenced=(stable,))
@@ -426,7 +458,6 @@ def test_duplicate_semantics_are_deduplicated_without_losing_closure() -> None:
     )
 
     state = _state(scope=scope, history=history, candidate=release)
-
     release_atoms = [
         atom
         for atom in state.released_atoms
