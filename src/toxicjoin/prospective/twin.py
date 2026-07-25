@@ -9,8 +9,7 @@ projected as active knowledge to preserve the existing no-race privacy semantics
 from __future__ import annotations
 
 from enum import StrEnum
-from itertools import combinations
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
@@ -27,9 +26,21 @@ from toxicjoin.models import ProjectionExposureKind, SensitivityCategory, Strict
 _HASH_PATTERN = r"^[0-9a-f]{64}$"
 _TWIN_MODEL_VERSION = "0.1.0"
 _INFERENCE_VERSION = "0.1.0"
+_MAX_STATE_ATOMS = 4096
+_MAX_INFERENCE_RULES = 8192
+AtomSha256 = Annotated[str, Field(pattern=_HASH_PATTERN)]
 _IDENTIFIER_CATEGORIES = {
     SensitivityCategory.DIRECT_IDENTIFIER,
     SensitivityCategory.STABLE_PSEUDONYM,
+}
+_REVEALING_OUTPUT_KINDS = {
+    ProjectionExposureKind.RAW_VALUE,
+    ProjectionExposureKind.TRANSFORMED_RAW_VALUE,
+    ProjectionExposureKind.GROUP_KEY,
+    ProjectionExposureKind.AGGREGATE_OPERAND,
+    ProjectionExposureKind.AGGREGATE_VALUE,
+    ProjectionExposureKind.CONDITIONAL_AGGREGATE,
+    ProjectionExposureKind.NESTED_SCOPE,
 }
 
 
@@ -172,7 +183,7 @@ class DisclosureInferenceRule(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     inference_version: Literal["0.1.0"] = _INFERENCE_VERSION
     family: DisclosureInferenceRuleFamily
-    antecedent_atom_sha256s: tuple[str, ...] = Field(min_length=1, max_length=16)
+    antecedent_atom_sha256s: tuple[AtomSha256, ...] = Field(min_length=1, max_length=16)
     consequent: DisclosureAtom
     rule_sha256: str = Field(pattern=_HASH_PATTERN)
 
@@ -225,8 +236,8 @@ class DisclosureState(StrictModel):
     governance_commitment_sha256: str = Field(pattern=_HASH_PATTERN)
     evidence_root_sha256: str = Field(pattern=_HASH_PATTERN)
     warehouse_snapshot_sha256: str | None = Field(default=None, pattern=_HASH_PATTERN)
-    released_atoms: tuple[DisclosureAtom, ...]
-    derived_atoms: tuple[DisclosureAtom, ...]
+    released_atoms: tuple[DisclosureAtom, ...] = Field(min_length=1, max_length=_MAX_STATE_ATOMS)
+    derived_atoms: tuple[DisclosureAtom, ...] = Field(default=(), max_length=_MAX_STATE_ATOMS)
     inference_rules_sha256: str = Field(pattern=_HASH_PATTERN)
     state_sha256: str = Field(pattern=_HASH_PATTERN)
 
@@ -284,6 +295,8 @@ def build_disclosure_state(
     for atom in direct_atoms_for_release(candidate_semantic, candidate_composition):
         direct_atoms[atom.atom_sha256] = atom
 
+    if len(direct_atoms) > _MAX_STATE_ATOMS:
+        raise DisclosureTwinError("disclosure state direct-atom budget exceeded")
     released_atoms = tuple(direct_atoms[key] for key in sorted(direct_atoms))
     rules = instantiate_disclosure_inference_rules(released_atoms)
     derived_atoms = least_fixed_point(released_atoms, rules)
@@ -402,10 +415,14 @@ def instantiate_disclosure_inference_rules(
     rules: dict[str, DisclosureInferenceRule] = {}
     category_atoms: dict[SensitivityCategory, DisclosureAtom] = {}
 
-    column_atoms = tuple(
-        atom for atom in released_atoms if atom.kind == DisclosureAtomKind.COLUMN_EXPOSURE
+    revealing_outputs = tuple(
+        atom
+        for atom in released_atoms
+        if atom.kind == DisclosureAtomKind.COLUMN_EXPOSURE
+        and atom.column_role == ColumnExposureRole.OUTPUT
+        and atom.exposure_kind in _REVEALING_OUTPUT_KINDS
     )
-    for atom in column_atoms:
+    for atom in revealing_outputs:
         assert atom.category is not None
         consequent = category_atoms.setdefault(
             atom.category,
@@ -435,27 +452,34 @@ def instantiate_disclosure_inference_rules(
             )
             rules[rule.rule_sha256] = rule
 
-    cohorts_by_family: dict[str, list[DisclosureAtom]] = {}
+    cohorts_by_family: dict[str, dict[str, DisclosureAtom]] = {}
     for atom in released_atoms:
         if atom.kind != DisclosureAtomKind.COHORT or atom.protected_release is not True:
             continue
         assert atom.release_family_sha256 is not None
-        cohorts_by_family.setdefault(atom.release_family_sha256, []).append(atom)
-    for family, cohort_atoms in sorted(cohorts_by_family.items()):
-        for left, right in combinations(sorted(cohort_atoms, key=lambda atom: atom.atom_sha256), 2):
-            if left.cohort_hmac_sha256 == right.cohort_hmac_sha256:
-                continue
-            consequent = _build_atom(
-                DisclosureAtomKind.PROTECTED_COHORT_VARIATION,
-                release_family_sha256=family,
-            )
-            rule = _build_rule(
-                DisclosureInferenceRuleFamily.PROTECTED_COHORT_VARIATION,
-                antecedents=(left.atom_sha256, right.atom_sha256),
-                consequent=consequent,
-            )
-            rules[rule.rule_sha256] = rule
+        assert atom.cohort_hmac_sha256 is not None
+        family = cohorts_by_family.setdefault(atom.release_family_sha256, {})
+        existing = family.get(atom.cohort_hmac_sha256)
+        if existing is None or atom.atom_sha256 < existing.atom_sha256:
+            family[atom.cohort_hmac_sha256] = atom
+    for family, cohorts in sorted(cohorts_by_family.items()):
+        distinct = tuple(sorted(cohorts.values(), key=lambda atom: atom.atom_sha256))
+        if len(distinct) < 2:
+            continue
+        left, right = distinct[:2]
+        consequent = _build_atom(
+            DisclosureAtomKind.PROTECTED_COHORT_VARIATION,
+            release_family_sha256=family,
+        )
+        rule = _build_rule(
+            DisclosureInferenceRuleFamily.PROTECTED_COHORT_VARIATION,
+            antecedents=(left.atom_sha256, right.atom_sha256),
+            consequent=consequent,
+        )
+        rules[rule.rule_sha256] = rule
 
+    if len(rules) > _MAX_INFERENCE_RULES:
+        raise DisclosureTwinError("disclosure inference-rule budget exceeded")
     return tuple(rules[key] for key in sorted(rules))
 
 
@@ -482,19 +506,17 @@ def least_fixed_point(
                 known[consequent.atom_sha256] = consequent
                 changed = True
     derived = [atom for digest, atom in known.items() if digest not in seed_hashes]
+    if len(derived) > _MAX_STATE_ATOMS:
+        raise DisclosureTwinError("disclosure state derived-atom budget exceeded")
     return tuple(sorted(derived, key=lambda atom: atom.atom_sha256))
 
 
 def compute_disclosure_atom_sha256(atom: DisclosureAtom) -> str:
-    return canonical_json_sha256(
-        atom.model_dump(mode="json", exclude={"atom_sha256"})
-    )
+    return canonical_json_sha256(atom.model_dump(mode="json", exclude={"atom_sha256"}))
 
 
 def compute_disclosure_inference_rule_sha256(rule: DisclosureInferenceRule) -> str:
-    return canonical_json_sha256(
-        rule.model_dump(mode="json", exclude={"rule_sha256"})
-    )
+    return canonical_json_sha256(rule.model_dump(mode="json", exclude={"rule_sha256"}))
 
 
 def compute_inference_rules_sha256(rules: tuple[DisclosureInferenceRule, ...]) -> str:
