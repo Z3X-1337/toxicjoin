@@ -1,0 +1,51 @@
+name: P4 Hosted Replay Tool Lock
+
+on:
+  pull_request:
+    paths:
+      - "package.json"
+      - ".github/workflows/p4-hosted-replay-lock.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p4-hosted-replay-lock-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22.16.0"
+      - name: Generate deterministic root npm lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --ignore-scripts
+          npm audit --package-lock-only --json > npm-audit-hosted-replay.json
+          node - <<'JS'
+          const fs = require('fs');
+          const audit = JSON.parse(fs.readFileSync('npm-audit-hosted-replay.json', 'utf8'));
+          const vulns = audit.metadata?.vulnerabilities ?? {};
+          if ((vulns.total ?? 0) !== 0) {
+            throw new Error(`Hosted replay lock has vulnerabilities: ${JSON.stringify(vulns)}`);
+          }
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          if (lock.packages?.['node_modules/playwright-core']?.version !== '1.54.1') {
+            throw new Error('playwright-core lock mismatch');
+          }
+          JS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p4-hosted-replay-lock
+          path: |
+            package-lock.json
+            npm-audit-hosted-replay.json
+          if-no-files-found: error
+          retention-days: 7
