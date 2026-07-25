@@ -1,5 +1,12 @@
 """Evidence-aware governance primitives for ToxicJoin vNext."""
 
+from toxicjoin.evidence.datahub import (
+    DataHubEvidenceBundle,
+    DataHubEvidenceError,
+    build_datahub_evidence_bundle,
+    compute_datahub_evidence_root,
+    datahub_source_identity,
+)
 from toxicjoin.evidence.models import (
     DerivationKind,
     EvidenceClaim,
@@ -19,6 +26,8 @@ from toxicjoin.evidence.resolver import (
 )
 
 __all__ = [
+    "DataHubEvidenceBundle",
+    "DataHubEvidenceError",
     "DerivationKind",
     "EvidenceClaim",
     "EvidencePolicy",
@@ -27,8 +36,11 @@ __all__ = [
     "EvidenceRule",
     "EvidenceSource",
     "EvidenceTrustState",
+    "build_datahub_evidence_bundle",
     "build_evidence_claim",
     "build_evidence_resolution",
+    "compute_datahub_evidence_root",
+    "datahub_source_identity",
     "default_evidence_policy",
     "require_trusted",
     "resolve_evidence",
