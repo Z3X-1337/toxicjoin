@@ -1,5 +1,11 @@
 """Counterfactual Privacy Cut Compiler (CPCC) primitives."""
 
+from toxicjoin.repair.compiler import (
+    CompiledCpccRepair,
+    CpccCompileError,
+    compile_cpcc_candidate,
+    compute_compiled_repair_sha256,
+)
 from toxicjoin.repair.cpcc import (
     CpccCandidateValidator,
     CpccError,
@@ -23,17 +29,25 @@ from toxicjoin.repair.models import (
     TrustedQiTransformation,
     TrustedSensitiveAggregate,
 )
+from toxicjoin.repair.validator import (
+    CpccFullValidationError,
+    DataHubCpccCandidateValidator,
+)
 
 __all__ = [
+    "CompiledCpccRepair",
     "CpccCandidate",
     "CpccCandidateValidation",
     "CpccCandidateValidator",
+    "CpccCompileError",
     "CpccError",
+    "CpccFullValidationError",
     "CpccRemediationSpace",
     "CpccResult",
     "CpccStatus",
     "CpccValidationOutcome",
     "CpccValidationStage",
+    "DataHubCpccCandidateValidator",
     "RemediationAction",
     "RemediationCost",
     "RemediationOperator",
@@ -42,6 +56,8 @@ __all__ = [
     "build_cpcc_candidate_validation",
     "build_remediation_action",
     "build_remediation_space",
+    "compile_cpcc_candidate",
+    "compute_compiled_repair_sha256",
     "enumerate_cpcc_candidates",
     "run_cpcc",
 ]
