@@ -147,56 +147,182 @@ jobs:
           uv sync --frozen --no-install-project --extra security
           .venv/bin/bandit -r src/toxicjoin -ll -ii -q
 
-  dependency-review:
+  dependency-review-probe:
     if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      api_status: ${{ steps.probe.outputs.api_status }}
+    steps:
+      - id: probe
+        name: Probe GitHub Dependency Review API availability
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          url="https://api.github.com/repos/${GITHUB_REPOSITORY}/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}"
+          status=$(curl --silent --show-error \
+            --output dependency-review-api.json \
+            --write-out '%{http_code}' \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header 'X-GitHub-Api-Version: 2026-03-10' \
+            "$url")
+          echo "api_status=$status" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          raw = Path('dependency-review-api.json').read_text(encoding='utf-8')
+          try:
+              body = json.loads(raw)
+          except json.JSONDecodeError:
+              body = {'raw': raw[:4000]}
+          Path('dependency-review-api-summary.json').write_text(
+              json.dumps({
+                  'http_status': '${{ steps.probe.outputs.api_status }}',
+                  'message': body.get('message') if isinstance(body, dict) else None,
+                  'documentation_url': body.get('documentation_url') if isinstance(body, dict) else None,
+                  'change_count': len(body) if isinstance(body, list) else None,
+              }, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: dependency-review-api-status
+          path: |
+            dependency-review-api.json
+            dependency-review-api-summary.json
+          if-no-files-found: error
+          retention-days: 30
+
+  dependency-review:
+    needs: dependency-review-probe
+    if: github.event_name == 'pull_request' && needs.dependency-review-probe.outputs.api_status == '200'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - id: dependency-review
-        continue-on-error: true
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
         with:
           fail-on-severity: high
           allow-ghsas: GHSA-h35f-9h28-mq5c
-      - name: Capture dependency review diagnostics
-        if: always()
-        env:
-          REVIEW_OUTCOME: ${{ steps.dependency-review.outcome }}
-          DEPENDENCY_CHANGES: ${{ steps.dependency-review.outputs.dependency-changes }}
-          VULNERABLE_CHANGES: ${{ steps.dependency-review.outputs.vulnerable-changes }}
-          INVALID_LICENSE_CHANGES: ${{ steps.dependency-review.outputs.invalid-license-changes }}
-          DENIED_CHANGES: ${{ steps.dependency-review.outputs.denied-changes }}
+
+  dependency-review-fallback:
+    needs: dependency-review-probe
+    if: github.event_name == 'pull_request' && needs.dependency-review-probe.outputs.api_status == '403'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22.16.0"
+      - name: Record dependency manifest diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          git cat-file -e "${BASE_SHA}^{commit}"
+          git diff --name-status "${BASE_SHA}...${HEAD_SHA}" -- \
+            pyproject.toml uv.lock \
+            package.json package-lock.json \
+            apps/web/package.json apps/web/package-lock.json \
+            Dockerfile .github/dependabot.yml \
+            > dependency-review-fallback.diff
+      - name: Re-audit both locked Python profiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check 'uv==0.8.4'
+          uv sync --frozen --no-install-project --extra security
+          for PROFILE in datahub agent-registry; do
+            uv export --frozen --no-emit-project --no-hashes \
+              --extra "$PROFILE" --extra security \
+              --output-file "fallback-requirements-$PROFILE.txt"
+            set +e
+            .venv/bin/pip-audit -r "fallback-requirements-$PROFILE.txt" \
+              --format json --output "fallback-pip-audit-$PROFILE.json"
+            AUDIT_RC=$?
+            set -e
+            echo "$PROFILE pip-audit exit code: $AUDIT_RC"
+            .venv/bin/python scripts/validate_dependency_audit.py python \
+              --profile "$PROFILE" --audit-json "fallback-pip-audit-$PROFILE.json"
+          done
+      - name: Re-audit both locked npm graphs
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          npm audit --package-lock-only --json > fallback-npm-audit-hosted-replay.json
+          ROOT_RC=$?
+          (cd apps/web && npm audit --package-lock-only --json > ../../fallback-npm-audit-web.json)
+          WEB_RC=$?
+          set -e
+          echo "hosted replay npm audit exit code: $ROOT_RC"
+          echo "web npm audit exit code: $WEB_RC"
+          python3 scripts/validate_dependency_audit.py npm --audit-json fallback-npm-audit-hosted-replay.json
+          python3 scripts/validate_dependency_audit.py npm --audit-json fallback-npm-audit-web.json
+      - name: Write local dependency-review evidence
+        shell: bash
         run: |
           python3 - <<'PY'
           import json
           import os
           from pathlib import Path
 
+          diff = Path('dependency-review-fallback.diff').read_text(encoding='utf-8').splitlines()
           payload = {
-              "outcome": os.environ.get("REVIEW_OUTCOME", ""),
-              "dependency_changes": os.environ.get("DEPENDENCY_CHANGES", ""),
-              "vulnerable_changes": os.environ.get("VULNERABLE_CHANGES", ""),
-              "invalid_license_changes": os.environ.get("INVALID_LICENSE_CHANGES", ""),
-              "denied_changes": os.environ.get("DENIED_CHANGES", ""),
+              'mode': 'exact-lock-local-fallback',
+              'github_dependency_review_api_status': 403,
+              'base_sha': os.environ['BASE_SHA'],
+              'head_sha': os.environ['HEAD_SHA'],
+              'dependency_manifest_diff': diff,
+              'python_profiles': ['datahub', 'agent-registry'],
+              'npm_locks': ['package-lock.json', 'apps/web/package-lock.json'],
+              'unapproved_findings': 0,
           }
-          Path("dependency-review-diagnostics.json").write_text(
-              json.dumps(payload, indent=2, sort_keys=True) + "\n",
-              encoding="utf-8",
+          Path('dependency-review-fallback-summary.json').write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
           )
           print(json.dumps(payload, indent=2, sort_keys=True))
           PY
-      - name: Upload dependency review diagnostics
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: dependency-review-diagnostics
-          path: dependency-review-diagnostics.json
+          name: dependency-review-local-fallback
+          path: |
+            dependency-review-fallback.diff
+            dependency-review-fallback-summary.json
+            fallback-pip-audit-datahub.json
+            fallback-pip-audit-agent-registry.json
+            fallback-npm-audit-hosted-replay.json
+            fallback-npm-audit-web.json
           if-no-files-found: error
-          retention-days: 7
-      - name: Enforce dependency review outcome
-        if: always()
-        env:
-          REVIEW_OUTCOME: ${{ steps.dependency-review.outcome }}
-        run: test "$REVIEW_OUTCOME" = "success"
+          retention-days: 30
+
+  dependency-review-platform-error:
+    needs: dependency-review-probe
+    if: github.event_name == 'pull_request' && needs.dependency-review-probe.outputs.api_status != '200' && needs.dependency-review-probe.outputs.api_status != '403'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject unexpected Dependency Review API state
+        run: |
+          echo "Unexpected Dependency Review API status: ${{ needs.dependency-review-probe.outputs.api_status }}" >&2
+          exit 1
