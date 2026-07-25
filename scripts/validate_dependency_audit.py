@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EXCEPTIONS = ROOT / "docs/security/p4-dependency-risk-exceptions.json"
+_ALLOWED_PIP_BOOTSTRAP = "python -m pip install --disable-pip-version-check 'uv==0.8.4'"
 
 
 def load(path: str | Path) -> dict:
@@ -64,24 +65,48 @@ def validate_python(profile: str, audit_json: str) -> None:
             accepted.append({"finding": finding, "exception": match["id"]})
 
     if rejected:
-        raise SystemExit("Unapproved Python dependency findings: " + json.dumps(rejected, sort_keys=True))
+        raise SystemExit(
+            "Unapproved Python dependency findings: " + json.dumps(rejected, sort_keys=True)
+        )
     print(json.dumps({"profile": profile, "accepted_exceptions": accepted}, sort_keys=True))
 
 
 def validate_npm(audit_json: str) -> None:
     payload = load(audit_json)
     vulnerabilities = payload.get("vulnerabilities", {})
-    total = payload.get("metadata", {}).get("vulnerabilities", {}).get("total", len(vulnerabilities))
+    total = payload.get("metadata", {}).get("vulnerabilities", {}).get(
+        "total", len(vulnerabilities)
+    )
     if vulnerabilities or total:
-        raise SystemExit("npm audit findings are not allowed: " + json.dumps(vulnerabilities, sort_keys=True))
+        raise SystemExit(
+            "npm audit findings are not allowed: " + json.dumps(vulnerabilities, sort_keys=True)
+        )
     print("npm audit clean")
 
 
+def _validate_workflow_installs(path: Path, text: str) -> None:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if re.search(r"\bpip\s+install\b", stripped):
+            if stripped != _ALLOWED_PIP_BOOTSTRAP:
+                raise SystemExit(
+                    f"Unapproved pip bootstrap/install remains in {path.relative_to(ROOT)}: {stripped}"
+                )
+        if "npm install" in stripped:
+            raise SystemExit(
+                f"Floating npm install remains in workflow: {path.relative_to(ROOT)}: {stripped}"
+            )
+
+
 def validate_static() -> None:
-    lock = ROOT / "uv.lock"
-    npm_lock = ROOT / "apps/web/package-lock.json"
-    if not lock.is_file() or not npm_lock.is_file():
-        raise SystemExit("Required lockfile missing")
+    required_locks = (
+        ROOT / "uv.lock",
+        ROOT / "package-lock.json",
+        ROOT / "apps/web/package-lock.json",
+    )
+    missing_locks = [str(path.relative_to(ROOT)) for path in required_locks if not path.is_file()]
+    if missing_locks:
+        raise SystemExit("Required lockfile missing: " + json.dumps(missing_locks))
 
     docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     from_lines = [line for line in docker.splitlines() if line.startswith("FROM ")]
@@ -100,16 +125,29 @@ def validate_static() -> None:
                 continue
             if not re.fullmatch(r"[0-9a-f]{40}", ref):
                 floating.append(f"{path.relative_to(ROOT)}:{target}@{ref}")
-        if "npm install" in text:
-            raise SystemExit(f"Floating npm install remains in workflow: {path.relative_to(ROOT)}")
-        if re.search(r"pip\s+install\s+-e\s+['\"]?\.\[", text):
-            raise SystemExit(f"Editable range install remains in workflow: {path.relative_to(ROOT)}")
+        _validate_workflow_installs(path, text)
     if floating:
         raise SystemExit("Floating GitHub Actions refs: " + json.dumps(floating))
 
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     if "uv sync --frozen --extra dev" not in ci or "npm ci --no-audit --no-fund" not in ci:
         raise SystemExit("CI does not consume committed dependency locks")
+
+    hosted = (ROOT / ".github/workflows/verify-hosted-replay.yml").read_text(encoding="utf-8")
+    if "npm ci --no-audit --no-fund" not in hosted:
+        raise SystemExit("Hosted Replay does not consume the root npm lock")
+
+    supply = (ROOT / ".github/workflows/supply-chain.yml").read_text(encoding="utf-8")
+    required_supply_tokens = (
+        "python-audit:",
+        "web-audit:",
+        "hosted-replay-audit:",
+        "bandit:",
+        "dependency-review:",
+    )
+    if any(token not in supply for token in required_supply_tokens):
+        raise SystemExit("Permanent supply-chain workflow is incomplete")
+
     print("Static supply-chain invariants verified")
 
 
