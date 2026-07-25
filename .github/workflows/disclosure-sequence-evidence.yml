@@ -55,7 +55,9 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install -e '.[dev]'
+          python -m pip install --disable-pip-version-check 'uv==0.8.4'
+          uv sync --frozen --extra dev
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Run cumulative disclosure security regressions
         shell: bash
