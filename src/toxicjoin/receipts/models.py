@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_serializer, field_validator, model_validator
 
 from toxicjoin.auth import RequestIdentity
 from toxicjoin.context.governance import GovernanceContextBinding
@@ -140,6 +140,12 @@ class DecisionReceipt(StrictModel):
         if value.tzinfo is None:
             raise ValueError("created_at must be timezone-aware")
         return value.astimezone(timezone.utc)
+
+    @field_serializer("created_at", when_used="json")
+    def serialize_created_at(self, value: datetime) -> str:
+        """Keep hashing and persisted JSON on one canonical UTC representation."""
+
+        return value.astimezone(timezone.utc).isoformat()
 
     @model_validator(mode="after")
     def lifecycle_is_consistent(self) -> "DecisionReceipt":
