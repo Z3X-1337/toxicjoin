@@ -15,14 +15,14 @@ ToxicJoin was built for **Build with DataHub: The Agent Hackathon**, in **Agents
 ## Judge quick path
 
 1. **See the product immediately:** https://toxicjoin-replay.vercel.app/
-   - This site is explicitly labeled **Deterministic Replay**.
-   - It is not presented as live DuckDB execution or a live DataHub mutation.
-2. **Run the executable path:** follow [`docs/judge-testing.md`](docs/judge-testing.md).
+   - Explicitly labeled **Deterministic Replay**.
+   - Not presented as live DuckDB execution or a live DataHub mutation.
+2. **Run the executable path:** [`docs/judge-testing.md`](docs/judge-testing.md).
 3. **Inspect sample outputs:** [`examples/`](examples/README.md).
-4. **Inspect the final exact-head evidence:** [`docs/evidence/release-candidate.md`](docs/evidence/release-candidate.md).
+4. **Inspect the final release evidence:** [`docs/evidence/release-candidate.md`](docs/evidence/release-candidate.md).
 5. **Inspect real DataHub OSS + MCP proof:** [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md).
 
-The shortest proof chain is:
+The proof chain is:
 
 ```text
 proposed SQL
@@ -37,23 +37,35 @@ proposed SQL
 
 ## Release state
 
-The release-frozen **runtime candidate** is:
+Final audited **runtime candidate**:
+
+```text
+e139fa99bd666505ed83a18188423722405695a2
+```
+
+Deterministic policy version: `0.2.0`.
+
+This candidate exists because the final repository hygiene pass found one real judge-facing defect: the package-owned benchmark summary served by `/api/benchmark/summary` still identified the pre-P0 policy `0.1.0` and an obsolete benchmark report hash. The correction changes only `src/toxicjoin/benchmark/evidence.py` so the running fixture judge reports the already-measured policy `0.2.0` benchmark evidence.
+
+On `e139fa99…`, CI, CodeQL, Supply Chain, Governance Dependency, Adversarial Mutation, and Compositional Ablation all passed again. The generated 30-case benchmark retained the same decisions, metrics, data fingerprint, and report SHA.
+
+The previous deep-security baseline:
 
 ```text
 fe4f8da2579e09bdbfb1d998b92dfea86549733b
 ```
 
-That commit was promoted to `main` by non-forced fast-forward after P4 software-supply-chain closure and P5 independent validation, so no new production SHA was introduced at promotion time. A later documentation/evidence synchronization may advance `main` with judge-facing files only; `fe4f8da2579e09bdbfb1d998b92dfea86549733b` remains the exact runtime tree that passed the release gates.
+is the commit that passed Live DataHub, Disclosure Sequence, Hosted Replay, the frozen external 24-task replay, and the 24/24 exact-image black-box pentest. The only later runtime-source change is the benchmark-evidence constant above; no parser, policy rule, rewriter, executor, verifier, authentication, disclosure, DataHub integration, dependency, Docker, or workflow behavior changed.
 
-Current deterministic policy version: `0.2.0`.
+Full provenance: [`docs/evidence/release-candidate.md`](docs/evidence/release-candidate.md).
 
-No features, refactors, dependency changes, or policy changes are authorized during release freeze unless a proven release blocker requires reopening the candidate.
+No feature, refactor, dependency, or policy changes are authorized during release freeze unless a proven release blocker requires reopening the candidate.
 
-## What makes ToxicJoin different
+## Why ToxicJoin is different
 
 A field can be acceptable in isolation while the **composition** is unsafe. ToxicJoin reasons over semantic exposure and lineage rather than checking only column names independently.
 
-It distinguishes, among other things:
+It distinguishes:
 
 - raw and transformed raw values;
 - group keys;
@@ -69,7 +81,7 @@ ToxicJoin does **not** claim differential privacy, universal SQL repair, univers
 
 ## Flagship flow
 
-An analytics agent requests a churn-risk aggregate grouped by coarse region. The initial SQL lacks a trusted minimum distinct-subject threshold.
+An analytics agent requests a churn-risk aggregate grouped by coarse region. The proposed SQL lacks a trusted minimum distinct-subject threshold.
 
 ToxicJoin returns **REWRITE** and adds:
 
@@ -77,15 +89,15 @@ ToxicJoin returns **REWRITE** and adds:
 HAVING COUNT(DISTINCT c.customer_id) >= 20
 ```
 
-The rewritten SQL is not trusted just because ToxicJoin generated it. It is reparsed, regrounded, reevaluated, then independently verified. Only an effective **ALLOW** can execute.
+The rewritten SQL is not trusted merely because ToxicJoin generated it. It is reparsed, regrounded, reevaluated, authorized, executed read-only, and independently verified. Only an effective **ALLOW** can release accepted data.
 
 A separate individual-level composition of pseudonymous identity, quasi-identifiers, and a sensitive attribute returns **BLOCK before DuckDB execution**. A genuinely low-risk aggregate remains **ALLOW**.
 
 ## Real DataHub integration
 
-The final Live DataHub gate ran against real DataHub OSS and the official MCP Server on the exact release candidate.
+The deep-security baseline `fe4f8da…` passed the real DataHub OSS + official MCP gate. The later benchmark-summary correction does not touch the DataHub subsystem.
 
-The final seed created:
+The verified seed contains:
 
 - **5 datasets**;
 - **19 governed fields**;
@@ -93,21 +105,21 @@ The final seed created:
 - **7 glossary terms**;
 - **4 lineage writes**.
 
-The MCP verification uses a three-process authority split:
+The MCP verification uses three separated processes:
 
 ```text
 read-only MCP child
   -> governed entity/schema/lineage snapshot
   -> child closed
 isolated writer MCP child
-  -> ToxicJoin transport exposes only save_document
+  -> ToxicJoin effective surface = save_document only
   -> Decision written
   -> child closed
 fresh read-only MCP child
-  -> persisted Decision marker independently read back
+  -> persisted Decision independently read back
 ```
 
-The final spike schema is `1.3`. It verified three upstream lineage relationships, two lineage-bound fields, six normalized lineage sources, zero unclassified lineage sources, and an effective writer inventory of exactly `save_document`.
+The final spike schema is `1.3`: three upstream lineage relationships, two lineage-bound fields, six normalized lineage sources, zero unclassified lineage sources, and effective writer inventory exactly `save_document`.
 
 See [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md).
 
@@ -130,9 +142,9 @@ This preview is deliberately isolated from the stable enforcement path. See [`do
 
 ## Measured evidence
 
-### Balanced 30-case benchmark
+### Balanced 30-case benchmark — final runtime candidate
 
-Final exact-head CI on policy `0.2.0` produced:
+Exact-head CI on `e139fa99…`, policy `0.2.0`:
 
 - 30 cases: 10 ALLOW / 10 REWRITE / 10 BLOCK;
 - 30/30 expected initial decisions;
@@ -146,9 +158,7 @@ Final exact-head CI on policy `0.2.0` produced:
 
 See [`docs/evidence/benchmark.md`](docs/evidence/benchmark.md).
 
-### Adversarial mutation suite
-
-144 valid SQL mutations across three known-unsafe composition families:
+### Adversarial mutation suite — final runtime candidate
 
 - 144/144 initial BLOCK;
 - 144/144 effective BLOCK;
@@ -158,23 +168,21 @@ See [`docs/evidence/benchmark.md`](docs/evidence/benchmark.md).
 
 See [`docs/evidence/adversarial-mutations.md`](docs/evidence/adversarial-mutations.md).
 
-### Compositional interaction ablation
+### Compositional interaction ablation — final runtime candidate
 
-The shipped policy blocks 144/144 unsafe mutations. Removing the targeted compositional interaction allows 144/144 of them while preserving all 20 ALLOW/REWRITE controls.
+The shipped policy blocks 144/144 unsafe mutations. Removing only the targeted compositional interaction allows 144/144 while preserving all 20 ALLOW/REWRITE controls.
 
 See [`docs/evidence/compositional-ablation.md`](docs/evidence/compositional-ablation.md).
 
-### Independent frozen external replay
+### Frozen external validation — deep-security baseline
 
-The exact release candidate passed the unchanged frozen 24-task external workload. E01 remained ALLOW and executed; E18/E20/E24 remained BLOCK with zero execution; there were zero unsafe MUST_NOT_EXECUTE executions and zero unsafe grouped-sensitive executions.
+The unchanged frozen 24-task external workload passed: E01 remained ALLOW and executed; E18/E20/E24 remained BLOCK with zero execution; zero unsafe MUST_NOT_EXECUTE executions; zero unsafe grouped-sensitive executions; no patient rows in sanitized evidence.
 
-### Exact release-candidate black-box pentest
+### Exact-image black-box pentest — deep-security baseline
 
-A separate validation branch built the exact Docker image and probed it externally through HTTP and container inspection. Final result: **24/24 PASS**.
+24/24 probes passed across authentication/scopes, request limits, rate limiting, fail-closed mutation/sensitive export, legitimate stateful ALLOW, receipt ownership/tamper detection, restricted API surface, non-root/read-only container boundaries, dropped capabilities, no-new-privileges, and leakage checks.
 
-Coverage included authentication/scopes, request limits, rate limiting, fail-closed mutation and sensitive export, legitimate stateful ALLOW, receipt ownership isolation, receipt tamper detection, restricted API surface, non-root/read-only container boundaries, dropped Linux capabilities, no-new-privileges, and leakage checks.
-
-All final evidence IDs, digests, runs, and report hashes are indexed in [`docs/evidence/release-candidate.md`](docs/evidence/release-candidate.md).
+All run IDs, artifact IDs/digests, report hashes, and applicability notes are in [`docs/evidence/release-candidate.md`](docs/evidence/release-candidate.md).
 
 ## Run fixture mode
 
@@ -192,7 +200,7 @@ Windows PowerShell:
 .\run.ps1
 ```
 
-The convenience launchers install the application from the declared project dependency ranges. The **release-reproducible paths are CI and Docker**, which consume the committed `uv.lock` with `uv sync --frozen`.
+The convenience launchers install from declared dependency ranges. The **release-reproducible paths are CI and Docker**, which consume the committed `uv.lock` with `uv sync --frozen`.
 
 After startup:
 
@@ -200,17 +208,18 @@ After startup:
 - liveness: `GET /api/health`
 - detailed readiness: `GET /api/ready`
 - curated scenarios: `GET /api/demo/scenarios`
+- benchmark summary: `GET /api/benchmark/summary`
 - analyze without execution: `POST /api/analyze`
 - guarded execution: `POST /api/execute-safe`
 - receipt lookup: `GET /api/receipts/{receipt_id}`
 
 In fixture mode, `/api/health` intentionally returns only process liveness. `/api/ready` carries runtime mode, policy version, database readiness, receipt-store readiness, and governance readiness.
 
-Follow the exact [`90-second judge testing guide`](docs/judge-testing.md).
+Follow [`docs/judge-testing.md`](docs/judge-testing.md).
 
 ## Run the live DataHub path
 
-For a reproducible environment, use the committed lock:
+Use the committed lock:
 
 ```bash
 python -m pip install --disable-pip-version-check 'uv==0.8.4'
@@ -219,7 +228,7 @@ uv sync --frozen --extra datahub
 
 Then follow [`docs/datahub-live-integration.md`](docs/datahub-live-integration.md).
 
-The core commands are:
+Core commands:
 
 ```bash
 datahub docker quickstart
@@ -230,10 +239,10 @@ toxicjoin-datahub-spike --verify
 
 ## Security and supply-chain posture
 
-The release candidate includes:
+The release lineage includes:
 
-- single-use, short-lived execution authorization bound to the governed request;
-- post-execution quarantine until independent verification passes;
+- single-use governed execution authorization;
+- post-execution quarantine until independent verification;
 - authenticated scope separation and receipt ownership;
 - request, SQL-complexity, concurrency, rate, result, and response budgets;
 - persistent cross-query disclosure state and commitment binding;
@@ -252,7 +261,7 @@ See [`SECURITY.md`](SECURITY.md), [`docs/threat-model.md`](docs/threat-model.md)
 ```text
 src/toxicjoin/
   api/           FastAPI boundary and curated judge scenarios
-  benchmark/     regression, adversarial, governance, and ablation runners
+  benchmark/     benchmark and evidence summaries
   context/       fixture and normalized DataHub context
   demo/          deterministic synthetic warehouse
   disclosure/    append-only cumulative disclosure state
@@ -267,7 +276,7 @@ src/toxicjoin/
 
 apps/web/         React/Vite judge interface
 config/           policy and DataHub asset configuration
-docs/evidence/    retained evidence and final release index
+docs/evidence/    retained evidence and release index
 examples/         judge-facing sample outputs
 skills/           reusable DataHub Agent Skill
 tests/            unit, integration, and security regressions
