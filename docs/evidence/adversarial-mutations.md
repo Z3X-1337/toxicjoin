@@ -1,80 +1,41 @@
-# ToxicJoin Adversarial Mutation Evidence
+# ToxicJoin Adversarial Mutation Suite
 
-## Result
+**Gate:** PASS  
+**Exact release candidate:** `fe4f8da2579e09bdbfb1d998b92dfea86549733b`  
+**Policy version:** `0.2.0`  
+**Cases:** 144  
+**Initial BLOCK:** 144/144  
+**Effective BLOCK:** 144/144  
+**Intended compositional-risk reason:** 144/144  
+**Unexpected database executions:** 0  
+**Unsafe initial allows:** 0  
+**Unsafe effective allows:** 0
 
-The adversarial mutation gate passed in GitHub Actions on **July 23, 2026**.
+Final provenance:
 
-- Workflow: `Adversarial Mutation Evidence`
-- GitHub Actions run: https://github.com/Z3X-1337/toxicjoin/actions/runs/30046801748
-- Tested branch commit: `0e156ff7d9132743d3a73e4761a6a37503ddc364`
-- Artifact: `toxicjoin-adversarial-mutations`
-- Artifact ID: `8579435638`
-- Artifact digest: `sha256:991f2727dc7e60e13f96553e132c4dde1daa4b796f42cafb963b23aeea535e64`
-- Generated report SHA-256: `5ae8de95c67ba22f06dfdfd92a405de40252aa0b2b2d9867fd28d6935d51119c`
+- workflow run `30136824442`;
+- artifact ID `8613091317`;
+- artifact digest `sha256:cffba65a8394ddb6fc497f6e93d3934d1a12cc20f5e08e82b1e28bf775cb8a65`;
+- report SHA-256 `86011fc74ef6ca03e7b83d21e8770037fb32ddb22d41b750abc09aeabe443565`.
 
-## Measured result
+## Mutation matrix
 
-| Metric | Result |
+Three known-unsafe individual-composition families are mutated across four alias profiles, two JOIN spellings, three predicate forms, and two ordering/limit forms.
+
+| Family | Cases |
 |---|---:|
-| Generated adversarial mutations | **144** |
-| Initial `BLOCK` | **144 / 144** |
-| Effective `BLOCK` | **144 / 144** |
-| `COMPOSITIONAL_REIDENTIFICATION_RISK` detected | **144 / 144** |
-| Unexpected database executions | **0** |
-| Unsafe initial allows | **0** |
-| Unsafe effective allows | **0** |
+| churn-profile | 48 |
+| financial-profile | 48 |
+| support-profile | 48 |
 
-The suite covers three individual-level unsafe composition families:
+Every generated query remains a valid supported SELECT containing a stable pseudonym, two quasi-identifiers, and one governed sensitive attribute. A case passes only when ToxicJoin reaches the intended `COMPOSITIONAL_REIDENTIFICATION_RISK` rule, returns BLOCK, and never invokes DuckDB.
 
-| Family | Mutations |
-|---|---:|
-| Churn/model-score profile | 48 |
-| Financial profile | 48 |
-| Sensitive support profile | 48 |
+Parser rejection alone does not count as a successful adversarial result.
 
-Each family is crossed with:
+## Interpretation
 
-- four alias profiles;
-- two equivalent JOIN spellings (`JOIN` / `INNER JOIN`);
-- three predicate forms;
-- two ordering/limit forms.
+This suite asks whether superficial SQL variation changes the security outcome for declared known-unsafe individual compositions. On this 144-case matrix it did not.
 
-This produces `3 × 4 × 2 × 3 × 2 = 144` generated SQL cases.
+This is a bounded metamorphic security evaluation, not a claim of universal SQL coverage or universal re-identification detection.
 
-## Security invariant
-
-Every generated query remains an individual-level composition containing:
-
-1. a stable pseudonymous subject key;
-2. two quasi-identifiers (`age_band` and `precise_area`);
-3. one governed sensitive attribute.
-
-A mutation counts as PASS only when all of the following are true:
-
-- initial decision is `BLOCK`;
-- effective decision is `BLOCK`;
-- the initial reason includes `COMPOSITIONAL_REIDENTIFICATION_RISK`;
-- DuckDB execution never occurs.
-
-This deliberately prevents parser rejection from being counted as a successful adversarial result: the generated mutations are valid supported `SELECT` statements and must reach the intended compositional policy rule.
-
-## Why this matters
-
-The main 30-case benchmark is balanced across ALLOW, REWRITE, and BLOCK behavior. This suite answers a different question: **does superficial SQL variation change the security decision for known-unsafe individual compositions?**
-
-On the declared 144-mutation matrix, it did not. All mutations reached the intended compositional-risk rule and failed before database execution.
-
-## Scope and limitation
-
-This is a declared metamorphic security evaluation over three unsafe composition families and the listed mutation dimensions. It is not a claim of universal SQL coverage, universal re-identification detection, or proof against every possible adversarial query.
-
-The suite uses only ToxicJoin's deterministic synthetic warehouse and governed fixture. No real personal data is involved.
-
-## Reproduce
-
-```bash
-python -m pip install -e '.[dev]'
-toxicjoin-adversarial --output-dir artifacts/adversarial-mutations
-```
-
-The command exits non-zero on any mutation that is not blocked for the intended compositional-risk reason, on any unsafe initial/effective allow, or if any mutation reaches database execution.
+For the full exact-head validation chain, see [`release-candidate.md`](release-candidate.md).
