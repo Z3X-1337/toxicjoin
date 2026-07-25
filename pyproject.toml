@@ -35,7 +35,7 @@ agent-registry = [
 ]
 dev = [
   "pytest>=9.1.1,<10",
-  "pytest-cov>=5,<6",
+  "pytest-cov>=5,<8",
   "ruff>=0.9,<1",
   "mypy>=1.13,<2",
 ]
