@@ -99,6 +99,38 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  hosted-replay-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22.16.0"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install exact hosted replay tool lock
+        run: npm ci --no-audit --no-fund
+      - name: Audit hosted replay tool graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          npm audit --package-lock-only --json > npm-audit-hosted-replay.json
+          AUDIT_RC=$?
+          set -e
+          echo "npm audit exit code: $AUDIT_RC"
+          python3 scripts/validate_dependency_audit.py npm --audit-json npm-audit-hosted-replay.json
+      - name: Generate hosted replay CycloneDX SBOM
+        run: npm sbom --package-lock-only --sbom-format cyclonedx > sbom-hosted-replay.cdx.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hosted-replay-supply-chain
+          path: |
+            npm-audit-hosted-replay.json
+            sbom-hosted-replay.cdx.json
+          if-no-files-found: error
+          retention-days: 30
+
   bandit:
     runs-on: ubuntu-latest
     steps:
