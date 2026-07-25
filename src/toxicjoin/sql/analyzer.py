@@ -148,6 +148,8 @@ def _classify_projection_expression(
     count_backed = False
     for column in columns:
         aggregate_kind = _aggregate_operand_kind(column, select)
+        if aggregate_kind == ProjectionExposureKind.CONDITIONAL_AGGREGATE:
+            return ProjectionExposureKind.CONDITIONAL_AGGREGATE
         if aggregate_kind == ProjectionExposureKind.AGGREGATE_VALUE:
             count_backed = True
             continue
@@ -160,6 +162,8 @@ def _classify_projection_expression(
             warnings=warnings,
             visited=visited,
         )
+        if source_kind == ProjectionExposureKind.CONDITIONAL_AGGREGATE:
+            return ProjectionExposureKind.CONDITIONAL_AGGREGATE
         if source_kind == ProjectionExposureKind.AGGREGATE_VALUE:
             count_backed = True
             continue
@@ -246,20 +250,46 @@ def _aggregate_operand_kind(
 ) -> ProjectionExposureKind | None:
     """Classify aggregate operands conservatively.
 
-    COUNT only reveals cardinality, so its source can be treated as an aggregate
-    value. Other aggregates may preserve or reconstruct source values (for example
-    MIN, MAX, FIRST, ARRAY_AGG, STRING_AGG), so their operands remain semantically
-    exposed and must pass normal policy/verifier checks.
+    Only direct ``COUNT(column)`` / ``COUNT(DISTINCT column)`` cardinality is treated
+    as an aggregate value. COUNT expressions that transform, filter, branch on, or
+    otherwise predicate governed values are conditional disclosures: the outer group
+    size does not prove that the predicate-defined subpopulation satisfies k-anonymity.
+    Other aggregates may preserve or reconstruct source values and therefore remain
+    semantically exposed operands.
     """
 
     current = column.parent
     while current is not None and current is not select:
         if isinstance(current, exp.AggFunc):
             if isinstance(current, exp.Count):
-                return ProjectionExposureKind.AGGREGATE_VALUE
+                return (
+                    ProjectionExposureKind.AGGREGATE_VALUE
+                    if _count_is_pure_cardinality(current)
+                    else ProjectionExposureKind.CONDITIONAL_AGGREGATE
+                )
             return ProjectionExposureKind.AGGREGATE_OPERAND
         current = current.parent
     return None
+
+
+def _count_is_pure_cardinality(count: exp.Count) -> bool:
+    """Return true only when COUNT cannot encode an output predicate.
+
+    COUNT(*) has no governed operand. Direct COUNT(column) and
+    COUNT(DISTINCT column) reveal cardinality/missingness only. Any expression around
+    the operand (CASE, IF, arithmetic, comparison, function call, etc.) is considered
+    conditional and must be handled by policy as a protected disclosure.
+    """
+
+    argument = count.this
+    if argument is None or isinstance(argument, exp.Star):
+        return True
+    if isinstance(argument, exp.Column):
+        return True
+    if isinstance(argument, exp.Distinct):
+        expressions = tuple(argument.expressions)
+        return len(expressions) == 1 and isinstance(expressions[0], exp.Column)
+    return False
 
 
 def _is_output_wildcard(projection: exp.Expression) -> bool:
