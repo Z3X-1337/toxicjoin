@@ -1,0 +1,205 @@
+name: P5 Exact Release Candidate Pentest
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/validation-p5-exact-release-candidate.yml"
+      - "validation/p5_exact_release_candidate.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p5-exact-rc-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exact-release-candidate-pentest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      TARGET_PR_NUMBER: "54"
+      EXPECTED_RELEASE_CANDIDATE_SHA: "fe4f8da2579e09bdbfb1d998b92dfea86549733b"
+      RELEASE_DIR: /tmp/toxicjoin-p5-release-candidate
+      CONTAINER_NAME: toxicjoin-p5-rc
+      IMAGE_NAME: toxicjoin:p5-exact-rc
+      BASE_URL: http://127.0.0.1:18000
+      EVIDENCE_DIR: validation-artifacts/p5-exact-release-candidate
+
+    steps:
+      - name: Check out independent validation harness
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+
+      - name: Resolve exact production PR head
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          TARGET_REF="refs/pull/${TARGET_PR_NUMBER}/head"
+          RELEASE_CANDIDATE_SHA="$(git ls-remote origin "$TARGET_REF" | awk 'NR==1 {print $1}')"
+          if [[ ! "$RELEASE_CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Could not resolve exact head for PR #${TARGET_PR_NUMBER}" >&2
+            exit 1
+          fi
+          if [[ "$RELEASE_CANDIDATE_SHA" != "$EXPECTED_RELEASE_CANDIDATE_SHA" ]]; then
+            echo "PR #${TARGET_PR_NUMBER} moved: expected $EXPECTED_RELEASE_CANDIDATE_SHA, got $RELEASE_CANDIDATE_SHA" >&2
+            exit 1
+          fi
+          printf '%s\n' "$RELEASE_CANDIDATE_SHA" > /tmp/toxicjoin-p5-release-candidate-sha
+          printf '%s\n' "$RELEASE_CANDIDATE_SHA" > "$EVIDENCE_DIR/release-candidate-sha.txt"
+          printf '%s\n' "$TARGET_PR_NUMBER" > "$EVIDENCE_DIR/target-pr-number.txt"
+
+          git fetch --no-tags --depth=1 origin "$RELEASE_CANDIDATE_SHA"
+          git worktree add --detach "$RELEASE_DIR" "$RELEASE_CANDIDATE_SHA"
+          test "$(git -C "$RELEASE_DIR" rev-parse HEAD)" = "$RELEASE_CANDIDATE_SHA"
+
+      - name: Set up Python for external harness
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+
+      - name: Compile independent pentest harness
+        run: python -m py_compile validation/p5_exact_release_candidate.py
+
+      - name: Build exact release candidate image
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE_CANDIDATE_SHA="$(cat /tmp/toxicjoin-p5-release-candidate-sha)"
+          test "$(git -C "$RELEASE_DIR" rev-parse HEAD)" = "$RELEASE_CANDIDATE_SHA"
+          docker build --pull --progress=plain --tag "$IMAGE_NAME" "$RELEASE_DIR"
+          docker image inspect "$IMAGE_NAME" --format '{{.Id}}' > "$EVIDENCE_DIR/image-id.txt"
+
+      - name: Start hardened candidate container
+        shell: bash
+        run: |
+          set -euo pipefail
+          API_KEYS_JSON="$(python validation/p5_exact_release_candidate.py --emit-auth-json)"
+          docker run --detach \
+            --name "$CONTAINER_NAME" \
+            --read-only \
+            --tmpfs /var/lib/toxicjoin:rw,noexec,nosuid,size=64m \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --pids-limit=128 \
+            --memory=768m \
+            --cpus=1 \
+            --publish 127.0.0.1:18000:8000 \
+            --env "TOXICJOIN_API_KEYS_JSON=$API_KEYS_JSON" \
+            --env "TOXICJOIN_ALLOWED_HOSTS=127.0.0.1,localhost" \
+            --env "TOXICJOIN_MAX_REQUEST_BYTES=4096" \
+            --env "TOXICJOIN_RATE_LIMIT_REQUESTS=4" \
+            --env "TOXICJOIN_RATE_LIMIT_WINDOW_SECONDS=60" \
+            --env "TOXICJOIN_MAX_CONCURRENT_PER_PRINCIPAL=1" \
+            "$IMAGE_NAME"
+
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent --show-error "$BASE_URL/api/health" > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Exact release candidate did not become healthy" >&2
+          docker logs "$CONTAINER_NAME" >&2 || true
+          exit 1
+
+      - name: Run independent black-box pentest
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE_CANDIDATE_SHA="$(cat /tmp/toxicjoin-p5-release-candidate-sha)"
+          python validation/p5_exact_release_candidate.py \
+            --base-url "$BASE_URL" \
+            --container-name "$CONTAINER_NAME" \
+            --target-pr "$TARGET_PR_NUMBER" \
+            --release-candidate-sha "$RELEASE_CANDIDATE_SHA" \
+            --output "$EVIDENCE_DIR/p5-exact-release-candidate-report.json"
+
+      - name: Verify container logs do not disclose credentials or tracebacks
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker logs "$CONTAINER_NAME" > "$EVIDENCE_DIR/container.log" 2>&1
+          python - <<'PY'
+          import importlib.util
+          from pathlib import Path
+
+          module_path = Path('validation/p5_exact_release_candidate.py')
+          spec = importlib.util.spec_from_file_location('p5_harness', module_path)
+          assert spec is not None and spec.loader is not None
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+
+          logs = Path('validation-artifacts/p5-exact-release-candidate/container.log').read_text(
+              encoding='utf-8', errors='replace'
+          )
+          for key in module.ALL_KEYS:
+              assert key not in logs, 'synthetic API key leaked into container logs'
+          assert 'Traceback (most recent call last)' not in logs, 'container emitted a traceback'
+          PY
+
+      - name: Assert exact candidate report invariants
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path('validation-artifacts/p5-exact-release-candidate')
+          release_sha = root.joinpath('release-candidate-sha.txt').read_text().strip()
+          target_pr = root.joinpath('target-pr-number.txt').read_text().strip()
+          report = json.loads(root.joinpath('p5-exact-release-candidate-report.json').read_text())
+
+          assert release_sha == 'fe4f8da2579e09bdbfb1d998b92dfea86549733b'
+          assert target_pr == '54'
+          assert report['release_candidate_sha'] == release_sha
+          assert report['target_pr'] == 54
+          assert report['passed'] is True
+          assert report['failed_count'] == 0
+          assert report['passed_count'] == report['test_count']
+          assert report['test_count'] >= 20
+          assert len(report['report_sha256']) == 64
+          PY
+
+      - name: Capture sanitized diagnostics
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$EVIDENCE_DIR"
+          if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+            docker inspect "$CONTAINER_NAME" \
+              --format 'user={{.Config.User}} readonly={{.HostConfig.ReadonlyRootfs}} pids={{.HostConfig.PidsLimit}} capdrop={{json .HostConfig.CapDrop}} securityopt={{json .HostConfig.SecurityOpt}} ports={{json .HostConfig.PortBindings}}' \
+              > "$EVIDENCE_DIR/container-security.txt"
+            if [[ ! -f "$EVIDENCE_DIR/container.log" ]]; then
+              docker logs "$CONTAINER_NAME" > "$EVIDENCE_DIR/container.log" 2>&1 || true
+            fi
+          fi
+          df -h > "$EVIDENCE_DIR/disk-usage.txt" 2>&1 || true
+
+      - name: Remove candidate container
+        if: always()
+        run: docker rm --force "$CONTAINER_NAME" >/dev/null 2>&1 || true
+
+      - name: Upload sanitized P5 pentest evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: toxicjoin-p5-exact-release-candidate
+          path: |
+            validation-artifacts/p5-exact-release-candidate/release-candidate-sha.txt
+            validation-artifacts/p5-exact-release-candidate/target-pr-number.txt
+            validation-artifacts/p5-exact-release-candidate/image-id.txt
+            validation-artifacts/p5-exact-release-candidate/p5-exact-release-candidate-report.json
+            validation-artifacts/p5-exact-release-candidate/container-security.txt
+            validation-artifacts/p5-exact-release-candidate/container.log
+            validation-artifacts/p5-exact-release-candidate/disk-usage.txt
+          if-no-files-found: warn
+          retention-days: 30
