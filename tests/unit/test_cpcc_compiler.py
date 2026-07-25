@@ -292,11 +292,12 @@ def test_compiler_rejects_wildcard_profile() -> None:
     candidate = _single(
         build_remediation_action(RemediationOperator.REMOVE_STABLE_IDENTIFIER)
     )
+    trusted_resolution = _resolution("SELECT customer_id FROM patients")
 
     with pytest.raises(CpccCompileError, match="wildcard"):
         compile_cpcc_candidate(
             sql,
             candidate,
-            original_resolution=_resolution(sql),
+            original_resolution=trusted_resolution,
             subject_key=SUBJECT,
         )
