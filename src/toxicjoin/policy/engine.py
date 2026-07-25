@@ -104,6 +104,9 @@ class PolicyEngine:
         ):
             block_reasons.append(ReasonCode.UNRESOLVED_COLUMN)
 
+        if _has_protected_conditional_aggregate(policy_input):
+            block_reasons.append(ReasonCode.COMPOSITIONAL_REIDENTIFICATION_RISK)
+
         risk_categories = (
             effective_semantic_categories
             if semantic_mode
@@ -283,6 +286,7 @@ def _semantic_projected_context(
         ProjectionExposureKind.TRANSFORMED_RAW_VALUE,
         ProjectionExposureKind.GROUP_KEY,
         ProjectionExposureKind.AGGREGATE_OPERAND,
+        ProjectionExposureKind.CONDITIONAL_AGGREGATE,
         ProjectionExposureKind.NESTED_SCOPE,
     }
     exposed_keys = {
@@ -296,6 +300,36 @@ def _semantic_projected_context(
         tuple(by_key[key] for key in sorted(exposed_keys) if key in by_key),
         True,
     )
+
+
+def _has_protected_conditional_aggregate(policy_input: PolicyInput) -> bool:
+    """Reject predicate-defined aggregate subcohorts over governed protected data.
+
+    The outer group-size threshold cannot prove a CASE/FILTER-defined subpopulation
+    contains the required number of distinct subjects. Until ToxicJoin can prove that
+    inner threshold independently, protected conditional aggregates fail closed.
+    """
+
+    protected = {
+        SensitivityCategory.DIRECT_IDENTIFIER,
+        SensitivityCategory.STABLE_PSEUDONYM,
+        SensitivityCategory.QUASI_IDENTIFIER,
+        SensitivityCategory.SENSITIVE_ATTRIBUTE,
+        SensitivityCategory.UNCLASSIFIED,
+    }
+    by_key = {column.ref.key: column for column in policy_input.projected_context}
+    for exposure in policy_input.query_plan.projected_exposures:
+        if exposure.kind != ProjectionExposureKind.CONDITIONAL_AGGREGATE:
+            continue
+        for ref in exposure.source_columns:
+            context = by_key.get(ref.key)
+            if context is None or not context.resolved:
+                return True
+            if context.category in protected:
+                return True
+            if any(source.category in protected for source in context.lineage_sources):
+                return True
+    return False
 
 
 def _effective_category_entries(
