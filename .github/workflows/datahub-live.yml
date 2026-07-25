@@ -38,10 +38,7 @@ jobs:
 
     env:
       DATAHUB_GMS_URL: http://127.0.0.1:8080
-      # The SDK seed/bootstrap still uses DataHub's conventional token variable.
       DATAHUB_GMS_TOKEN: local-quickstart-auth-disabled
-      # MCP roles are explicit even though local quickstart has authentication disabled.
-      # Real secure deployments must provide separately scoped credentials here.
       DATAHUB_GMS_READ_TOKEN: local-quickstart-auth-disabled
       DATAHUB_GMS_WRITE_TOKEN: local-quickstart-auth-disabled
       DATAHUB_MCP_COMMAND: uvx
@@ -50,7 +47,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Free runner disk space
         run: |
@@ -59,7 +56,7 @@ jobs:
           df -h
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.11"
           cache: pip
@@ -68,8 +65,9 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python -m pip install --upgrade pip wheel setuptools uv
-          python -m pip install -e '.[datahub]'
+          python -m pip install --disable-pip-version-check 'uv==0.8.4'
+          uv sync --frozen --extra datahub
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
           datahub version
           uvx --from mcp-server-datahub==0.6.0 mcp-server-datahub --help >/dev/null 2>&1 || true
 
@@ -387,7 +385,7 @@ jobs:
 
       - name: Upload verified live evidence
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: toxicjoin-live-datahub-evidence
           path: |
@@ -399,7 +397,7 @@ jobs:
 
       - name: Upload live integration diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: toxicjoin-live-datahub-diagnostics
           path: |
