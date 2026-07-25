@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -113,7 +113,7 @@ class ReceiptWriteback(StrictModel):
 
 
 class DecisionReceipt(StrictModel):
-    schema_version: str = "1.3"
+    schema_version: Literal["1.4"] = "1.4"
     receipt_id: str = Field(pattern=r"^tj_[0-9a-f]{16}$")
     created_at: datetime
     mode: ReceiptMode
