@@ -1,4 +1,4 @@
-name: P5 Exact Release Candidate Pentest
+name: Final Security Head Black-box Pentest
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: p5-exact-rc-${{ github.event.pull_request.number || github.ref }}
+  group: final-security-blackbox-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -21,14 +21,14 @@ jobs:
     timeout-minutes: 30
 
     env:
-      TARGET_PR_NUMBER: "54"
-      EXPECTED_RELEASE_CANDIDATE_SHA: "fe4f8da2579e09bdbfb1d998b92dfea86549733b"
-      RELEASE_DIR: /tmp/toxicjoin-p5-release-candidate
-      CONTAINER_NAME: toxicjoin-p5-rc
-      RUNTIME_VOLUME: toxicjoin-p5-runtime
-      IMAGE_NAME: toxicjoin:p5-exact-rc
+      TARGET_PR_NUMBER: "68"
+      EXPECTED_RELEASE_CANDIDATE_SHA: "536c37c34de7b36495d33f63095585f72e5f4b46"
+      RELEASE_DIR: /tmp/toxicjoin-final-security-head
+      CONTAINER_NAME: toxicjoin-final-security-head
+      RUNTIME_VOLUME: toxicjoin-final-security-runtime
+      IMAGE_NAME: toxicjoin:final-security-head
       BASE_URL: http://127.0.0.1:18000
-      EVIDENCE_DIR: validation-artifacts/p5-exact-release-candidate
+      EVIDENCE_DIR: validation-artifacts/final-security-blackbox
 
     steps:
       - name: Check out independent validation harness
@@ -36,7 +36,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Resolve exact production PR head
+      - name: Resolve exact final security PR head
         shell: bash
         run: |
           set -euo pipefail
@@ -51,7 +51,7 @@ jobs:
             echo "PR #${TARGET_PR_NUMBER} moved: expected $EXPECTED_RELEASE_CANDIDATE_SHA, got $RELEASE_CANDIDATE_SHA" >&2
             exit 1
           fi
-          printf '%s\n' "$RELEASE_CANDIDATE_SHA" > /tmp/toxicjoin-p5-release-candidate-sha
+          printf '%s\n' "$RELEASE_CANDIDATE_SHA" > /tmp/toxicjoin-final-security-sha
           printf '%s\n' "$RELEASE_CANDIDATE_SHA" > "$EVIDENCE_DIR/release-candidate-sha.txt"
           printf '%s\n' "$TARGET_PR_NUMBER" > "$EVIDENCE_DIR/target-pr-number.txt"
 
@@ -70,11 +70,11 @@ jobs:
             validation/p5_exact_release_candidate.py \
             validation/p5_exact_release_candidate_v2.py
 
-      - name: Build exact release candidate image
+      - name: Build exact final security image
         shell: bash
         run: |
           set -euo pipefail
-          RELEASE_CANDIDATE_SHA="$(cat /tmp/toxicjoin-p5-release-candidate-sha)"
+          RELEASE_CANDIDATE_SHA="$(cat /tmp/toxicjoin-final-security-sha)"
           test "$(git -C "$RELEASE_DIR" rev-parse HEAD)" = "$RELEASE_CANDIDATE_SHA"
           docker build --pull --progress=plain --tag "$IMAGE_NAME" "$RELEASE_DIR"
           docker image inspect "$IMAGE_NAME" --format '{{.Id}}' > "$EVIDENCE_DIR/image-id.txt"
@@ -110,7 +110,7 @@ jobs:
             fi
             sleep 1
           done
-          echo "Exact release candidate did not become healthy" >&2
+          echo "Exact final security candidate did not become healthy" >&2
           docker logs "$CONTAINER_NAME" >&2 || true
           exit 1
 
@@ -118,13 +118,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          RELEASE_CANDIDATE_SHA="$(cat /tmp/toxicjoin-p5-release-candidate-sha)"
+          RELEASE_CANDIDATE_SHA="$(cat /tmp/toxicjoin-final-security-sha)"
           python validation/p5_exact_release_candidate_v2.py \
             --base-url "$BASE_URL" \
             --container-name "$CONTAINER_NAME" \
             --target-pr "$TARGET_PR_NUMBER" \
             --release-candidate-sha "$RELEASE_CANDIDATE_SHA" \
-            --output "$EVIDENCE_DIR/p5-exact-release-candidate-report.json"
+            --output "$EVIDENCE_DIR/final-security-blackbox-report.json"
 
       - name: Verify container logs do not disclose credentials or tracebacks
         if: success()
@@ -142,7 +142,7 @@ jobs:
           module = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(module)
 
-          logs = Path('validation-artifacts/p5-exact-release-candidate/container.log').read_text(
+          logs = Path('validation-artifacts/final-security-blackbox/container.log').read_text(
               encoding='utf-8', errors='replace'
           )
           for key in module.ALL_KEYS:
@@ -159,15 +159,15 @@ jobs:
           import json
           from pathlib import Path
 
-          root = Path('validation-artifacts/p5-exact-release-candidate')
+          root = Path('validation-artifacts/final-security-blackbox')
           release_sha = root.joinpath('release-candidate-sha.txt').read_text().strip()
           target_pr = root.joinpath('target-pr-number.txt').read_text().strip()
-          report = json.loads(root.joinpath('p5-exact-release-candidate-report.json').read_text())
+          report = json.loads(root.joinpath('final-security-blackbox-report.json').read_text())
 
-          assert release_sha == 'fe4f8da2579e09bdbfb1d998b92dfea86549733b'
-          assert target_pr == '54'
+          assert release_sha == '536c37c34de7b36495d33f63095585f72e5f4b46'
+          assert target_pr == '68'
           assert report['release_candidate_sha'] == release_sha
-          assert report['target_pr'] == 54
+          assert report['target_pr'] == 68
           assert report['passed'] is True
           assert report['failed_count'] == 0
           assert report['passed_count'] == report['test_count']
@@ -198,18 +198,18 @@ jobs:
           docker rm --force "$CONTAINER_NAME" >/dev/null 2>&1 || true
           docker volume rm "$RUNTIME_VOLUME" >/dev/null 2>&1 || true
 
-      - name: Upload sanitized P5 pentest evidence
+      - name: Upload sanitized final-security pentest evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: toxicjoin-p5-exact-release-candidate
+          name: toxicjoin-final-security-blackbox
           path: |
-            validation-artifacts/p5-exact-release-candidate/release-candidate-sha.txt
-            validation-artifacts/p5-exact-release-candidate/target-pr-number.txt
-            validation-artifacts/p5-exact-release-candidate/image-id.txt
-            validation-artifacts/p5-exact-release-candidate/p5-exact-release-candidate-report.json
-            validation-artifacts/p5-exact-release-candidate/container-security.txt
-            validation-artifacts/p5-exact-release-candidate/container.log
-            validation-artifacts/p5-exact-release-candidate/disk-usage.txt
+            validation-artifacts/final-security-blackbox/release-candidate-sha.txt
+            validation-artifacts/final-security-blackbox/target-pr-number.txt
+            validation-artifacts/final-security-blackbox/image-id.txt
+            validation-artifacts/final-security-blackbox/final-security-blackbox-report.json
+            validation-artifacts/final-security-blackbox/container-security.txt
+            validation-artifacts/final-security-blackbox/container.log
+            validation-artifacts/final-security-blackbox/disk-usage.txt
           if-no-files-found: warn
           retention-days: 30
