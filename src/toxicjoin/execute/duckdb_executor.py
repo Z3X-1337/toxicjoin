@@ -24,6 +24,7 @@ from toxicjoin.execute.authorization import (
 )
 from toxicjoin.execute.limits import ExecutionOutputLimits
 from toxicjoin.models import ColumnRef, QueryPlan, ReasonCode, StrictModel
+from toxicjoin.proofs import PreExecutionPrivacyProof
 
 
 _MAX_CELL_NESTING = 32
@@ -127,6 +128,7 @@ class DuckDBExecutor:
         rewrite_parent_sql: str | None = None,
         disclosure_commitment: DisclosureCommitment | None = None,
         expected_governance_binding: GovernanceContextBinding | None = None,
+        privacy_proof: PreExecutionPrivacyProof | None = None,
     ) -> ExecutionAuthorization:
         """Issue from the same authority that the execution boundary will verify."""
 
@@ -135,16 +137,25 @@ class DuckDBExecutor:
                 ReasonCode.VERIFICATION_FAILED,
                 "executor has no execution authorizer bound",
             )
-        try:
-            return self._authorizer.issue(
-                sql,
-                task_purpose=task_purpose,
-                subject_key=subject_key,
-                dialect=dialect,
-                rewrite_parent_sql=rewrite_parent_sql,
-                disclosure_commitment=disclosure_commitment,
-                expected_governance_binding=expected_governance_binding,
+        if privacy_proof is not None and not _authorizer_accepts_privacy_proof(
+            self._authorizer
+        ):
+            raise ExecutionError(
+                ReasonCode.VERIFICATION_FAILED,
+                "execution authorization issuance rejected: AUTH_PRIVACY_PROOF_BINDING_REQUIRED",
             )
+        issue_kwargs: dict[str, Any] = {
+            "task_purpose": task_purpose,
+            "subject_key": subject_key,
+            "dialect": dialect,
+            "rewrite_parent_sql": rewrite_parent_sql,
+            "disclosure_commitment": disclosure_commitment,
+            "expected_governance_binding": expected_governance_binding,
+        }
+        if privacy_proof is not None:
+            issue_kwargs["privacy_proof"] = privacy_proof
+        try:
+            return self._authorizer.issue(sql, **issue_kwargs)
         except ExecutionAuthorizationError as exc:
             raise ExecutionError(
                 _authorization_failure_reason(exc.code),
@@ -160,6 +171,7 @@ class DuckDBExecutor:
         subject_key: ColumnRef,
         dialect: str = "duckdb",
         rewrite_parent_sql: str | None = None,
+        privacy_proof: PreExecutionPrivacyProof | None = None,
     ) -> ExecutionResult:
         """Consume a matching capability and execute its exact SQL once."""
 
@@ -173,15 +185,27 @@ class DuckDBExecutor:
                 ReasonCode.VERIFICATION_FAILED,
                 "executor has no execution authorizer bound",
             )
+        if privacy_proof is not None and not _authorizer_accepts_privacy_proof(
+            self._authorizer
+        ):
+            raise ExecutionError(
+                ReasonCode.VERIFICATION_FAILED,
+                "execution authorization rejected: AUTH_PRIVACY_PROOF_BINDING_REQUIRED",
+            )
 
+        consume_kwargs: dict[str, Any] = {
+            "task_purpose": task_purpose,
+            "subject_key": subject_key,
+            "dialect": dialect,
+            "rewrite_parent_sql": rewrite_parent_sql,
+        }
+        if privacy_proof is not None:
+            consume_kwargs["privacy_proof"] = privacy_proof
         try:
             query_plan = self._authorizer.verify_and_consume(
                 authorization,
                 sql,
-                task_purpose=task_purpose,
-                subject_key=subject_key,
-                dialect=dialect,
-                rewrite_parent_sql=rewrite_parent_sql,
+                **consume_kwargs,
             )
         except ExecutionAuthorizationError as exc:
             raise ExecutionError(
@@ -329,6 +353,15 @@ def _authorization_failure_reason(code: str) -> ReasonCode:
     if code == "AUTH_CONTEXT_RESOLUTION_FAILED":
         return ReasonCode.DATAHUB_UNAVAILABLE
     return ReasonCode.VERIFICATION_FAILED
+
+
+def _authorizer_accepts_privacy_proof(authorizer: ExecutionAuthorizer) -> bool:
+    # Local import avoids a module cycle while keeping the execution boundary explicit: proof
+    # mode is valid only when the bound authority is the strict proof-aware implementation (or
+    # its public hardened subclass), never merely because a callable happens to accept **kwargs.
+    from toxicjoin.execute.proof_bound_authorization import ProofBoundExecutionAuthorizer
+
+    return isinstance(authorizer, ProofBoundExecutionAuthorizer)
 
 
 def _json_safe(value: Any, *, depth: int = 0) -> Any:
