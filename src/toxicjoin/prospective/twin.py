@@ -1,9 +1,10 @@
 """Deterministic Disclosure Digital Twin over existing ledger semantics.
 
-The twin is an immutable projection/least-fixed-point closure. It owns no persistence and
-never mutates the disclosure ledger. Callers provide an audit-history snapshot plus
-lifecycle states; ABORTED records are excluded, while PENDING records are conservatively
-projected as active knowledge to preserve the existing no-race privacy semantics.
+The twin is an immutable projection and least-fixed-point closure. It owns no
+persistence and never mutates the disclosure ledger. Callers provide one atomic
+per-scope audit-history/lifecycle snapshot: ABORTED records are excluded, while
+PENDING records are conservatively active to preserve the ledger's no-race
+privacy semantics.
 """
 
 from __future__ import annotations
@@ -22,13 +23,13 @@ from toxicjoin.disclosure.models import (
 from toxicjoin.evidence.canonical import canonical_json_sha256
 from toxicjoin.models import ProjectionExposureKind, SensitivityCategory, StrictModel
 
-
 _HASH_PATTERN = r"^[0-9a-f]{64}$"
 _TWIN_MODEL_VERSION = "0.1.0"
 _INFERENCE_VERSION = "0.1.0"
 _MAX_STATE_ATOMS = 4096
 _MAX_INFERENCE_RULES = 8192
 AtomSha256 = Annotated[str, Field(pattern=_HASH_PATTERN)]
+
 _IDENTIFIER_CATEGORIES = {
     SensitivityCategory.DIRECT_IDENTIFIER,
     SensitivityCategory.STABLE_PSEUDONYM,
@@ -40,6 +41,12 @@ _REVEALING_OUTPUT_KINDS = {
     ProjectionExposureKind.AGGREGATE_OPERAND,
     ProjectionExposureKind.AGGREGATE_VALUE,
     ProjectionExposureKind.CONDITIONAL_AGGREGATE,
+    ProjectionExposureKind.NESTED_SCOPE,
+}
+_LINKABLE_OUTPUT_KINDS = {
+    ProjectionExposureKind.RAW_VALUE,
+    ProjectionExposureKind.TRANSFORMED_RAW_VALUE,
+    ProjectionExposureKind.GROUP_KEY,
     ProjectionExposureKind.NESTED_SCOPE,
 }
 
@@ -55,7 +62,7 @@ class DisclosureHistoryLifecycle(StrEnum):
 
 
 class DisclosureHistoryEntry(StrictModel):
-    """One validated ledger record plus its release-journal lifecycle snapshot."""
+    """One validated ledger record plus its lifecycle in one trusted snapshot."""
 
     record: DisclosureRecord
     lifecycle: DisclosureHistoryLifecycle
@@ -101,26 +108,22 @@ class DisclosureAtom(StrictModel):
 
     @model_validator(mode="after")
     def validate_atom_shape_and_hash(self) -> "DisclosureAtom":
-        populated = {
-            name
-            for name in (
-                "release_semantic_sha256",
-                "dataset_urn",
-                "column_key",
-                "category",
-                "column_role",
-                "exposure_kind",
-                "aggregate_function",
-                "minimum_group_size",
-                "release_family_sha256",
-                "cohort_hmac_sha256",
-                "protected_release",
-                "identifier_category",
-            )
-            if getattr(self, name) is not None
-        }
-        required: set[str]
-        allowed: set[str]
+        fields = (
+            "release_semantic_sha256",
+            "dataset_urn",
+            "column_key",
+            "category",
+            "column_role",
+            "exposure_kind",
+            "aggregate_function",
+            "minimum_group_size",
+            "release_family_sha256",
+            "cohort_hmac_sha256",
+            "protected_release",
+            "identifier_category",
+        )
+        populated = {name for name in fields if getattr(self, name) is not None}
+
         if self.kind == DisclosureAtomKind.SEMANTIC_RELEASE:
             required = allowed = {"release_semantic_sha256"}
         elif self.kind == DisclosureAtomKind.SOURCE_DATASET:
@@ -157,7 +160,7 @@ class DisclosureAtom(StrictModel):
         elif self.kind == DisclosureAtomKind.IDENTIFIER_SENSITIVE_COEXPOSURE:
             required = allowed = {"identifier_category"}
             if self.identifier_category not in _IDENTIFIER_CATEGORIES:
-                raise ValueError("identifier-sensitive coexposure requires an identifier category")
+                raise ValueError("coexposure requires a governed identifier category")
         elif self.kind == DisclosureAtomKind.PROTECTED_COHORT_VARIATION:
             required = allowed = {"release_family_sha256"}
         else:  # pragma: no cover - exhaustive enum guard
@@ -165,8 +168,7 @@ class DisclosureAtom(StrictModel):
 
         if not required.issubset(populated) or not populated.issubset(allowed):
             raise ValueError(f"invalid field shape for disclosure atom kind {self.kind.value}")
-        expected = compute_disclosure_atom_sha256(self)
-        if self.atom_sha256 != expected:
+        if self.atom_sha256 != compute_disclosure_atom_sha256(self):
             raise ValueError("disclosure atom hash mismatch")
         return self
 
@@ -189,9 +191,7 @@ class DisclosureInferenceRule(StrictModel):
 
     @model_validator(mode="after")
     def validate_rule(self) -> "DisclosureInferenceRule":
-        if self.antecedent_atom_sha256s != tuple(
-            sorted(set(self.antecedent_atom_sha256s))
-        ):
+        if self.antecedent_atom_sha256s != tuple(sorted(set(self.antecedent_atom_sha256s))):
             raise ValueError("inference antecedents must be sorted and unique")
         expected_kind = {
             DisclosureInferenceRuleFamily.CATEGORY_PRESENCE: DisclosureAtomKind.CATEGORY_PRESENCE,
@@ -204,8 +204,7 @@ class DisclosureInferenceRule(StrictModel):
         }[self.family]
         if self.consequent.kind != expected_kind:
             raise ValueError("inference rule family does not match consequent atom kind")
-        expected = compute_disclosure_inference_rule_sha256(self)
-        if self.rule_sha256 != expected:
+        if self.rule_sha256 != compute_disclosure_inference_rule_sha256(self):
             raise ValueError("disclosure inference rule hash mismatch")
         return self
 
@@ -250,14 +249,11 @@ class DisclosureState(StrictModel):
             raise ValueError("released and derived disclosure atoms must be disjoint")
 
         rules = instantiate_disclosure_inference_rules(self.released_atoms)
-        expected_rules_root = compute_inference_rules_sha256(rules)
-        if self.inference_rules_sha256 != expected_rules_root:
+        if self.inference_rules_sha256 != compute_inference_rules_sha256(rules):
             raise ValueError("disclosure inference-rule commitment mismatch")
-        expected_derived = least_fixed_point(self.released_atoms, rules)
-        if self.derived_atoms != expected_derived:
+        if self.derived_atoms != least_fixed_point(self.released_atoms, rules):
             raise ValueError("derived disclosure atoms do not match deterministic closure")
-        expected_state = compute_disclosure_state_sha256(self)
-        if self.state_sha256 != expected_state:
+        if self.state_sha256 != compute_disclosure_state_sha256(self):
             raise ValueError("disclosure state hash mismatch")
         return self
 
@@ -273,13 +269,7 @@ def build_disclosure_state(
     evidence_root_sha256: str,
     warehouse_snapshot_sha256: str | None = None,
 ) -> DisclosureState:
-    """Project ledger semantics plus the current candidate into a deterministic state.
-
-    ``audit_history`` must contain the complete per-scope hash-chain snapshot. PENDING and
-    RELEASED entries are active; ABORTED entries remain auditable but contribute no privacy
-    knowledge. The current candidate is projected as hypothetically released because this
-    state is the post-candidate state inspected by prospective reachability.
-    """
+    """Project complete scope history plus the candidate into a post-candidate state."""
 
     ordered_history = _validate_and_order_history(scope, audit_history)
     active_records = tuple(
@@ -313,7 +303,6 @@ def build_disclosure_state(
         inference_rules_sha256=rules_root,
         state_sha256="0" * 64,
     )
-    state_sha256 = compute_disclosure_state_sha256(provisional)
     return DisclosureState(
         scope=scope,
         purpose_commitment_sha256=purpose_commitment_sha256,
@@ -323,7 +312,7 @@ def build_disclosure_state(
         released_atoms=released_atoms,
         derived_atoms=derived_atoms,
         inference_rules_sha256=rules_root,
-        state_sha256=state_sha256,
+        state_sha256=compute_disclosure_state_sha256(provisional),
     )
 
 
@@ -331,7 +320,7 @@ def direct_atoms_for_release(
     semantic: DisclosureSemanticRelease,
     composition: DisclosureComposition | None,
 ) -> tuple[DisclosureAtom, ...]:
-    """Project one semantic release into canonical direct atoms without raw SQL or rows."""
+    """Project one semantic release into direct atoms without raw SQL or rows."""
 
     release_sha = semantic.semantic_sha256
     atoms: dict[str, DisclosureAtom] = {}
@@ -393,7 +382,7 @@ def direct_atoms_for_release(
         )
     if composition is not None:
         if composition.release_family_sha256 != release_sha:
-            raise DisclosureTwinError("candidate/history composition does not match semantic release")
+            raise DisclosureTwinError("composition does not match semantic release")
         add(
             _build_atom(
                 DisclosureAtomKind.COHORT,
@@ -409,11 +398,10 @@ def direct_atoms_for_release(
 def instantiate_disclosure_inference_rules(
     released_atoms: tuple[DisclosureAtom, ...],
 ) -> tuple[DisclosureInferenceRule, ...]:
-    """Instantiate the finite P0 inference hyperedges from direct semantic atoms."""
+    """Instantiate finite P0 inference hyperedges from direct semantic atoms."""
 
     _require_canonical_atoms(released_atoms, expected_kinds=_DIRECT_ATOM_KINDS)
     rules: dict[str, DisclosureInferenceRule] = {}
-    category_atoms: dict[SensitivityCategory, DisclosureAtom] = {}
 
     revealing_outputs = tuple(
         atom
@@ -424,31 +412,42 @@ def instantiate_disclosure_inference_rules(
     )
     for atom in revealing_outputs:
         assert atom.category is not None
-        consequent = category_atoms.setdefault(
-            atom.category,
-            _build_atom(DisclosureAtomKind.CATEGORY_PRESENCE, category=atom.category),
-        )
         rule = _build_rule(
             DisclosureInferenceRuleFamily.CATEGORY_PRESENCE,
             antecedents=(atom.atom_sha256,),
-            consequent=consequent,
+            consequent=_build_atom(
+                DisclosureAtomKind.CATEGORY_PRESENCE,
+                category=atom.category,
+            ),
         )
         rules[rule.rule_sha256] = rule
 
-    sensitive = category_atoms.get(SensitivityCategory.SENSITIVE_ATTRIBUTE)
-    if sensitive is not None:
+    linkable_outputs = tuple(
+        atom
+        for atom in revealing_outputs
+        if atom.exposure_kind in _LINKABLE_OUTPUT_KINDS
+    )
+    sensitive_outputs = tuple(
+        atom
+        for atom in linkable_outputs
+        if atom.category == SensitivityCategory.SENSITIVE_ATTRIBUTE
+    )
+    if sensitive_outputs:
+        sensitive = min(sensitive_outputs, key=lambda atom: atom.atom_sha256)
         for identifier_category in sorted(_IDENTIFIER_CATEGORIES, key=lambda value: value.value):
-            identifier = category_atoms.get(identifier_category)
-            if identifier is None:
-                continue
-            consequent = _build_atom(
-                DisclosureAtomKind.IDENTIFIER_SENSITIVE_COEXPOSURE,
-                identifier_category=identifier_category,
+            identifier_outputs = tuple(
+                atom for atom in linkable_outputs if atom.category == identifier_category
             )
+            if not identifier_outputs:
+                continue
+            identifier = min(identifier_outputs, key=lambda atom: atom.atom_sha256)
             rule = _build_rule(
                 DisclosureInferenceRuleFamily.IDENTIFIER_SENSITIVE_COEXPOSURE,
                 antecedents=(identifier.atom_sha256, sensitive.atom_sha256),
-                consequent=consequent,
+                consequent=_build_atom(
+                    DisclosureAtomKind.IDENTIFIER_SENSITIVE_COEXPOSURE,
+                    identifier_category=identifier_category,
+                ),
             )
             rules[rule.rule_sha256] = rule
 
@@ -462,19 +461,17 @@ def instantiate_disclosure_inference_rules(
         existing = family.get(atom.cohort_hmac_sha256)
         if existing is None or atom.atom_sha256 < existing.atom_sha256:
             family[atom.cohort_hmac_sha256] = atom
-    for family, cohorts in sorted(cohorts_by_family.items()):
+    for family_sha256, cohorts in sorted(cohorts_by_family.items()):
         distinct = tuple(sorted(cohorts.values(), key=lambda atom: atom.atom_sha256))
         if len(distinct) < 2:
             continue
-        left, right = distinct[:2]
-        consequent = _build_atom(
-            DisclosureAtomKind.PROTECTED_COHORT_VARIATION,
-            release_family_sha256=family,
-        )
         rule = _build_rule(
             DisclosureInferenceRuleFamily.PROTECTED_COHORT_VARIATION,
-            antecedents=(left.atom_sha256, right.atom_sha256),
-            consequent=consequent,
+            antecedents=(distinct[0].atom_sha256, distinct[1].atom_sha256),
+            consequent=_build_atom(
+                DisclosureAtomKind.PROTECTED_COHORT_VARIATION,
+                release_family_sha256=family_sha256,
+            ),
         )
         rules[rule.rule_sha256] = rule
 
@@ -487,7 +484,7 @@ def least_fixed_point(
     released_atoms: tuple[DisclosureAtom, ...],
     rules: tuple[DisclosureInferenceRule, ...],
 ) -> tuple[DisclosureAtom, ...]:
-    """Compute deterministic least fixed point without LLM or probabilistic inference."""
+    """Compute deterministic least fixed point without LLM/probabilistic inference."""
 
     known = {atom.atom_sha256: atom for atom in released_atoms}
     seed_hashes = set(known)
@@ -496,7 +493,7 @@ def least_fixed_point(
     while changed:
         changed = False
         for rule in ordered_rules:
-            if all(antecedent in known for antecedent in rule.antecedent_atom_sha256s):
+            if all(digest in known for digest in rule.antecedent_atom_sha256s):
                 consequent = rule.consequent
                 existing = known.get(consequent.atom_sha256)
                 if existing is not None:
@@ -520,14 +517,16 @@ def compute_disclosure_inference_rule_sha256(rule: DisclosureInferenceRule) -> s
 
 
 def compute_inference_rules_sha256(rules: tuple[DisclosureInferenceRule, ...]) -> str:
-    ordered = tuple(sorted(rule.rule_sha256 for rule in rules))
     return canonical_json_sha256(
-        {"inference_version": _INFERENCE_VERSION, "rule_sha256s": list(ordered)}
+        {
+            "inference_version": _INFERENCE_VERSION,
+            "rule_sha256s": sorted(rule.rule_sha256 for rule in rules),
+        }
     )
 
 
 def compute_disclosure_state_sha256(state: DisclosureState) -> str:
-    """Hash only relevant canonical semantics, excluding ledger IDs and timestamps."""
+    """Hash relevant semantics only; exclude record IDs, timestamps, SQL, aliases."""
 
     return canonical_json_sha256(
         {
@@ -547,13 +546,12 @@ def compute_disclosure_state_sha256(state: DisclosureState) -> str:
 
 
 def _build_atom(kind: DisclosureAtomKind, **kwargs: object) -> DisclosureAtom:
-    provisional = DisclosureAtom.model_construct(
+    provisional = DisclosureAtom.model_construct(kind=kind, atom_sha256="0" * 64, **kwargs)
+    return DisclosureAtom(
         kind=kind,
-        atom_sha256="0" * 64,
+        atom_sha256=compute_disclosure_atom_sha256(provisional),
         **kwargs,
     )
-    digest = compute_disclosure_atom_sha256(provisional)
-    return DisclosureAtom(kind=kind, atom_sha256=digest, **kwargs)
 
 
 def _build_rule(
@@ -562,19 +560,18 @@ def _build_rule(
     antecedents: tuple[str, ...],
     consequent: DisclosureAtom,
 ) -> DisclosureInferenceRule:
-    canonical_antecedents = tuple(sorted(set(antecedents)))
+    canonical = tuple(sorted(set(antecedents)))
     provisional = DisclosureInferenceRule.model_construct(
         family=family,
-        antecedent_atom_sha256s=canonical_antecedents,
+        antecedent_atom_sha256s=canonical,
         consequent=consequent,
         rule_sha256="0" * 64,
     )
-    digest = compute_disclosure_inference_rule_sha256(provisional)
     return DisclosureInferenceRule(
         family=family,
-        antecedent_atom_sha256s=canonical_antecedents,
+        antecedent_atom_sha256s=canonical,
         consequent=consequent,
-        rule_sha256=digest,
+        rule_sha256=compute_disclosure_inference_rule_sha256(provisional),
     )
 
 
