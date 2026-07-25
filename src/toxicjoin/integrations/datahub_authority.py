@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import shlex
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 from pydantic import SecretStr
 
@@ -68,10 +68,6 @@ class RoleBoundDataHubMcpSettings(DataHubMcpSettings):
             environment["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] = "false"
             environment["SAVE_DOCUMENT_TOOL_ENABLED"] = "false"
         else:
-            # mcp-server-datahub 0.6.x only registers save_document from inside
-            # register_mutation_tools(), so this switch must be true for the isolated
-            # writer child. ToolAllowlistTransport is mandatory at the ToxicJoin
-            # boundary and permits save_document only.
             environment["TOOLS_IS_MUTATION_ENABLED"] = "true"
             environment["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] = "false"
             environment["SAVE_DOCUMENT_TOOL_ENABLED"] = "true"
@@ -95,12 +91,7 @@ class RoleBoundDataHubMcpSettings(DataHubMcpSettings):
         update: dict[str, Any] | None = None,
         deep: bool = False,
     ) -> Self:
-        """Forbid relabeling an existing credential into a different authority role.
-
-        Pydantic's default ``model_copy(update=...)`` intentionally does not validate updates.
-        Authority-bearing fields therefore cannot be changed through that API. Non-authority
-        fields may still be copied for ordinary configuration use.
-        """
+        """Forbid relabeling an existing credential into a different authority role."""
 
         if update and _PROTECTED_ROLE_FIELDS.intersection(update):
             raise ValueError("DataHub credential authority fields cannot be changed by model_copy")
