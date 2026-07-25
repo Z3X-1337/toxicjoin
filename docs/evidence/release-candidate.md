@@ -1,14 +1,14 @@
 # ToxicJoin Final Release Candidate Evidence
 
-This page is the authoritative judge-facing index for the release-frozen ToxicJoin candidate.
+This page is the authoritative judge-facing index for the release-frozen ToxicJoin runtime candidate.
 
-## Exact candidate
+## Exact runtime candidate
 
 ```text
 fe4f8da2579e09bdbfb1d998b92dfea86549733b
 ```
 
-The candidate was promoted to `main` by non-forced fast-forward, so the release branch and the validated commit are the same Git object. No squash, rebase, or merge commit was created after validation.
+That commit was promoted to `main` by non-forced fast-forward after validation, so no new production SHA was introduced at promotion time. Subsequent release-close work may advance `main` with documentation/evidence-only commits; those commits do not alter the audited runtime tree. All production and independent-validation results below refer to `fe4f8da2579e09bdbfb1d998b92dfea86549733b` exactly.
 
 Policy version: `0.2.0`.
 
@@ -181,6 +181,6 @@ The release candidate also has:
 
 ## Release state
 
-The product is release-frozen. No feature, refactor, dependency, or policy changes are authorized before submission unless a proven release blocker requires reopening the candidate.
+The runtime product is release-frozen. No feature, refactor, dependency, or policy changes are authorized before submission unless a proven release blocker requires reopening the candidate. Documentation/evidence-only synchronization does not redefine or silently revalidate the runtime candidate.
 
 The hosted browser experience remains a clearly labeled deterministic Replay. The Docker/FastAPI package is the executable path. Devpost submission remains separate from this technical evidence and requires explicit owner approval.
