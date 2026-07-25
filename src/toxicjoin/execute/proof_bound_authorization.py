@@ -71,6 +71,10 @@ class ProofBoundExecutionAuthorizer(ExecutionAuthorizer):
         proof_key = bytes(privacy_proof_integrity_key)
         if len(proof_key) < 32:
             raise ValueError("privacy proof integrity key must be at least 32 bytes")
+        if secret_key is not None and hmac.compare_digest(proof_key, bytes(secret_key)):
+            raise ValueError(
+                "privacy proof integrity key must differ from execution authorization key"
+            )
         super().__init__(
             context_resolver=context_resolver,
             policy_engine=policy_engine,
@@ -80,6 +84,10 @@ class ProofBoundExecutionAuthorizer(ExecutionAuthorizer):
             ttl_seconds=ttl_seconds,
             clock=clock,
         )
+        if hmac.compare_digest(proof_key, self._secret_key):
+            raise ValueError(
+                "privacy proof integrity key must differ from execution authorization key"
+            )
         self._privacy_proof_integrity_key = proof_key
 
     def issue(
