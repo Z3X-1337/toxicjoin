@@ -12,7 +12,7 @@ from toxicjoin.integrations.datahub_authority import (
     DataHubMcpRole,
     RoleBoundDataHubMcpSettings,
 )
-from toxicjoin.integrations.datahub_mcp import McpToolDefinition
+from toxicjoin.integrations.datahub_mcp import DataHubMcpSettings, McpToolDefinition
 
 PATIENTS_URN = "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients,PROD)"
 _SECRET = "role-bound-agent-secret"
@@ -37,6 +37,17 @@ def _role_settings(role: DataHubMcpRole) -> RoleBoundDataHubMcpSettings:
         timeout_seconds=30,
         mutation_enabled=role == DataHubMcpRole.MUTATION,
         role=role,
+    )
+
+
+def _legacy_settings(*, mutation_enabled: bool) -> DataHubMcpSettings:
+    return DataHubMcpSettings(
+        gms_url=_ENDPOINT,
+        gms_token=SecretStr(_SECRET),
+        command="uvx",
+        args=("mcp-server-datahub",),
+        timeout_seconds=30,
+        mutation_enabled=mutation_enabled,
     )
 
 
@@ -90,19 +101,34 @@ class MutationExposingTransport:
 
 
 def test_read_role_settings_retain_role_bound_child_protections() -> None:
+    original = _role_settings(DataHubMcpRole.READ_ONLY)
     discoverer = DataHubAgentDiscoverer(
-        settings=_role_settings(DataHubMcpRole.READ_ONLY),
+        settings=original,
         asset_map=_asset_map(),
         transport_factory=lambda _: MutationExposingTransport(),
     )
 
     settings = discoverer._settings
     assert isinstance(settings, RoleBoundDataHubMcpSettings)
+    assert settings is not original
     assert settings.role == DataHubMcpRole.READ_ONLY
     assert settings.mutation_enabled is False
     child_env = settings.child_environment()
     assert child_env["TOOLS_IS_MUTATION_ENABLED"] == "false"
     assert child_env["SAVE_DOCUMENT_TOOL_ENABLED"] == "false"
+
+
+@pytest.mark.parametrize("mutation_enabled", [False, True])
+def test_legacy_base_credential_is_never_repurposed_for_discovery(
+    mutation_enabled: bool,
+) -> None:
+    with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
+        DataHubAgentDiscoverer(  # type: ignore[arg-type]
+            settings=_legacy_settings(mutation_enabled=mutation_enabled),
+            asset_map=_asset_map(),
+            transport_factory=lambda _: MutationExposingTransport(),
+        )
+    assert exc_info.value.code == "AGENT_DATAHUB_READ_ROLE_REQUIRED"
 
 
 def test_mutation_role_credential_is_not_repurposed_for_discovery() -> None:
