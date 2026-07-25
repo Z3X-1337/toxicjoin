@@ -113,7 +113,7 @@ class ReceiptWriteback(StrictModel):
 
 
 class DecisionReceipt(StrictModel):
-    schema_version: Literal["1.4"] = "1.4"
+    schema_version: Literal["1.5"] = "1.5"
     receipt_id: str = Field(pattern=r"^tj_[0-9a-f]{16}$")
     created_at: datetime
     mode: ReceiptMode
@@ -133,6 +133,7 @@ class DecisionReceipt(StrictModel):
     execution: ReceiptExecutionSummary | None = None
     writeback: ReceiptWriteback = Field(default_factory=ReceiptWriteback)
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    integrity_hmac_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @field_validator("created_at")
     @classmethod
