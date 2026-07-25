@@ -7,9 +7,7 @@ file and report hash.
 """
 
 from __future__ import annotations
-
 from pydantic import Field
-
 from toxicjoin.models import StrictModel
 
 
@@ -45,7 +43,7 @@ class BenchmarkEvidenceSummary(StrictModel):
 
 
 BENCHMARK_EVIDENCE = BenchmarkEvidenceSummary(
-    policy_version="0.1.0",
+    policy_version="0.2.0",
     corpus=BenchmarkCorpusSummary(
         total=30,
         expected_allow=10,
@@ -67,7 +65,7 @@ BENCHMARK_EVIDENCE = BenchmarkEvidenceSummary(
         "bfeae85c4b238e38012aadc6f4c95d24c7a28bcb1da1c35e8eeef5be28be7d16"
     ),
     full_report_sha256=(
-        "4a1b7630012ffd54eba698b6bf1fd66a9dc3b6167d2513ef1c4c5519a8483987"
+        "3aadc0b357db50641c8ffdc0525dde0e3d9159f933abf62a31a6a74b777d1b08"
     ),
     scope_note=(
         "Deterministic regression corpus for the declared ToxicJoin SQL and policy "
