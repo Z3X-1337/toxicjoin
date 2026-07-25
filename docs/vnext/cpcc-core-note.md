@@ -52,11 +52,13 @@ The core accepts a candidate as `ELIGIBLE_SAFE` only when the security-authorita
 
 An eligible candidate must carry commitments for generated SQL, reparsed plan, regrounded governance, evidence root, local PolicyEngine decision, rebuilt Twin state, and PPMC result. The local decision must be `ALLOW` and PPMC must be `NO_COUNTEREXAMPLE_WITHIN_BOUND`.
 
-Any validator exception, malformed validation artifact, or candidate-hash mismatch makes the entire CPCC run `FAIL_CLOSED` rather than silently skipping that candidate.
+A deterministic rejection is `INELIGIBLE`: for example an operator that cannot apply unambiguously, a local `REWRITE/BLOCK`, or a completed PPMC result of `PROSPECTIVE_UNSAFE`.
+
+Security uncertainty is different. Validator exceptions, malformed validation artifacts, candidate-hash mismatch, unavailable required evidence, or PPMC `FAIL_CLOSED` make the entire CPCC run `FAIL_CLOSED`. CPCC must not discard an uncertain candidate and then select a more expensive repair, because doing so would invalidate the minimum-cost claim.
 
 ## Exhaustive selection semantics
 
-CPCC evaluates the complete committed candidate list before selection; it does not stop when it finds an apparently cheap safe repair. After all candidates are validated, it selects the eligible candidate with minimum declared lexicographic cost.
+CPCC evaluates the complete committed candidate list before selection; it does not stop when it finds an apparently cheap safe repair. After all candidates are deterministically resolved, it selects the eligible candidate with minimum declared lexicographic cost.
 
 The supported claim is therefore only:
 
