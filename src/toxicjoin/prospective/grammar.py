@@ -2,8 +2,8 @@
 
 P0 never synthesizes arbitrary SQL or literals during prospective search. The grammar is
 instantiated from one canonical governed context and contains complete future semantic
-release variants. Serialized grammars are self-validating: the expected action set is
-regenerated from the committed context before the grammar hash is accepted.
+release variants plus explicitly directed snapshot edges. Serialized grammars regenerate
+the expected action set from their committed context before their hash is accepted.
 """
 
 from __future__ import annotations
@@ -75,13 +75,33 @@ class FutureActionKind(StrEnum):
     SNAPSHOT_ADVANCE = "SNAPSHOT_ADVANCE"
 
 
+class DeclaredSnapshotTransition(StrictModel):
+    """One security-owned directed warehouse-snapshot edge."""
+
+    from_snapshot_sha256: str | None = Field(default=None, pattern=_HASH_PATTERN)
+    to_snapshot_sha256: str = Field(pattern=_HASH_PATTERN)
+
+    @model_validator(mode="after")
+    def validate_edge(self) -> "DeclaredSnapshotTransition":
+        if self.from_snapshot_sha256 == self.to_snapshot_sha256:
+            raise ValueError("snapshot transition must change the snapshot commitment")
+        return self
+
+
 class FutureActionGrammarContext(StrictModel):
-    """Canonical security-owned finite inputs used to instantiate future actions."""
+    """Canonical security-owned finite model universe used to instantiate actions."""
 
     schema_version: Literal["1.0"] = "1.0"
     grammar_version: Literal["0.1.0"] = _GRAMMAR_VERSION
+    initial_state_sha256: str = Field(pattern=_HASH_PATTERN)
+    scope_sha256: str = Field(pattern=_HASH_PATTERN)
+    purpose_commitment_sha256: str = Field(pattern=_HASH_PATTERN)
+    governance_commitment_sha256: str = Field(pattern=_HASH_PATTERN)
+    evidence_root_sha256: str = Field(pattern=_HASH_PATTERN)
+    base_warehouse_snapshot_sha256: str | None = Field(default=None, pattern=_HASH_PATTERN)
     base_semantic: DisclosureSemanticRelease
     base_composition: DisclosureComposition
+    base_release_atom_sha256s: tuple[Sha256, ...] = Field(min_length=1)
     relevant_projection_fields: tuple[GovernedColumn, ...] = Field(
         default=(), max_length=_MAX_RELEVANT_FIELDS
     )
@@ -92,7 +112,7 @@ class FutureActionGrammarContext(StrictModel):
     cohort_variant_hmacs: tuple[Sha256, ...] = Field(
         default=(), max_length=_MAX_COHORT_VARIANTS
     )
-    snapshot_transitions: tuple[Sha256, ...] = Field(
+    snapshot_transitions: tuple[DeclaredSnapshotTransition, ...] = Field(
         default=(), max_length=_MAX_SNAPSHOT_TRANSITIONS
     )
     context_sha256: str = Field(pattern=_HASH_PATTERN)
@@ -104,6 +124,17 @@ class FutureActionGrammarContext(StrictModel):
         if self.base_composition.protected_release != is_protected_release(self.base_semantic):
             raise ValueError("base composition protected classification mismatch")
         _validate_base_semantic(self.base_semantic)
+
+        try:
+            expected_base_atoms = direct_atoms_for_release(
+                self.base_semantic,
+                self.base_composition,
+            )
+        except DisclosureTwinError as exc:
+            raise ValueError("base semantic release cannot be projected safely") from exc
+        expected_base_hashes = tuple(sorted(atom.atom_sha256 for atom in expected_base_atoms))
+        if self.base_release_atom_sha256s != expected_base_hashes:
+            raise ValueError("base release atom commitment mismatch")
 
         _require_canonical_columns(self.relevant_projection_fields, "relevant_projection_fields")
         _require_canonical_columns(self.group_key_fields, "group_key_fields")
@@ -130,8 +161,14 @@ class FutureActionGrammarContext(StrictModel):
             raise ValueError("unsupported future aggregate: " + ", ".join(unsupported))
         if self.cohort_variant_hmacs != tuple(sorted(set(self.cohort_variant_hmacs))):
             raise ValueError("cohort_variant_hmacs must be sorted and unique")
-        if self.snapshot_transitions != tuple(sorted(set(self.snapshot_transitions))):
+
+        transition_keys = tuple(_snapshot_transition_key(edge) for edge in self.snapshot_transitions)
+        if transition_keys != tuple(sorted(set(transition_keys))):
             raise ValueError("snapshot_transitions must be sorted and unique")
+        _validate_snapshot_transition_graph(
+            self.base_warehouse_snapshot_sha256,
+            self.snapshot_transitions,
+        )
 
         if self.context_sha256 != compute_future_action_context_sha256(self):
             raise ValueError("future action grammar context hash mismatch")
@@ -139,13 +176,14 @@ class FutureActionGrammarContext(StrictModel):
 
 
 class FutureAction(StrictModel):
-    """One complete canonical future release or snapshot transition."""
+    """One complete canonical future release or directed snapshot transition."""
 
     schema_version: Literal["1.0"] = "1.0"
     grammar_version: Literal["0.1.0"] = _GRAMMAR_VERSION
     kind: FutureActionKind
     semantic: DisclosureSemanticRelease | None = None
     composition: DisclosureComposition | None = None
+    snapshot_from_sha256: str | None = Field(default=None, pattern=_HASH_PATTERN)
     snapshot_sha256: str | None = Field(default=None, pattern=_HASH_PATTERN)
     action_sha256: str = Field(pattern=_HASH_PATTERN)
 
@@ -153,10 +191,17 @@ class FutureAction(StrictModel):
     def validate_action(self) -> "FutureAction":
         if self.kind == FutureActionKind.SNAPSHOT_ADVANCE:
             if self.snapshot_sha256 is None or self.semantic is not None or self.composition is not None:
-                raise ValueError("snapshot action must contain only a snapshot commitment")
+                raise ValueError("snapshot action must contain only a directed snapshot edge")
+            if self.snapshot_from_sha256 == self.snapshot_sha256:
+                raise ValueError("snapshot action must advance to a different commitment")
         else:
-            if self.snapshot_sha256 is not None or self.semantic is None or self.composition is None:
-                raise ValueError("release action requires semantic and composition metadata")
+            if (
+                self.snapshot_from_sha256 is not None
+                or self.snapshot_sha256 is not None
+                or self.semantic is None
+                or self.composition is None
+            ):
+                raise ValueError("release action requires semantic and composition metadata only")
             if self.composition.release_family_sha256 != self.semantic.semantic_sha256:
                 raise ValueError("future action composition must bind its semantic release")
             if self.composition.protected_release != is_protected_release(self.semantic):
@@ -194,45 +239,72 @@ class FutureActionGrammar(StrictModel):
         return self
 
 
-
 def build_future_action_grammar_context(
     *,
+    base_state: DisclosureState,
     base_semantic: DisclosureSemanticRelease,
     base_composition: DisclosureComposition,
     relevant_projection_fields: tuple[GovernedColumn, ...] = (),
     group_key_fields: tuple[GovernedColumn, ...] = (),
     aggregate_allowlist: tuple[str, ...] = (),
     cohort_variant_hmacs: tuple[str, ...] = (),
-    snapshot_transitions: tuple[str, ...] = (),
+    snapshot_transitions: tuple[DeclaredSnapshotTransition, ...] = (),
 ) -> FutureActionGrammarContext:
-    """Build one canonical context independent of caller insertion order."""
+    """Build one canonical context bound to a trusted initial Twin state."""
+
+    try:
+        base_release_atoms = direct_atoms_for_release(base_semantic, base_composition)
+    except DisclosureTwinError as exc:
+        raise FutureActionGrammarError("base release cannot be projected safely") from exc
+    base_hashes = tuple(sorted(atom.atom_sha256 for atom in base_release_atoms))
+    state_hashes = {atom.atom_sha256 for atom in base_state.released_atoms}
+    if not set(base_hashes).issubset(state_hashes):
+        raise FutureActionGrammarError("base semantic release is not present in the initial state")
 
     relevant = tuple(sorted(relevant_projection_fields, key=lambda column: column.key))
     groups = tuple(sorted(group_key_fields, key=lambda column: column.key))
     aggregates = tuple(sorted(set(value.strip().upper() for value in aggregate_allowlist)))
     cohorts = tuple(sorted(set(cohort_variant_hmacs)))
-    snapshots = tuple(sorted(set(snapshot_transitions)))
+    transitions = tuple(
+        sorted(
+            {_snapshot_transition_key(edge): edge for edge in snapshot_transitions}.values(),
+            key=_snapshot_transition_key,
+        )
+    )
     provisional = FutureActionGrammarContext.model_construct(
+        initial_state_sha256=base_state.state_sha256,
+        scope_sha256=base_state.scope.scope_sha256,
+        purpose_commitment_sha256=base_state.purpose_commitment_sha256,
+        governance_commitment_sha256=base_state.governance_commitment_sha256,
+        evidence_root_sha256=base_state.evidence_root_sha256,
+        base_warehouse_snapshot_sha256=base_state.warehouse_snapshot_sha256,
         base_semantic=base_semantic,
         base_composition=base_composition,
+        base_release_atom_sha256s=base_hashes,
         relevant_projection_fields=relevant,
         group_key_fields=groups,
         aggregate_allowlist=aggregates,
         cohort_variant_hmacs=cohorts,
-        snapshot_transitions=snapshots,
+        snapshot_transitions=transitions,
         context_sha256="0" * 64,
     )
     return FutureActionGrammarContext(
+        initial_state_sha256=base_state.state_sha256,
+        scope_sha256=base_state.scope.scope_sha256,
+        purpose_commitment_sha256=base_state.purpose_commitment_sha256,
+        governance_commitment_sha256=base_state.governance_commitment_sha256,
+        evidence_root_sha256=base_state.evidence_root_sha256,
+        base_warehouse_snapshot_sha256=base_state.warehouse_snapshot_sha256,
         base_semantic=base_semantic,
         base_composition=base_composition,
+        base_release_atom_sha256s=base_hashes,
         relevant_projection_fields=relevant,
         group_key_fields=groups,
         aggregate_allowlist=aggregates,
         cohort_variant_hmacs=cohorts,
-        snapshot_transitions=snapshots,
+        snapshot_transitions=transitions,
         context_sha256=compute_future_action_context_sha256(provisional),
     )
-
 
 
 def instantiate_future_action_grammar(
@@ -253,14 +325,14 @@ def instantiate_future_action_grammar(
     )
 
 
-
 def apply_future_action(
     state: DisclosureState,
     action: FutureAction,
     grammar: FutureActionGrammar,
 ) -> DisclosureState:
-    """Apply only an exact member of a self-validating finite grammar."""
+    """Apply only an exact grammar member inside the committed Twin model universe."""
 
+    _require_state_in_model_universe(state, grammar.context)
     canonical = next(
         (
             candidate
@@ -274,6 +346,8 @@ def apply_future_action(
 
     if action.kind == FutureActionKind.SNAPSHOT_ADVANCE:
         assert action.snapshot_sha256 is not None
+        if state.warehouse_snapshot_sha256 != action.snapshot_from_sha256:
+            raise FutureActionTransitionError("snapshot transition source does not match current state")
         return _rebuild_state(
             state,
             released_atoms=state.released_atoms,
@@ -297,20 +371,16 @@ def apply_future_action(
     )
 
 
-
 def compute_future_action_context_sha256(context: FutureActionGrammarContext) -> str:
     return canonical_json_sha256(context.model_dump(mode="json", exclude={"context_sha256"}))
-
 
 
 def compute_future_action_sha256(action: FutureAction) -> str:
     return canonical_json_sha256(action.model_dump(mode="json", exclude={"action_sha256"}))
 
 
-
 def compute_future_action_grammar_sha256(grammar: FutureActionGrammar) -> str:
     return canonical_json_sha256(grammar.model_dump(mode="json", exclude={"grammar_sha256"}))
-
 
 
 def _instantiate_actions(context: FutureActionGrammarContext) -> tuple[FutureAction, ...]:
@@ -383,11 +453,10 @@ def _instantiate_actions(context: FutureActionGrammarContext) -> tuple[FutureAct
             )
         )
 
-    for snapshot_sha256 in context.snapshot_transitions:
-        add(_build_snapshot_action(snapshot_sha256))
+    for transition in context.snapshot_transitions:
+        add(_build_snapshot_action(transition))
 
     return tuple(actions[key] for key in sorted(actions))
-
 
 
 def _release_variant_action(
@@ -403,7 +472,6 @@ def _release_variant_action(
     return _build_release_action(kind, semantic, composition)
 
 
-
 def _build_release_action(
     kind: FutureActionKind,
     semantic: DisclosureSemanticRelease,
@@ -413,6 +481,7 @@ def _build_release_action(
         kind=kind,
         semantic=semantic,
         composition=composition,
+        snapshot_from_sha256=None,
         snapshot_sha256=None,
         action_sha256="0" * 64,
     )
@@ -424,21 +493,21 @@ def _build_release_action(
     )
 
 
-
-def _build_snapshot_action(snapshot_sha256: str) -> FutureAction:
+def _build_snapshot_action(transition: DeclaredSnapshotTransition) -> FutureAction:
     provisional = FutureAction.model_construct(
         kind=FutureActionKind.SNAPSHOT_ADVANCE,
         semantic=None,
         composition=None,
-        snapshot_sha256=snapshot_sha256,
+        snapshot_from_sha256=transition.from_snapshot_sha256,
+        snapshot_sha256=transition.to_snapshot_sha256,
         action_sha256="0" * 64,
     )
     return FutureAction(
         kind=FutureActionKind.SNAPSHOT_ADVANCE,
-        snapshot_sha256=snapshot_sha256,
+        snapshot_from_sha256=transition.from_snapshot_sha256,
+        snapshot_sha256=transition.to_snapshot_sha256,
         action_sha256=compute_future_action_sha256(provisional),
     )
-
 
 
 def _with_added_projection(
@@ -451,7 +520,6 @@ def _with_added_projection(
     referenced = _merge_columns(base.referenced_columns, (column,))
     datasets = tuple(sorted(set((*base.source_dataset_urns, column.dataset_urn))))
     return _rebuild_semantic(base, outputs=outputs, referenced=referenced, datasets=datasets)
-
 
 
 def _with_removed_projection(
@@ -473,7 +541,6 @@ def _with_removed_projection(
     } | {column.key for column in base.join_columns} | {column.key for column in base.group_keys}
     referenced = tuple(column for column in base.referenced_columns if column.key in still_needed)
     return _rebuild_semantic(base, outputs=outputs, referenced=referenced)
-
 
 
 def _with_added_group_key(
@@ -514,7 +581,6 @@ def _with_added_group_key(
     )
 
 
-
 def _with_dropped_group_key(
     base: DisclosureSemanticRelease,
     column_key: str,
@@ -543,7 +609,6 @@ def _with_dropped_group_key(
     )
 
 
-
 def _with_changed_aggregate(
     base: DisclosureSemanticRelease,
     current: str,
@@ -558,7 +623,6 @@ def _with_changed_aggregate(
         )
     )
     return _rebuild_semantic(base, aggregates=aggregates)
-
 
 
 def _rebuild_semantic(
@@ -603,7 +667,6 @@ def _rebuild_semantic(
     )
 
 
-
 def _rebuild_state(
     state: DisclosureState,
     *,
@@ -640,6 +703,28 @@ def _rebuild_state(
         raise FutureActionTransitionError("future action transition failed closed") from exc
 
 
+def _require_state_in_model_universe(
+    state: DisclosureState,
+    context: FutureActionGrammarContext,
+) -> None:
+    if state.scope.scope_sha256 != context.scope_sha256:
+        raise FutureActionTransitionError("future state scope is outside the grammar context")
+    if state.purpose_commitment_sha256 != context.purpose_commitment_sha256:
+        raise FutureActionTransitionError("future state purpose is outside the grammar context")
+    if state.governance_commitment_sha256 != context.governance_commitment_sha256:
+        raise FutureActionTransitionError("future state governance is outside the grammar context")
+    if state.evidence_root_sha256 != context.evidence_root_sha256:
+        raise FutureActionTransitionError("future state evidence root is outside the grammar context")
+    state_atoms = {atom.atom_sha256 for atom in state.released_atoms}
+    if not set(context.base_release_atom_sha256s).issubset(state_atoms):
+        raise FutureActionTransitionError("future state is missing the grammar base release")
+    reachable_snapshots = _reachable_snapshot_nodes(
+        context.base_warehouse_snapshot_sha256,
+        context.snapshot_transitions,
+    )
+    if state.warehouse_snapshot_sha256 not in reachable_snapshots:
+        raise FutureActionTransitionError("future state snapshot is outside the grammar context")
+
 
 def _validate_base_semantic(semantic: DisclosureSemanticRelease) -> None:
     if not semantic.outputs:
@@ -664,7 +749,6 @@ def _validate_base_semantic(semantic: DisclosureSemanticRelease) -> None:
         raise ValueError("future action semantics require complete governed references")
 
 
-
 def _semantic_columns(semantic: DisclosureSemanticRelease) -> tuple[GovernedColumn, ...]:
     by_key: dict[str, GovernedColumn] = {}
     for column in (
@@ -680,7 +764,6 @@ def _semantic_columns(semantic: DisclosureSemanticRelease) -> tuple[GovernedColu
     return tuple(by_key[key] for key in sorted(by_key))
 
 
-
 def _merge_columns(
     left: tuple[GovernedColumn, ...],
     right: tuple[GovernedColumn, ...],
@@ -694,12 +777,10 @@ def _merge_columns(
     return tuple(merged[key] for key in sorted(merged))
 
 
-
 def _require_canonical_columns(columns: tuple[GovernedColumn, ...], label: str) -> None:
     keys = tuple(column.key for column in columns)
     if keys != tuple(sorted(set(keys))):
         raise ValueError(f"{label} must be sorted and unique by governed column key")
-
 
 
 def _canonical_outputs(outputs: tuple[SemanticOutput, ...]) -> tuple[SemanticOutput, ...]:
@@ -712,6 +793,48 @@ def _canonical_outputs(outputs: tuple[SemanticOutput, ...]) -> tuple[SemanticOut
         by_signature[signature] = output
     return tuple(by_signature[key] for key in sorted(by_signature))
 
+
+def _snapshot_transition_key(
+    transition: DeclaredSnapshotTransition,
+) -> tuple[str, str]:
+    return transition.from_snapshot_sha256 or "", transition.to_snapshot_sha256
+
+
+def _reachable_snapshot_nodes(
+    base_snapshot: str | None,
+    transitions: tuple[DeclaredSnapshotTransition, ...],
+) -> set[str | None]:
+    reachable: set[str | None] = {base_snapshot}
+    changed = True
+    while changed:
+        changed = False
+        for transition in transitions:
+            if (
+                transition.from_snapshot_sha256 in reachable
+                and transition.to_snapshot_sha256 not in reachable
+            ):
+                reachable.add(transition.to_snapshot_sha256)
+                changed = True
+    return reachable
+
+
+def _validate_snapshot_transition_graph(
+    base_snapshot: str | None,
+    transitions: tuple[DeclaredSnapshotTransition, ...],
+) -> None:
+    reachable = _reachable_snapshot_nodes(base_snapshot, transitions)
+    unreachable_sources = sorted(
+        {
+            transition.from_snapshot_sha256 or "@none"
+            for transition in transitions
+            if transition.from_snapshot_sha256 not in reachable
+        }
+    )
+    if unreachable_sources:
+        raise ValueError(
+            "snapshot transition graph contains unreachable source commitments: "
+            + ", ".join(unreachable_sources)
+        )
 
 
 def _output_key(output: SemanticOutput) -> tuple[str, tuple[str, ...]]:
