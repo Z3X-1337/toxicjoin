@@ -255,10 +255,6 @@ class CpccCandidateValidation(StrictModel):
             self.ppmc_result_sha256,
             self.ppmc_status,
         )
-        if (self.ppmc_result_sha256 is None) != (self.ppmc_status is None):
-            raise ValueError("CPCC PPMC result hash/status must be present together")
-        if self.local_policy_allowed and self.local_policy_decision_sha256 is None:
-            raise ValueError("CPCC local ALLOW requires a local policy decision commitment")
 
         if self.outcome == CpccValidationOutcome.ELIGIBLE_SAFE:
             if self.failure_stage is not None or any(
@@ -274,6 +270,12 @@ class CpccCandidateValidation(StrictModel):
                     "eligible CPCC candidate requires bounded PPMC no-counterexample result"
                 )
         else:
+            if (self.ppmc_result_sha256 is None) != (self.ppmc_status is None):
+                raise ValueError("CPCC PPMC result hash/status must be present together")
+            if self.local_policy_allowed and self.local_policy_decision_sha256 is None:
+                raise ValueError(
+                    "CPCC local ALLOW requires a local policy decision commitment"
+                )
             if self.failure_stage is None:
                 raise ValueError("failed CPCC candidate validation requires a failure stage")
             self._validate_failure_prefix()
