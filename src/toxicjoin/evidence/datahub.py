@@ -38,7 +38,6 @@ _PREDICATE_DERIVATIONS: dict[str, DerivationKind] = {
     "datahub.snapshot_sha256": DerivationKind.RUNTIME_OBSERVED,
     "datahub.tags": DerivationKind.RUNTIME_OBSERVED,
     "datahub.glossary_terms": DerivationKind.RUNTIME_OBSERVED,
-    "datahub.lineage_source_urn": DerivationKind.RUNTIME_OBSERVED,
     "datahub.catalog_version": DerivationKind.EXPLICIT_MAPPING,
     "datahub.logical_name": DerivationKind.EXPLICIT_MAPPING,
     "datahub.owner": DerivationKind.EXPLICIT_MAPPING,
@@ -48,6 +47,7 @@ _PREDICATE_DERIVATIONS: dict[str, DerivationKind] = {
     "toxicjoin.lineage_governance_complete": DerivationKind.EXPLICIT_MAPPING,
     "datahub.lineage_source_ref": DerivationKind.EXPLICIT_MAPPING,
     "toxicjoin.lineage_source_category": DerivationKind.EXPLICIT_MAPPING,
+    "datahub.lineage_source_urn": DerivationKind.EXPLICIT_MAPPING,
 }
 
 
@@ -354,6 +354,7 @@ def build_datahub_evidence_bundle(
                             expires_at=expires_at,
                             supporting_claim_ids=root_support,
                             complete=lineage_complete,
+                            derivation=DerivationKind.EXPLICIT_MAPPING,
                         )
                     )
 
