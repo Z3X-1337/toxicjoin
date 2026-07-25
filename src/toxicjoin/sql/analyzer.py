@@ -125,6 +125,9 @@ def _classify_projection_expression(
     if isinstance(expression, exp.Alias):
         expression = expression.this
 
+    if _contains_filtered_or_countif_aggregate(expression):
+        return ProjectionExposureKind.CONDITIONAL_AGGREGATE
+
     if isinstance(expression, exp.Column):
         kind = _source_column_kind(
             expression,
@@ -267,6 +270,8 @@ def _aggregate_operand_kind(
                     if _count_is_pure_cardinality(current)
                     else ProjectionExposureKind.CONDITIONAL_AGGREGATE
                 )
+            if current.key.upper() in {"COUNT_IF", "COUNTIF"}:
+                return ProjectionExposureKind.CONDITIONAL_AGGREGATE
             return ProjectionExposureKind.AGGREGATE_OPERAND
         current = current.parent
     return None
@@ -289,6 +294,23 @@ def _count_is_pure_cardinality(count: exp.Count) -> bool:
     if isinstance(argument, exp.Distinct):
         expressions = tuple(argument.expressions)
         return len(expressions) == 1 and isinstance(expressions[0], exp.Column)
+    return False
+
+
+def _contains_filtered_or_countif_aggregate(expression: exp.Expression) -> bool:
+    """Detect predicate-bearing aggregate syntax outside an aggregate's direct operand.
+
+    SQLGlot represents ``COUNT(x) FILTER (WHERE predicate)`` as a Filter node whose
+    aggregate and predicate are siblings, so walking only from predicate columns toward
+    an AggFunc can miss the conditional semantics. COUNT_IF/COUNTIF are conditional by
+    definition and are treated the same way when the dialect parser exposes them.
+    """
+
+    for node in expression.walk():
+        if isinstance(node, exp.Filter) and isinstance(node.this, exp.AggFunc):
+            return True
+        if isinstance(node, exp.AggFunc) and node.key.upper() in {"COUNT_IF", "COUNTIF"}:
+            return True
     return False
 
 
