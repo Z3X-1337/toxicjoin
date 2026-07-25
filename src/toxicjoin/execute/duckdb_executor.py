@@ -24,6 +24,7 @@ from toxicjoin.execute.authorization import (
 )
 from toxicjoin.execute.limits import ExecutionOutputLimits
 from toxicjoin.models import ColumnRef, QueryPlan, ReasonCode, StrictModel
+from toxicjoin.proofs import PreExecutionPrivacyProof
 
 
 _MAX_CELL_NESTING = 32
@@ -127,6 +128,7 @@ class DuckDBExecutor:
         rewrite_parent_sql: str | None = None,
         disclosure_commitment: DisclosureCommitment | None = None,
         expected_governance_binding: GovernanceContextBinding | None = None,
+        privacy_proof: PreExecutionPrivacyProof | None = None,
     ) -> ExecutionAuthorization:
         """Issue from the same authority that the execution boundary will verify."""
 
@@ -135,16 +137,18 @@ class DuckDBExecutor:
                 ReasonCode.VERIFICATION_FAILED,
                 "executor has no execution authorizer bound",
             )
+        issue_kwargs: dict[str, Any] = {
+            "task_purpose": task_purpose,
+            "subject_key": subject_key,
+            "dialect": dialect,
+            "rewrite_parent_sql": rewrite_parent_sql,
+            "disclosure_commitment": disclosure_commitment,
+            "expected_governance_binding": expected_governance_binding,
+        }
+        if privacy_proof is not None:
+            issue_kwargs["privacy_proof"] = privacy_proof
         try:
-            return self._authorizer.issue(
-                sql,
-                task_purpose=task_purpose,
-                subject_key=subject_key,
-                dialect=dialect,
-                rewrite_parent_sql=rewrite_parent_sql,
-                disclosure_commitment=disclosure_commitment,
-                expected_governance_binding=expected_governance_binding,
-            )
+            return self._authorizer.issue(sql, **issue_kwargs)
         except ExecutionAuthorizationError as exc:
             raise ExecutionError(
                 _authorization_failure_reason(exc.code),
@@ -160,6 +164,7 @@ class DuckDBExecutor:
         subject_key: ColumnRef,
         dialect: str = "duckdb",
         rewrite_parent_sql: str | None = None,
+        privacy_proof: PreExecutionPrivacyProof | None = None,
     ) -> ExecutionResult:
         """Consume a matching capability and execute its exact SQL once."""
 
@@ -174,14 +179,19 @@ class DuckDBExecutor:
                 "executor has no execution authorizer bound",
             )
 
+        consume_kwargs: dict[str, Any] = {
+            "task_purpose": task_purpose,
+            "subject_key": subject_key,
+            "dialect": dialect,
+            "rewrite_parent_sql": rewrite_parent_sql,
+        }
+        if privacy_proof is not None:
+            consume_kwargs["privacy_proof"] = privacy_proof
         try:
             query_plan = self._authorizer.verify_and_consume(
                 authorization,
                 sql,
-                task_purpose=task_purpose,
-                subject_key=subject_key,
-                dialect=dialect,
-                rewrite_parent_sql=rewrite_parent_sql,
+                **consume_kwargs,
             )
         except ExecutionAuthorizationError as exc:
             raise ExecutionError(
