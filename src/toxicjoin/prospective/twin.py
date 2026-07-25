@@ -14,6 +14,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
+from toxicjoin.disclosure.composition import is_protected_release
 from toxicjoin.disclosure.models import (
     DisclosureComposition,
     DisclosureRecord,
@@ -323,6 +324,16 @@ def direct_atoms_for_release(
     """Project one semantic release into direct atoms without raw SQL or rows."""
 
     release_sha = semantic.semantic_sha256
+    protected = is_protected_release(semantic)
+    if composition is None:
+        if protected:
+            raise DisclosureTwinError("protected semantic release requires composition metadata")
+    else:
+        if composition.release_family_sha256 != release_sha:
+            raise DisclosureTwinError("composition does not match semantic release")
+        if composition.protected_release != protected:
+            raise DisclosureTwinError("composition protected-release classification mismatch")
+
     atoms: dict[str, DisclosureAtom] = {}
 
     def add(atom: DisclosureAtom) -> None:
@@ -381,8 +392,6 @@ def direct_atoms_for_release(
             )
         )
     if composition is not None:
-        if composition.release_family_sha256 != release_sha:
-            raise DisclosureTwinError("composition does not match semantic release")
         add(
             _build_atom(
                 DisclosureAtomKind.COHORT,
