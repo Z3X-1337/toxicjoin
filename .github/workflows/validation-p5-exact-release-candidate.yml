@@ -24,6 +24,7 @@ jobs:
       EXPECTED_RELEASE_CANDIDATE_SHA: "fe4f8da2579e09bdbfb1d998b92dfea86549733b"
       RELEASE_DIR: /tmp/toxicjoin-p5-release-candidate
       CONTAINER_NAME: toxicjoin-p5-rc
+      RUNTIME_VOLUME: toxicjoin-p5-runtime
       IMAGE_NAME: toxicjoin:p5-exact-rc
       BASE_URL: http://127.0.0.1:18000
       EVIDENCE_DIR: validation-artifacts/p5-exact-release-candidate
@@ -79,15 +80,17 @@ jobs:
         run: |
           set -euo pipefail
           API_KEYS_JSON="$(python validation/p5_exact_release_candidate.py --emit-auth-json)"
+          docker volume create "$RUNTIME_VOLUME" >/dev/null
           docker run --detach \
             --name "$CONTAINER_NAME" \
             --read-only \
-            --tmpfs /var/lib/toxicjoin:rw,noexec,nosuid,size=64m \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m \
             --cap-drop=ALL \
             --security-opt=no-new-privileges \
             --pids-limit=128 \
             --memory=768m \
             --cpus=1 \
+            --mount type=volume,src="$RUNTIME_VOLUME",dst=/var/lib/toxicjoin \
             --publish 127.0.0.1:18000:8000 \
             --env "TOXICJOIN_API_KEYS_JSON=$API_KEYS_JSON" \
             --env "TOXICJOIN_ALLOWED_HOSTS=127.0.0.1,localhost" \
@@ -176,7 +179,7 @@ jobs:
           mkdir -p "$EVIDENCE_DIR"
           if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
             docker inspect "$CONTAINER_NAME" \
-              --format 'user={{.Config.User}} readonly={{.HostConfig.ReadonlyRootfs}} pids={{.HostConfig.PidsLimit}} capdrop={{json .HostConfig.CapDrop}} securityopt={{json .HostConfig.SecurityOpt}} ports={{json .HostConfig.PortBindings}}' \
+              --format 'user={{.Config.User}} readonly={{.HostConfig.ReadonlyRootfs}} pids={{.HostConfig.PidsLimit}} capdrop={{json .HostConfig.CapDrop}} securityopt={{json .HostConfig.SecurityOpt}} ports={{json .HostConfig.PortBindings}} mounts={{json .Mounts}}' \
               > "$EVIDENCE_DIR/container-security.txt"
             if [[ ! -f "$EVIDENCE_DIR/container.log" ]]; then
               docker logs "$CONTAINER_NAME" > "$EVIDENCE_DIR/container.log" 2>&1 || true
@@ -184,9 +187,12 @@ jobs:
           fi
           df -h > "$EVIDENCE_DIR/disk-usage.txt" 2>&1 || true
 
-      - name: Remove candidate container
+      - name: Remove candidate container and runtime volume
         if: always()
-        run: docker rm --force "$CONTAINER_NAME" >/dev/null 2>&1 || true
+        shell: bash
+        run: |
+          docker rm --force "$CONTAINER_NAME" >/dev/null 2>&1 || true
+          docker volume rm "$RUNTIME_VOLUME" >/dev/null 2>&1 || true
 
       - name: Upload sanitized P5 pentest evidence
         if: always()
