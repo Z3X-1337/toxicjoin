@@ -34,7 +34,7 @@ from toxicjoin.verify import VerificationResult
 
 
 _RECEIPT_ID = re.compile(r"^tj_[0-9a-f]{16}$")
-_HASH_EXCLUDED_FIELDS = {"receipt_id", "created_at", "content_sha256"}
+_HASH_EXCLUDED_FIELDS = {"content_sha256"}
 
 
 def allocate_receipt_id() -> str:
@@ -139,7 +139,7 @@ def build_receipt(
         )
 
     payload: dict[str, Any] = {
-        "schema_version": "1.3",
+        "schema_version": "1.4",
         "receipt_id": resolved_receipt_id,
         "created_at": resolved_created_at,
         "mode": mode,
@@ -171,7 +171,7 @@ def build_receipt(
 
 
 def compute_content_hash(receipt_or_payload: BaseModel | Mapping[str, Any]) -> str:
-    """Hash deterministic receipt content, excluding ID, time, and the hash field."""
+    """Hash the complete receipt identity/content except the hash field itself."""
 
     if isinstance(receipt_or_payload, BaseModel):
         payload = receipt_or_payload.model_dump(mode="json")
@@ -275,6 +275,10 @@ class ReceiptStore:
             raise ValueError(f"receipt is not valid JSON: {receipt_id}") from exc
 
         receipt = DecisionReceipt.model_validate(raw)
+        if receipt.receipt_id != receipt_id:
+            raise ValueError(
+                f"receipt identity mismatch: requested {receipt_id}, payload {receipt.receipt_id}"
+            )
         self._verify_hash(receipt)
         return receipt
 
