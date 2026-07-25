@@ -57,6 +57,21 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Generate PPMC hard-gate evidence
+        if: matrix.python-version == '3.11'
+        run: >-
+          uv run --frozen python -m toxicjoin.benchmark.ppmc_hard_gate
+          --output-dir artifacts/ppmc-hard-gate
+
+      - name: Upload PPMC hard-gate evidence
+        if: matrix.python-version == '3.11'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: toxicjoin-ppmc-hard-gate
+          path: artifacts/ppmc-hard-gate/
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Upload test diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
