@@ -1,5 +1,5 @@
 name: Validation P0 External Replay
-# Validation-only: every run resolves the exact current head of production PR #53.
+# Validation-only: every run resolves the exact current head of production PR #54.
 
 on:
   pull_request:
@@ -26,7 +26,7 @@ jobs:
     timeout-minutes: 20
 
     env:
-      TARGET_PR_NUMBER: "53"
+      TARGET_PR_NUMBER: "54"
       RELEASE_DIR: /tmp/toxicjoin-release-candidate
 
     steps:
