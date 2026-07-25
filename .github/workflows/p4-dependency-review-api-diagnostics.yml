@@ -1,0 +1,70 @@
+name: P4 Dependency Review API Diagnostics
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/p4-dependency-review-api-diagnostics.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p4-dependency-review-api-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Query GitHub Dependency Review API directly
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          url="https://api.github.com/repos/${GITHUB_REPOSITORY}/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}"
+          status=$(curl --silent --show-error \
+            --output dependency-review-api.json \
+            --write-out '%{http_code}' \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header 'X-GitHub-Api-Version: 2026-03-10' \
+            "$url")
+          printf '%s\n' "$status" > dependency-review-api.status.txt
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          status = Path('dependency-review-api.status.txt').read_text().strip()
+          raw = Path('dependency-review-api.json').read_text()
+          try:
+              body = json.loads(raw)
+          except json.JSONDecodeError:
+              body = {'raw': raw[:4000]}
+          summary = {
+              'http_status': status,
+              'message': body.get('message') if isinstance(body, dict) else None,
+              'documentation_url': body.get('documentation_url') if isinstance(body, dict) else None,
+              'change_count': len(body) if isinstance(body, list) else None,
+          }
+          Path('dependency-review-api-summary.json').write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p4-dependency-review-api-diagnostics
+          path: |
+            dependency-review-api.status.txt
+            dependency-review-api-summary.json
+            dependency-review-api.json
+          if-no-files-found: error
+          retention-days: 7
