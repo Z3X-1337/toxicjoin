@@ -145,6 +145,7 @@ def test_validator_replays_bundle_and_commits_exact_claim_partition() -> None:
     assert validation.source_identity == bundle.source_identity
     assert validation.evidence_observed_at == bundle.observed_at
     assert validation.evidence_expires_at == bundle.expires_at
+    assert validation.freshness_policy_seconds == 300
     assert validation.validated_at == now
     assert set(validation.observed_claim_ids).isdisjoint(validation.mapped_claim_ids)
     assert set(validation.observed_claim_ids) | set(validation.mapped_claim_ids) == {
@@ -290,6 +291,33 @@ def test_validator_rejects_snapshot_and_source_configuration_mismatch() -> None:
             _settings(host="other-datahub.example"),
             now=now,
         )
+
+
+def test_validator_rejects_candidate_controlled_freshness_extension() -> None:
+    extended = build_datahub_evidence_bundle(
+        _snapshot(),
+        _settings(),
+        max_age_seconds=600,
+    )
+    now = OBSERVED_AT + timedelta(seconds=30)
+
+    with pytest.raises(DataHubDerivationValidationError, match="freshness window"):
+        validate_datahub_evidence_derivations(
+            extended,
+            _snapshot(),
+            _settings(),
+            now=now,
+        )
+
+    trusted_extended = validate_datahub_evidence_derivations(
+        extended,
+        _snapshot(),
+        _settings(),
+        max_age_seconds=600,
+        now=now,
+    )
+    assert trusted_extended.freshness_policy_seconds == 600
+    assert trusted_extended.evidence_expires_at == extended.expires_at
 
 
 def test_validator_fails_closed_for_future_stale_or_naive_validation_time() -> None:
