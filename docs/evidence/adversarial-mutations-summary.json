@@ -1,7 +1,12 @@
 {
   "schema_version": "1.0",
   "suite_version": "1.0",
-  "policy_version": "0.1.0",
+  "policy_version": "0.2.0",
+  "tested_commit": "fe4f8da2579e09bdbfb1d998b92dfea86549733b",
+  "workflow_run": 30136824442,
+  "artifact_id": 8613091317,
+  "artifact_digest": "sha256:cffba65a8394ddb6fc497f6e93d3934d1a12cc20f5e08e82b1e28bf775cb8a65",
+  "data_fingerprint": "bfeae85c4b238e38012aadc6f4c95d24c7a28bcb1da1c35e8eeef5be28be7d16",
   "total_cases": 144,
   "family_counts": {
     "churn-profile": 48,
@@ -15,9 +20,5 @@
   "unsafe_initial_allow_count": 0,
   "unsafe_effective_allow_count": 0,
   "gate_failures": [],
-  "report_sha256": "5ae8de95c67ba22f06dfdfd92a405de40252aa0b2b2d9867fd28d6935d51119c",
-  "workflow_run": 30046801748,
-  "artifact_id": 8579435638,
-  "artifact_digest": "sha256:991f2727dc7e60e13f96553e132c4dde1daa4b796f42cafb963b23aeea535e64",
-  "tested_commit": "0e156ff7d9132743d3a73e4761a6a37503ddc364"
+  "report_sha256": "86011fc74ef6ca03e7b83d21e8770037fb32ddb22d41b750abc09aeabe443565"
 }
