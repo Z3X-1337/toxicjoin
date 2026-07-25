@@ -4,13 +4,14 @@ import asyncio
 import traceback
 
 import pytest
-from pydantic import SecretStr
+from pydantic import BaseModel, SecretStr
 
 from toxicjoin.agent import AgentDataHubDiscoveryError, DataHubAgentDiscoverer
 from toxicjoin.context.datahub import DataHubAssetMap
 from toxicjoin.integrations.datahub_authority import (
     DataHubMcpRole,
-    RoleBoundDataHubMcpSettings,
+    MutationDataHubMcpSettings,
+    ReadOnlyDataHubMcpSettings,
 )
 from toxicjoin.integrations.datahub_mcp import DataHubMcpSettings, McpToolDefinition
 
@@ -28,15 +29,23 @@ def _asset_map() -> DataHubAssetMap:
     )
 
 
-def _role_settings(role: DataHubMcpRole) -> RoleBoundDataHubMcpSettings:
-    return RoleBoundDataHubMcpSettings(
+def _read_settings() -> ReadOnlyDataHubMcpSettings:
+    return ReadOnlyDataHubMcpSettings(
         gms_url=_ENDPOINT,
         gms_token=SecretStr(_SECRET),
         command="uvx",
         args=("mcp-server-datahub",),
         timeout_seconds=30,
-        mutation_enabled=role == DataHubMcpRole.MUTATION,
-        role=role,
+    )
+
+
+def _mutation_settings() -> MutationDataHubMcpSettings:
+    return MutationDataHubMcpSettings(
+        gms_url=_ENDPOINT,
+        gms_token=SecretStr(_SECRET),
+        command="uvx",
+        args=("mcp-server-datahub",),
+        timeout_seconds=30,
     )
 
 
@@ -100,8 +109,8 @@ class MutationExposingTransport:
         raise AssertionError("mutation-exposure rejection must occur before any tool call")
 
 
-def test_read_role_settings_retain_role_bound_child_protections() -> None:
-    original = _role_settings(DataHubMcpRole.READ_ONLY)
+def test_read_credential_type_retains_child_protections() -> None:
+    original = _read_settings()
     discoverer = DataHubAgentDiscoverer(
         settings=original,
         asset_map=_asset_map(),
@@ -109,9 +118,10 @@ def test_read_role_settings_retain_role_bound_child_protections() -> None:
     )
 
     settings = discoverer._settings
-    assert isinstance(settings, RoleBoundDataHubMcpSettings)
+    assert type(settings) is ReadOnlyDataHubMcpSettings
     assert settings is not original
     assert settings.role == DataHubMcpRole.READ_ONLY
+    assert settings.credential_source == "DATAHUB_GMS_READ_TOKEN"
     assert settings.mutation_enabled is False
     child_env = settings.child_environment()
     assert child_env["TOOLS_IS_MUTATION_ENABLED"] == "false"
@@ -131,10 +141,44 @@ def test_legacy_base_credential_is_never_repurposed_for_discovery(
     assert exc_info.value.code == "AGENT_DATAHUB_READ_ROLE_REQUIRED"
 
 
-def test_mutation_role_credential_is_not_repurposed_for_discovery() -> None:
+def test_mutation_credential_type_is_not_repurposed_for_discovery() -> None:
     with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
-        DataHubAgentDiscoverer(
-            settings=_role_settings(DataHubMcpRole.MUTATION),
+        DataHubAgentDiscoverer(  # type: ignore[arg-type]
+            settings=_mutation_settings(),
+            asset_map=_asset_map(),
+            transport_factory=lambda _: MutationExposingTransport(),
+        )
+    assert exc_info.value.code == "AGENT_DATAHUB_READ_ROLE_REQUIRED"
+
+
+def test_role_bound_model_copy_cannot_relabel_writer_credential() -> None:
+    writer = _mutation_settings()
+    with pytest.raises(ValueError, match="authority fields cannot be changed"):
+        writer.model_copy(
+            update={
+                "role": DataHubMcpRole.READ_ONLY,
+                "mutation_enabled": False,
+                "credential_source": "DATAHUB_GMS_READ_TOKEN",
+            }
+        )
+
+
+def test_concrete_type_rejects_writer_even_if_base_model_copy_bypasses_override() -> None:
+    writer = _mutation_settings()
+    relabelled = BaseModel.model_copy(
+        writer,
+        update={
+            "role": DataHubMcpRole.READ_ONLY,
+            "mutation_enabled": False,
+            "credential_source": "DATAHUB_GMS_READ_TOKEN",
+        },
+    )
+    assert type(relabelled) is MutationDataHubMcpSettings
+    assert relabelled.role == DataHubMcpRole.READ_ONLY
+
+    with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
+        DataHubAgentDiscoverer(  # type: ignore[arg-type]
+            settings=relabelled,
             asset_map=_asset_map(),
             transport_factory=lambda _: MutationExposingTransport(),
         )
@@ -146,7 +190,7 @@ def test_read_client_fails_closed_when_server_exposes_mutation_tool() -> None:
     with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
         asyncio.run(
             DataHubAgentDiscoverer(
-                settings=_role_settings(DataHubMcpRole.READ_ONLY),
+                settings=_read_settings(),
                 asset_map=_asset_map(),
                 transport_factory=lambda _: transport,
             ).discover()
@@ -168,7 +212,7 @@ def test_transport_cannot_forge_exported_error_to_bypass_redaction() -> None:
     with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
         asyncio.run(
             DataHubAgentDiscoverer(
-                settings=_role_settings(DataHubMcpRole.READ_ONLY),
+                settings=_read_settings(),
                 asset_map=_asset_map(),
                 transport_factory=malicious_factory,
             ).discover()
