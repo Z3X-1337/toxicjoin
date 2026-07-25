@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from urllib.parse import quote, unquote_to_bytes
 
 from pydantic import ValidationError
 
@@ -21,24 +22,24 @@ from toxicjoin.context.datahub import (
 )
 from toxicjoin.integrations.datahub_authority import (
     DataHubMcpRole,
+    ReadOnlyDataHubMcpSettings,
     RoleBoundDataHubMcpClient,
-    RoleBoundDataHubMcpSettings,
 )
 from toxicjoin.integrations.datahub_mcp import (
     DataHubMcpTransport,
     StdioDataHubMcpTransport,
 )
 
-# P0 accepts the canonical three-part DataHub dataset URN shape used by ToxicJoin's governed
-# asset manifest. Deliberately fail closed on exotic/ambiguous forms rather than treating a
-# mere ``urn:li:dataset:`` prefix as resolved identity.
 _DATASET_URN_PATTERN = re.compile(
     r"^urn:li:dataset:\("
-    r"urn:li:dataPlatform:[A-Za-z0-9._-]+,"
-    r"[A-Za-z0-9._:/%+~-]+,"
-    r"[A-Za-z0-9._-]+"
+    r"urn:li:dataPlatform:(?P<platform>[^,()]+),"
+    r"(?P<dataset>[^,()]+),"
+    r"(?P<environment>[^,()]+)"
     r"\)$"
 )
+_PLATFORM_SAFE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+_DATASET_SAFE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:/+~-"
+_ENVIRONMENT_SAFE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
 
 
 class AgentDataHubDiscoveryError(RuntimeError):
@@ -49,21 +50,21 @@ class AgentDataHubDiscoveryError(RuntimeError):
         super().__init__(code)
 
 
-TransportFactory = Callable[[RoleBoundDataHubMcpSettings], DataHubMcpTransport]
+TransportFactory = Callable[[ReadOnlyDataHubMcpSettings], DataHubMcpTransport]
 
 
 class DataHubAgentDiscoverer:
     """Acquire one trusted DataHub snapshot and expose only a sanitized planning view.
 
-    Discovery requires a dedicated role-bound READ_ONLY credential. Generic/legacy DataHub
-    settings are not attenuated into a read credential because disabling MCP mutation tools does
-    not reduce the authority of the underlying DataHub token.
+    Discovery requires the concrete dedicated READ_ONLY credential type produced from the
+    read-token channel. Writer settings cannot become eligible by mutating role fields because
+    concrete credential type identity is part of the authority boundary.
     """
 
     def __init__(
         self,
         *,
-        settings: RoleBoundDataHubMcpSettings,
+        settings: ReadOnlyDataHubMcpSettings,
         asset_map: DataHubAssetMap,
         transport_factory: TransportFactory = StdioDataHubMcpTransport,
     ) -> None:
@@ -74,9 +75,6 @@ class DataHubAgentDiscoverer:
     async def discover(self) -> AgentDataContext:
         """Return one immutable, explicitly non-authoritative planning context."""
 
-        # Everything inside this block is an external/pluggable I/O boundary. Never trust an
-        # exception type raised from it, including AgentDataHubDiscoveryError itself: a malicious
-        # transport could forge that exported type and attach credentials or endpoint material.
         try:
             transport = self._transport_factory(self._settings)
             async with transport:
@@ -97,14 +95,15 @@ class DataHubAgentDiscoverer:
 def build_agent_data_context_from_snapshot(snapshot: DataHubSnapshot) -> AgentDataContext:
     """Project a validated DataHub snapshot into the planning-only agent schema.
 
-    Fixed identity failures are safe to expose as stable codes. All other projection failures are
-    collapsed to ``AGENT_DATAHUB_PROJECTION_FAILED`` with exception chaining suppressed because
-    Pydantic and other validators may include raw MCP-derived input in their error messages.
+    Snapshot serialization and validation are one redacted boundary because unconstrained
+    MCP-derived payload fragments can contain non-JSON values or attacker-controlled details.
+    Fixed identity failures remain stable codes; every other projection failure is collapsed.
     """
 
     try:
-        trusted = DataHubSnapshot.model_validate(snapshot.model_dump(mode="json"))
-    except (AttributeError, ValidationError):
+        serialized = snapshot.model_dump(mode="json")
+        trusted = DataHubSnapshot.model_validate(serialized)
+    except Exception:
         raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SNAPSHOT_INVALID") from None
 
     try:
@@ -181,25 +180,25 @@ def _project_trusted_snapshot(snapshot: DataHubSnapshot) -> AgentDataContext:
     )
 
 
-def _read_only_settings(
-    settings: RoleBoundDataHubMcpSettings,
-) -> RoleBoundDataHubMcpSettings:
-    """Return a private copy of a dedicated role-bound READ_ONLY credential."""
+def _read_only_settings(settings: ReadOnlyDataHubMcpSettings) -> ReadOnlyDataHubMcpSettings:
+    """Return a private copy of a dedicated read credential without relabeling authority."""
 
-    if not isinstance(settings, RoleBoundDataHubMcpSettings):
+    if type(settings) is not ReadOnlyDataHubMcpSettings:
         raise AgentDataHubDiscoveryError("AGENT_DATAHUB_READ_ROLE_REQUIRED")
-    if settings.role != DataHubMcpRole.READ_ONLY or settings.mutation_enabled:
+    if (
+        settings.role != DataHubMcpRole.READ_ONLY
+        or settings.mutation_enabled
+        or settings.credential_source != "DATAHUB_GMS_READ_TOKEN"
+    ):
         raise AgentDataHubDiscoveryError("AGENT_DATAHUB_READ_ROLE_REQUIRED")
 
     try:
-        return RoleBoundDataHubMcpSettings(
+        return ReadOnlyDataHubMcpSettings(
             gms_url=settings.gms_url,
             gms_token=settings.gms_token,
             command=settings.command,
             args=tuple(settings.args),
             timeout_seconds=settings.timeout_seconds,
-            mutation_enabled=False,
-            role=DataHubMcpRole.READ_ONLY,
         )
     except (AttributeError, ValidationError, ValueError):
         raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID") from None
@@ -208,4 +207,42 @@ def _read_only_settings(
 def _is_canonical_dataset_urn(value: str) -> bool:
     if not isinstance(value, str) or len(value) > 2048:
         return False
-    return _DATASET_URN_PATTERN.fullmatch(value) is not None
+    match = _DATASET_URN_PATTERN.fullmatch(value)
+    if match is None:
+        return False
+
+    platform = match.group("platform")
+    dataset = match.group("dataset")
+    environment = match.group("environment")
+    if not _is_canonical_urn_component(platform, safe=_PLATFORM_SAFE):
+        return False
+    if not _is_canonical_urn_component(dataset, safe=_DATASET_SAFE):
+        return False
+    if not _is_canonical_urn_component(environment, safe=_ENVIRONMENT_SAFE):
+        return False
+
+    canonical = (
+        "urn:li:dataset:(urn:li:dataPlatform:"
+        f"{platform},{dataset},{environment})"
+    )
+    return canonical == value
+
+
+def _is_canonical_urn_component(value: str, *, safe: str) -> bool:
+    if not value:
+        return False
+    try:
+        decoded = unquote_to_bytes(value).decode("utf-8", errors="strict")
+    except (UnicodeDecodeError, ValueError):
+        return False
+    if not decoded:
+        return False
+    if any(character.isspace() or ord(character) < 0x20 for character in decoded):
+        return False
+    if any(character in ",()" for character in decoded):
+        return False
+    try:
+        encoded = quote(decoded, safe=safe, encoding="utf-8", errors="strict")
+    except (UnicodeEncodeError, ValueError):
+        return False
+    return encoded == value
