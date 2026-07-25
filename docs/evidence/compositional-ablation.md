@@ -1,7 +1,8 @@
 # ToxicJoin Compositional Interaction Ablation
 
 **Gate:** PASS  
-**Exact runtime candidate:** `e139fa99bd666505ed83a18188423722405695a2`  
+**Exact final security head:** `536c37c34de7b36495d33f63095585f72e5f4b46`  
+**Landed main merge commit:** `ee4991a93070c148e41dd158c952d5f1e9a6ed2c`  
 **Policy version:** `0.2.0`  
 **Evaluation version:** `2.0`  
 **Unsafe mutation cases:** 144  
@@ -13,16 +14,16 @@
 
 Exact-head provenance:
 
-- workflow run `30140102635`;
-- artifact ID `8614165227`;
-- artifact digest `sha256:36a54ac332ab18a343742090fb3c04559b84813d5434d8171500b64972874d1e`;
+- workflow run `30143510871`;
+- artifact ID `8615253424`;
+- artifact digest `sha256:4426485fbf5568e12a6bdb65c308b24229d4b5677f71aef23e01ee69f65f9a65`;
 - report SHA-256 `14d7fb64be2c838966fffe0e8f20273cba3877255da767e99f04df980f4f5cdf`.
 
 ## What was ablated
 
 This is an internal ablation study, not a competitor comparison.
 
-Both sides use the same ToxicJoin parser, governed metadata resolver, deterministic `PolicyEngine`, and all unrelated policy branches. The ablated side removes final-output semantic exposure evidence from the `QueryPlan` and raises the legacy quasi-identifier threshold so the declared non-grouped compositional interaction cannot fire in this finite evaluation.
+Both sides use the same ToxicJoin parser, governed metadata resolver, deterministic `PolicyEngine`, and unrelated policy branches. The ablated side removes final-output semantic exposure evidence from the `QueryPlan` and raises the legacy quasi-identifier threshold so the declared non-grouped compositional interaction cannot fire in this finite evaluation.
 
 ## Interpretation
 
