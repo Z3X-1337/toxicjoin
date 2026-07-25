@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 
-from pydantic import SecretStr, ValidationError
+from pydantic import ValidationError
 
 from toxicjoin.agent.models import (
     AgentDataContext,
@@ -24,12 +25,20 @@ from toxicjoin.integrations.datahub_authority import (
     RoleBoundDataHubMcpSettings,
 )
 from toxicjoin.integrations.datahub_mcp import (
-    DataHubMcpSettings,
     DataHubMcpTransport,
     StdioDataHubMcpTransport,
 )
 
-_DATASET_URN_PREFIX = "urn:li:dataset:"
+# P0 accepts the canonical three-part DataHub dataset URN shape used by ToxicJoin's governed
+# asset manifest. Deliberately fail closed on exotic/ambiguous forms rather than treating a
+# mere ``urn:li:dataset:`` prefix as resolved identity.
+_DATASET_URN_PATTERN = re.compile(
+    r"^urn:li:dataset:\("
+    r"urn:li:dataPlatform:[A-Za-z0-9._-]+,"
+    r"[A-Za-z0-9._:/%+~-]+,"
+    r"[A-Za-z0-9._-]+"
+    r"\)$"
+)
 
 
 class AgentDataHubDiscoveryError(RuntimeError):
@@ -46,16 +55,15 @@ TransportFactory = Callable[[RoleBoundDataHubMcpSettings], DataHubMcpTransport]
 class DataHubAgentDiscoverer:
     """Acquire one trusted DataHub snapshot and expose only a sanitized planning view.
 
-    The planner never receives this object, the MCP settings, credentials, transport, client,
-    tool definitions, or mutation handles. The discoverer always creates a private role-bound
-    READ_ONLY settings copy before opening the MCP transport and uses the role-bound read client
-    so mutation-tool exposure fails closed.
+    Discovery requires a dedicated role-bound READ_ONLY credential. Generic/legacy DataHub
+    settings are not attenuated into a read credential because disabling MCP mutation tools does
+    not reduce the authority of the underlying DataHub token.
     """
 
     def __init__(
         self,
         *,
-        settings: DataHubMcpSettings,
+        settings: RoleBoundDataHubMcpSettings,
         asset_map: DataHubAssetMap,
         transport_factory: TransportFactory = StdioDataHubMcpTransport,
     ) -> None:
@@ -83,19 +91,15 @@ class DataHubAgentDiscoverer:
         except Exception:
             raise AgentDataHubDiscoveryError("AGENT_DATAHUB_DISCOVERY_FAILED") from None
 
-        # Projection happens only after the untrusted transport boundary has closed. Specific
-        # stable projection errors may therefore propagate without allowing a transport to forge
-        # them and bypass redaction.
         return build_agent_data_context_from_snapshot(snapshot)
 
 
 def build_agent_data_context_from_snapshot(snapshot: DataHubSnapshot) -> AgentDataContext:
     """Project a validated DataHub snapshot into the planning-only agent schema.
 
-    This conversion deliberately fails closed if an upstream lineage edge lacks a DataHub
-    dataset identity. Hiding that edge would give the planner a falsely complete picture.
-    The returned categories and lineage remain planning hints only; they never become evidence
-    or authorization facts through this function.
+    Fixed identity failures are safe to expose as stable codes. All other projection failures are
+    collapsed to ``AGENT_DATAHUB_PROJECTION_FAILED`` with exception chaining suppressed because
+    Pydantic and other validators may include raw MCP-derived input in their error messages.
     """
 
     try:
@@ -103,9 +107,18 @@ def build_agent_data_context_from_snapshot(snapshot: DataHubSnapshot) -> AgentDa
     except (AttributeError, ValidationError):
         raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SNAPSHOT_INVALID") from None
 
+    try:
+        return _project_trusted_snapshot(trusted)
+    except AgentDataHubDiscoveryError:
+        raise
+    except Exception:
+        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_PROJECTION_FAILED") from None
+
+
+def _project_trusted_snapshot(snapshot: DataHubSnapshot) -> AgentDataContext:
     dataset_views: list[AgentDatasetView] = []
-    for logical_name, dataset in sorted(trusted.catalog.datasets.items()):
-        if not dataset.urn.startswith(_DATASET_URN_PREFIX):
+    for logical_name, dataset in sorted(snapshot.catalog.datasets.items()):
+        if not _is_canonical_dataset_urn(dataset.urn):
             raise AgentDataHubDiscoveryError("AGENT_DATAHUB_DATASET_IDENTITY_INVALID")
 
         field_views: list[AgentFieldView] = []
@@ -117,7 +130,7 @@ def build_agent_data_context_from_snapshot(snapshot: DataHubSnapshot) -> AgentDa
                     raise AgentDataHubDiscoveryError(
                         "AGENT_DATAHUB_LINEAGE_IDENTITY_UNRESOLVED"
                     )
-                if not source_urn.startswith(_DATASET_URN_PREFIX):
+                if not _is_canonical_dataset_urn(source_urn):
                     raise AgentDataHubDiscoveryError(
                         "AGENT_DATAHUB_LINEAGE_IDENTITY_INVALID"
                     )
@@ -162,28 +175,26 @@ def build_agent_data_context_from_snapshot(snapshot: DataHubSnapshot) -> AgentDa
         )
 
     return build_agent_data_context(
-        source_snapshot_sha256=trusted.snapshot_sha256,
-        catalog_version=trusted.catalog.version,
+        source_snapshot_sha256=snapshot.snapshot_sha256,
+        catalog_version=snapshot.catalog.version,
         datasets=tuple(dataset_views),
     )
 
 
-def _read_only_settings(settings: DataHubMcpSettings) -> RoleBoundDataHubMcpSettings:
-    """Return a private role-bound READ_ONLY settings copy.
+def _read_only_settings(
+    settings: RoleBoundDataHubMcpSettings,
+) -> RoleBoundDataHubMcpSettings:
+    """Return a private copy of a dedicated role-bound READ_ONLY credential."""
 
-    Existing read-role settings retain their stronger role semantics. Mutation-role settings are
-    rejected rather than repurposing a write credential for discovery. Legacy base settings are
-    upgraded to the same application-level READ_ONLY boundary for compatibility.
-    """
-
-    if isinstance(settings, RoleBoundDataHubMcpSettings):
-        if settings.role != DataHubMcpRole.READ_ONLY or settings.mutation_enabled:
-            raise AgentDataHubDiscoveryError("AGENT_DATAHUB_READ_ROLE_REQUIRED")
+    if not isinstance(settings, RoleBoundDataHubMcpSettings):
+        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_READ_ROLE_REQUIRED")
+    if settings.role != DataHubMcpRole.READ_ONLY or settings.mutation_enabled:
+        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_READ_ROLE_REQUIRED")
 
     try:
         return RoleBoundDataHubMcpSettings(
             gms_url=settings.gms_url,
-            gms_token=SecretStr(settings.gms_token.get_secret_value()),
+            gms_token=settings.gms_token,
             command=settings.command,
             args=tuple(settings.args),
             timeout_seconds=settings.timeout_seconds,
@@ -192,3 +203,9 @@ def _read_only_settings(settings: DataHubMcpSettings) -> RoleBoundDataHubMcpSett
         )
     except (AttributeError, ValidationError, ValueError):
         raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID") from None
+
+
+def _is_canonical_dataset_urn(value: str) -> bool:
+    if not isinstance(value, str) or len(value) > 2048:
+        return False
+    return _DATASET_URN_PATTERN.fullmatch(value) is not None
