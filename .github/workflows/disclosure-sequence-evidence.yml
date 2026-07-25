@@ -54,7 +54,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip
           python -m pip install --disable-pip-version-check 'uv==0.8.4'
           uv sync --frozen --extra dev
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
