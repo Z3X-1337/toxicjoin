@@ -15,6 +15,7 @@ from toxicjoin.receipts.writer import (
     allocate_receipt_id,
     build_receipt,
     compute_content_hash,
+    compute_integrity_hmac,
     sanitize_sql,
 )
 
@@ -31,5 +32,6 @@ __all__ = [
     "allocate_receipt_id",
     "build_receipt",
     "compute_content_hash",
+    "compute_integrity_hmac",
     "sanitize_sql",
 ]
