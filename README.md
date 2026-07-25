@@ -37,13 +37,13 @@ proposed SQL
 
 ## Release state
 
-The release-frozen candidate is:
+The release-frozen **runtime candidate** is:
 
 ```text
 fe4f8da2579e09bdbfb1d998b92dfea86549733b
 ```
 
-It was promoted to `main` by non-forced fast-forward after P4 software-supply-chain closure and P5 independent validation. The validated commit and the release commit are therefore the same Git object.
+That commit was promoted to `main` by non-forced fast-forward after P4 software-supply-chain closure and P5 independent validation, so no new production SHA was introduced at promotion time. A later documentation/evidence synchronization may advance `main` with judge-facing files only; `fe4f8da2579e09bdbfb1d998b92dfea86549733b` remains the exact runtime tree that passed the release gates.
 
 Current deterministic policy version: `0.2.0`.
 
