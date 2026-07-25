@@ -15,7 +15,7 @@ from toxicjoin.context.datahub import DataHubAssetMap, DataHubSnapshot
 from toxicjoin.context.fixture import FixtureCatalog, FixtureDataset, FixtureField
 from toxicjoin.integrations.datahub_authority import (
     DataHubMcpRole,
-    RoleBoundDataHubMcpSettings,
+    ReadOnlyDataHubMcpSettings,
 )
 from toxicjoin.integrations.datahub_mcp import McpToolDefinition
 from toxicjoin.models import ColumnRef, LineageSource, SensitivityCategory
@@ -25,15 +25,13 @@ RAW_URN = "urn:li:dataset:(urn:li:dataPlatform:duckdb,raw_patients,PROD)"
 OBSERVED_AT = datetime(2026, 7, 25, 14, 0, tzinfo=timezone.utc)
 
 
-def _settings() -> RoleBoundDataHubMcpSettings:
-    return RoleBoundDataHubMcpSettings(
+def _settings() -> ReadOnlyDataHubMcpSettings:
+    return ReadOnlyDataHubMcpSettings(
         gms_url="https://datahub.example",
         gms_token=SecretStr("agent-discovery-secret-token"),
         command="uvx",
         args=("mcp-server-datahub",),
         timeout_seconds=30,
-        mutation_enabled=False,
-        role=DataHubMcpRole.READ_ONLY,
     )
 
 
@@ -49,7 +47,7 @@ def _asset_map() -> DataHubAssetMap:
 class FakeReadOnlyTransport:
     def __init__(
         self,
-        settings: RoleBoundDataHubMcpSettings,
+        settings: ReadOnlyDataHubMcpSettings,
         *,
         fail_list_tools: bool = False,
     ) -> None:
@@ -144,7 +142,7 @@ def test_discoverer_uses_dedicated_read_role_and_sanitizes_context() -> None:
     original = _settings()
     captured: list[FakeReadOnlyTransport] = []
 
-    def factory(settings: RoleBoundDataHubMcpSettings) -> FakeReadOnlyTransport:
+    def factory(settings: ReadOnlyDataHubMcpSettings) -> FakeReadOnlyTransport:
         transport = FakeReadOnlyTransport(settings)
         captured.append(transport)
         return transport
@@ -157,12 +155,16 @@ def test_discoverer_uses_dedicated_read_role_and_sanitizes_context() -> None:
         ).discover()
     )
 
+    assert type(original) is ReadOnlyDataHubMcpSettings
     assert original.role == DataHubMcpRole.READ_ONLY
+    assert original.credential_source == "DATAHUB_GMS_READ_TOKEN"
     assert original.mutation_enabled is False
     assert len(captured) == 1
     read_settings = captured[0].settings
     assert read_settings is not original
+    assert type(read_settings) is ReadOnlyDataHubMcpSettings
     assert read_settings.role == DataHubMcpRole.READ_ONLY
+    assert read_settings.credential_source == "DATAHUB_GMS_READ_TOKEN"
     assert read_settings.mutation_enabled is False
     child_env = read_settings.child_environment()
     assert child_env["TOOLS_IS_MUTATION_ENABLED"] == "false"
@@ -195,7 +197,8 @@ def test_discoverer_uses_dedicated_read_role_and_sanitizes_context() -> None:
 def test_snapshot_conversion_is_deterministic() -> None:
     transport = FakeReadOnlyTransport(_settings())
 
-    def factory(settings: RoleBoundDataHubMcpSettings) -> FakeReadOnlyTransport:
+    def factory(settings: ReadOnlyDataHubMcpSettings) -> FakeReadOnlyTransport:
+        assert type(settings) is ReadOnlyDataHubMcpSettings
         assert settings.role == DataHubMcpRole.READ_ONLY
         assert settings.mutation_enabled is False
         return transport
@@ -323,7 +326,7 @@ def test_invalid_dataset_identity_fails_closed() -> None:
 
 
 def test_transport_exception_is_redacted() -> None:
-    def factory(settings: RoleBoundDataHubMcpSettings) -> FakeReadOnlyTransport:
+    def factory(settings: ReadOnlyDataHubMcpSettings) -> FakeReadOnlyTransport:
         return FakeReadOnlyTransport(settings, fail_list_tools=True)
 
     with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
