@@ -50,7 +50,7 @@ jobs:
 
       - name: Upload benchmark evidence
         if: matrix.python-version == '3.11'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: toxicjoin-benchmark
           path: artifacts/benchmark/
@@ -59,7 +59,7 @@ jobs:
 
       - name: Upload test diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: pytest-${{ matrix.python-version }}
           path: pytest-${{ matrix.python-version }}.log
@@ -90,7 +90,7 @@ jobs:
           npm run check 2>&1 | tee web-check.log
 
       - name: Upload generated package lock
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: toxicjoin-web-lock
           path: apps/web/package-lock.json
@@ -99,7 +99,7 @@ jobs:
 
       - name: Upload judge interface build
         if: success()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: toxicjoin-judge-interface
           path: apps/web/dist/
@@ -108,7 +108,7 @@ jobs:
 
       - name: Upload frontend diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: toxicjoin-web-check
           path: apps/web/web-check.log
@@ -226,7 +226,7 @@ jobs:
 
       - name: Upload container diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: toxicjoin-container-log
           path: toxicjoin-container.log
