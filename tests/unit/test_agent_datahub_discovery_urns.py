@@ -64,6 +64,10 @@ def _snapshot(*, dataset_urn: str = PATIENTS_URN, lineage_urn: str | None = None
         "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients%20name,PROD)",
         "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients%2Farchive,PROD)",
         "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients%2farchive,PROD)",
+        "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients%7F,PROD)",
+        "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients%E2%80%8B,PROD)",
+        "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients%E2%80%8D,PROD)",
+        "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients%EE%80%80,PROD)",
     ],
 )
 def test_dataset_identity_requires_canonical_datahub_urn(malformed: str) -> None:
@@ -81,6 +85,8 @@ def test_dataset_identity_requires_canonical_datahub_urn(malformed: str) -> None
         "urn:li:dataset:(urn:li:dataPlatform:duckdb,raw patients,PROD)",
         "urn:li:dataset:(urn:li:dataPlatform:duckdb,raw%ZZpatients,PROD)",
         "urn:li:dataset:(urn:li:dataPlatform:duckdb,raw%2Fpatients,PROD)",
+        "urn:li:dataset:(urn:li:dataPlatform:duckdb,raw%7Fpatients,PROD)",
+        "urn:li:dataset:(urn:li:dataPlatform:duckdb,raw%E2%80%8Bpatients,PROD)",
     ],
 )
 def test_lineage_identity_requires_canonical_datahub_urn(malformed: str) -> None:
