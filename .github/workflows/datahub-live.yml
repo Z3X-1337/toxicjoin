@@ -68,7 +68,7 @@ jobs:
           python -m pip install --disable-pip-version-check 'uv==0.8.4'
           uv sync --frozen --extra datahub
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-          datahub version
+          .venv/bin/datahub version
           uvx --from mcp-server-datahub==0.6.0 mcp-server-datahub --help >/dev/null 2>&1 || true
 
       - name: Start DataHub OSS quickstart
