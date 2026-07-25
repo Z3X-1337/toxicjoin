@@ -1,7 +1,8 @@
 # ToxicJoin Adversarial Mutation Suite
 
 **Gate:** PASS  
-**Exact runtime candidate:** `e139fa99bd666505ed83a18188423722405695a2`  
+**Exact final security head:** `536c37c34de7b36495d33f63095585f72e5f4b46`  
+**Landed main merge commit:** `ee4991a93070c148e41dd158c952d5f1e9a6ed2c`  
 **Policy version:** `0.2.0`  
 **Cases:** 144  
 **Initial BLOCK:** 144/144  
@@ -13,9 +14,9 @@
 
 Exact-head provenance:
 
-- workflow run `30140102676`;
-- artifact ID `8614165343`;
-- artifact digest `sha256:41cf4a8203cbb11fb331c3e78630113de7d498e4732d77c0605dd78f0563ebd1`;
+- workflow run `30143510877`;
+- artifact ID `8615253422`;
+- artifact digest `sha256:83db3f416957f9cc7b16c75d6c8aac51ae83e889a7af7572b2623e3192f2ffb1`;
 - report SHA-256 `86011fc74ef6ca03e7b83d21e8770037fb32ddb22d41b750abc09aeabe443565`.
 
 ## Mutation matrix
