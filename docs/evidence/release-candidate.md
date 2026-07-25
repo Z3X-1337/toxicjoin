@@ -4,19 +4,25 @@ This is the authoritative judge-facing release index.
 
 ## Release identity
 
-Landed `main` merge commit:
+Current judge-facing `main` HEAD after PR #70 documentation/evidence synchronization:
+
+```text
+e1192edc2deb961ad9d85187ba2985f82296ed53
+```
+
+Frozen runtime merge from PR #68:
 
 ```text
 ee4991a93070c148e41dd158c952d5f1e9a6ed2c
 ```
 
-Exact security-remediation head validated before landing:
+Exact security-remediation runtime head validated before landing:
 
 ```text
 536c37c34de7b36495d33f63095585f72e5f4b46
 ```
 
-PR #68 merged that exact head into `main`. The merge commit contains the validated head and introduces no file-tree difference relative to it. Policy version remains `0.2.0`.
+PR #68 merged that exact validated runtime head into `main`; the runtime merge introduced no file-tree difference relative to it. PR #70 landed afterward and changed only judge-facing README/documentation/evidence. It did not change runtime source, policy, parser, rewriter, executor, verifier, authentication, disclosure implementation, dependencies, Docker runtime, or workflow definitions. Therefore `e1192edc…` is the current repository HEAD presented to judges, while `536c37c…` remains the exact runtime provenance for the security and DataHub evidence below. Policy version remains `0.2.0`.
 
 No new feature, refactor, dependency, or policy change is authorized during release freeze unless a proven release blocker requires reopening the candidate.
 
