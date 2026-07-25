@@ -48,6 +48,51 @@ class CpccValidationStage(StrEnum):
     PPMC = "PPMC"
 
 
+_VALIDATION_STAGE_ORDER = (
+    CpccValidationStage.GENERATE,
+    CpccValidationStage.REPARSE,
+    CpccValidationStage.REGROUND,
+    CpccValidationStage.REBUILD_EVIDENCE,
+    CpccValidationStage.LOCAL_POLICY,
+    CpccValidationStage.REBUILD_DISCLOSURE_STATE,
+    CpccValidationStage.PPMC,
+)
+_VALIDATION_PREFIX_FIELDS: dict[CpccValidationStage, tuple[str, ...]] = {
+    CpccValidationStage.GENERATE: (),
+    CpccValidationStage.REPARSE: ("generated_sql_sha256",),
+    CpccValidationStage.REGROUND: (
+        "generated_sql_sha256",
+        "reparsed_plan_sha256",
+    ),
+    CpccValidationStage.REBUILD_EVIDENCE: (
+        "generated_sql_sha256",
+        "reparsed_plan_sha256",
+        "reground_governance_sha256",
+    ),
+    CpccValidationStage.LOCAL_POLICY: (
+        "generated_sql_sha256",
+        "reparsed_plan_sha256",
+        "reground_governance_sha256",
+        "evidence_root_sha256",
+    ),
+    CpccValidationStage.REBUILD_DISCLOSURE_STATE: (
+        "generated_sql_sha256",
+        "reparsed_plan_sha256",
+        "reground_governance_sha256",
+        "evidence_root_sha256",
+        "local_policy_decision_sha256",
+    ),
+    CpccValidationStage.PPMC: (
+        "generated_sql_sha256",
+        "reparsed_plan_sha256",
+        "reground_governance_sha256",
+        "evidence_root_sha256",
+        "local_policy_decision_sha256",
+        "disclosure_state_sha256",
+    ),
+}
+
+
 class CpccValidationOutcome(StrEnum):
     ELIGIBLE_SAFE = "ELIGIBLE_SAFE"
     INELIGIBLE = "INELIGIBLE"
@@ -200,7 +245,7 @@ class CpccCandidateValidation(StrictModel):
 
     @model_validator(mode="after")
     def validate_chain(self) -> "CpccCandidateValidation":
-        required = (
+        all_chain_values = (
             self.generated_sql_sha256,
             self.reparsed_plan_sha256,
             self.reground_governance_sha256,
@@ -210,8 +255,15 @@ class CpccCandidateValidation(StrictModel):
             self.ppmc_result_sha256,
             self.ppmc_status,
         )
+        if (self.ppmc_result_sha256 is None) != (self.ppmc_status is None):
+            raise ValueError("CPCC PPMC result hash/status must be present together")
+        if self.local_policy_allowed and self.local_policy_decision_sha256 is None:
+            raise ValueError("CPCC local ALLOW requires a local policy decision commitment")
+
         if self.outcome == CpccValidationOutcome.ELIGIBLE_SAFE:
-            if self.failure_stage is not None or any(value is None for value in required):
+            if self.failure_stage is not None or any(
+                value is None for value in all_chain_values
+            ):
                 raise ValueError(
                     "eligible CPCC candidate requires the complete validation chain"
                 )
@@ -221,31 +273,83 @@ class CpccCandidateValidation(StrictModel):
                 raise ValueError(
                     "eligible CPCC candidate requires bounded PPMC no-counterexample result"
                 )
-        elif self.outcome == CpccValidationOutcome.INELIGIBLE:
-            if self.failure_stage is None:
-                raise ValueError("ineligible CPCC candidate requires a failure stage")
-            if self.failure_stage == CpccValidationStage.PPMC:
-                if not self.local_policy_allowed:
-                    raise ValueError(
-                        "PPMC-ineligible CPCC candidate requires prior local ALLOW"
-                    )
-                if self.ppmc_status != PpmcStatus.PROSPECTIVE_UNSAFE:
-                    raise ValueError(
-                        "PPMC-ineligible candidate requires PROSPECTIVE_UNSAFE"
-                    )
-            elif self.local_policy_allowed:
-                raise ValueError(
-                    "locally allowed ineligible candidate may fail only at PPMC"
-                )
         else:
             if self.failure_stage is None:
-                raise ValueError("fail-closed CPCC validation requires a failure stage")
-            if self.ppmc_status == PpmcStatus.NO_COUNTEREXAMPLE_WITHIN_BOUND:
-                raise ValueError("safe PPMC result cannot be marked fail closed")
+                raise ValueError("failed CPCC candidate validation requires a failure stage")
+            self._validate_failure_prefix()
+            if self.outcome == CpccValidationOutcome.INELIGIBLE:
+                self._validate_deterministic_rejection()
+            else:
+                self._validate_fail_closed_rejection()
 
         if self.validation_sha256 != compute_cpcc_candidate_validation_sha256(self):
             raise ValueError("CPCC candidate-validation hash mismatch")
         return self
+
+    def _validate_failure_prefix(self) -> None:
+        assert self.failure_stage is not None
+        for field_name in _VALIDATION_PREFIX_FIELDS[self.failure_stage]:
+            if getattr(self, field_name) is None:
+                raise ValueError(
+                    "CPCC failed candidate is missing a prior-stage commitment: "
+                    f"{field_name}"
+                )
+
+        stage_index = _VALIDATION_STAGE_ORDER.index(self.failure_stage)
+        local_index = _VALIDATION_STAGE_ORDER.index(CpccValidationStage.LOCAL_POLICY)
+        state_index = _VALIDATION_STAGE_ORDER.index(
+            CpccValidationStage.REBUILD_DISCLOSURE_STATE
+        )
+        ppmc_index = _VALIDATION_STAGE_ORDER.index(CpccValidationStage.PPMC)
+        if stage_index < local_index:
+            if self.local_policy_decision_sha256 is not None or self.local_policy_allowed:
+                raise ValueError("CPCC failure carries a premature local-policy artifact")
+        if stage_index < state_index and self.disclosure_state_sha256 is not None:
+            raise ValueError("CPCC failure carries a premature disclosure-state artifact")
+        if stage_index < ppmc_index and self.ppmc_result_sha256 is not None:
+            raise ValueError("CPCC failure carries a premature PPMC artifact")
+
+    def _validate_deterministic_rejection(self) -> None:
+        assert self.failure_stage is not None
+        if self.failure_stage == CpccValidationStage.LOCAL_POLICY:
+            if self.local_policy_decision_sha256 is None or self.local_policy_allowed:
+                raise ValueError(
+                    "local-policy ineligible candidate requires a committed non-ALLOW decision"
+                )
+        elif self.failure_stage == CpccValidationStage.REBUILD_DISCLOSURE_STATE:
+            if not self.local_policy_allowed:
+                raise ValueError(
+                    "state-build ineligible candidate requires prior local PolicyEngine ALLOW"
+                )
+        elif self.failure_stage == CpccValidationStage.PPMC:
+            if not self.local_policy_allowed:
+                raise ValueError(
+                    "PPMC-ineligible CPCC candidate requires prior local ALLOW"
+                )
+            if self.ppmc_result_sha256 is None:
+                raise ValueError("PPMC-ineligible candidate requires a PPMC commitment")
+            if self.ppmc_status != PpmcStatus.PROSPECTIVE_UNSAFE:
+                raise ValueError(
+                    "PPMC-ineligible candidate requires PROSPECTIVE_UNSAFE"
+                )
+        elif self.local_policy_allowed:
+            raise ValueError("early ineligible candidate cannot carry local ALLOW")
+
+    def _validate_fail_closed_rejection(self) -> None:
+        assert self.failure_stage is not None
+        stage_index = _VALIDATION_STAGE_ORDER.index(self.failure_stage)
+        state_index = _VALIDATION_STAGE_ORDER.index(
+            CpccValidationStage.REBUILD_DISCLOSURE_STATE
+        )
+        if stage_index >= state_index and not self.local_policy_allowed:
+            raise ValueError(
+                "late fail-closed candidate requires prior local PolicyEngine ALLOW"
+            )
+        if self.failure_stage == CpccValidationStage.PPMC:
+            if self.ppmc_status not in {None, PpmcStatus.FAIL_CLOSED}:
+                raise ValueError("fail-closed PPMC candidate cannot carry a safe/unsafe status")
+        elif self.ppmc_status is not None:
+            raise ValueError("pre-PPMC fail-closed candidate cannot carry PPMC status")
 
 
 class CpccResult(StrictModel):
@@ -328,7 +432,9 @@ def compute_remediation_action_sha256(action: RemediationAction) -> str:
 
 
 def compute_remediation_space_sha256(space: CpccRemediationSpace) -> str:
-    return canonical_json_sha256(space.model_dump(mode="json", exclude={"space_sha256"}))
+    return canonical_json_sha256(
+        space.model_dump(mode="json", exclude={"space_sha256"})
+    )
 
 
 def compute_cpcc_candidate_sha256(candidate: CpccCandidate) -> str:
