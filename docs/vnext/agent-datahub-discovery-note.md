@@ -63,7 +63,7 @@ An upstream edge with an exact DataHub dataset URN but category `UNCLASSIFIED` m
 
 ## Error redaction
 
-Transport and DataHub errors are converted to stable agent-discovery codes. External exception text is not propagated through this boundary because it may contain endpoint, credential, or payload details.
+Transport and DataHub errors are converted to stable agent-discovery codes. External exception text and exception chaining are suppressed at this boundary because either may contain endpoint, credential, or payload details. Regression coverage renders the full propagated traceback and verifies that credential/endpoint material is absent.
 
 ## Non-goals
 
@@ -78,6 +78,6 @@ This slice does not:
 
 The proposed SQL remains subject to independent reacquisition/revalidation of governance and evidence before any security decision or execution.
 
-## Stack discipline
+## Retarget provenance
 
-This branch is intentionally stacked on PR #87 exact reviewed head `e91fc9cbb309a79286a4bb0434bcfae431655a95`. PR #87 must merge first under the owner's explicit exact-head approval gate. This slice must then be rebased/retargeted to the resulting `main` merge before it can be considered for merge.
+PR #87 was merged into `main` as `d2498fce5bd44163c545286683de99fe165ed4f1` after explicit exact-head approval. PR #88 was then retargeted to that `main` merge. All earlier stacked CI/review evidence is development evidence only and is not sufficient for final merge eligibility. The post-retarget head must obtain fresh exact-head CI, security workflows, Live DataHub evidence, production-container evidence, and fresh review before a merge decision.
