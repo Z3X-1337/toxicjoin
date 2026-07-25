@@ -1,9 +1,10 @@
 """Conservative cross-query composition policy for protected analytical releases.
 
 The model intentionally does not claim general set-relation inference or differential
-privacy. It allows one protected release family/cohort per privacy scope and repeated
-identical releases of that same family/cohort. A different protected cohort or semantic
-family in the same scope is blocked before execution authorization.
+privacy. It allows at most one new protected release per privacy scope. Reusing the
+same receipt is handled separately as idempotency, but a second protected release is
+blocked even when its SQL/semantic family is identical because the underlying data may
+have changed between executions.
 """
 
 from __future__ import annotations
@@ -58,14 +59,14 @@ def build_composition_metadata(
 
 
 def canonicalize_cohort_sql(sql: str, *, dialect: str = "duckdb") -> str:
-    """Canonicalize membership-shaping SQL while excluding root output aliases.
+    """Canonicalize disclosure-shaping SQL while ignoring root output aliases only.
 
-    The root SELECT list is replaced with a constant because released output semantics
-    are tracked independently by ``DisclosureSemanticRelease``. A root ORDER BY is
-    removed only when neither LIMIT nor OFFSET is present; with row limiting, ordering
-    changes which rows or groups are selected and therefore must remain part of cohort
-    identity. WHERE, JOIN, CTE, HAVING, QUALIFY, DISTINCT, GROUP BY, LIMIT, OFFSET, and
-    literal predicates remain in the in-memory canonical form and are HMAC-protected.
+    Root projection *expressions* remain part of the keyed cohort identity. CASE/FILTER
+    predicates, comparison thresholds, target identifiers, aggregate arguments, WHERE,
+    JOIN, CTE, HAVING, QUALIFY, DISTINCT, GROUP BY, LIMIT, OFFSET, and literal values all
+    affect what information can be released and therefore must remain HMAC-protected.
+    Cosmetic root aliases are removed. An unlimited root ORDER BY remains ignored because
+    it changes ordering, not membership or released values; with LIMIT/OFFSET it stays.
     """
 
     try:
@@ -77,7 +78,15 @@ def canonicalize_cohort_sql(sql: str, *, dialect: str = "duckdb") -> str:
 
     root = statements[0].copy()
     has_row_limit = root.args.get("limit") is not None or root.args.get("offset") is not None
-    root.set("expressions", [exp.Literal.number(1)])
+    root.set(
+        "expressions",
+        [
+            projection.this.copy()
+            if isinstance(projection, exp.Alias)
+            else projection.copy()
+            for projection in root.expressions
+        ],
+    )
     if not has_row_limit:
         root.set("order", None)
     return root.sql(dialect=dialect, pretty=False, comments=False)
@@ -116,7 +125,7 @@ def evaluate_composition_history(
     history: tuple[DisclosureRecord, ...],
     candidate: DisclosureEvent,
 ) -> DisclosureCompositionEvaluation:
-    """Evaluate one candidate against committed history without mutating state."""
+    """Evaluate one candidate against active release history without mutating state."""
 
     validate_event_composition(candidate)
     composition = candidate.composition
@@ -161,8 +170,8 @@ def evaluate_composition_history(
     )
     if same_release:
         return DisclosureCompositionEvaluation(
-            allowed=True,
-            rule=CompositionRule.REPEAT_IDENTICAL_RELEASE,
+            allowed=False,
+            rule=CompositionRule.REPEAT_PROTECTED_RELEASE_BLOCK,
             protected_release=True,
             prior_protected_count=len(prior_protected),
         )
