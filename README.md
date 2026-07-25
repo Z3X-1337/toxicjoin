@@ -38,19 +38,25 @@ proposed SQL
 
 ## Final release identity
 
-Landed `main` merge commit:
+Current judge-facing `main` HEAD after the documentation/evidence synchronization in PR #70:
+
+```text
+e1192edc2deb961ad9d85187ba2985f82296ed53
+```
+
+Frozen runtime merge from PR #68:
 
 ```text
 ee4991a93070c148e41dd158c952d5f1e9a6ed2c
 ```
 
-Exact final security-remediation head validated before landing:
+Exact final security-remediation runtime head validated before landing:
 
 ```text
 536c37c34de7b36495d33f63095585f72e5f4b46
 ```
 
-PR #68 merged that exact head into `main`. The merge commit contains the validated head and has no file-tree difference relative to it.
+PR #68 merged the exact validated runtime head into `main`; its merge commit introduced no file-tree difference relative to that runtime head. PR #70 landed afterward and changed only judge-facing README/documentation/evidence. It did **not** change runtime source, policy, parser, rewriter, executor, verifier, authentication, disclosure implementation, dependencies, Docker runtime, or workflow definitions. Therefore `e1192edc…` is the current judge-facing repository HEAD, while `536c37c…` remains the exact security-tested runtime provenance.
 
 Deterministic policy version: `0.2.0`.
 
@@ -227,7 +233,6 @@ Windows PowerShell:
 ```
 
 After startup:
-
 - API docs: `http://127.0.0.1:8000/docs`
 - liveness: `GET /api/health`
 - detailed readiness: `GET /api/ready`
