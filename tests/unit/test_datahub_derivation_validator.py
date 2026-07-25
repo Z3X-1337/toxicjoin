@@ -143,6 +143,8 @@ def test_validator_replays_bundle_and_commits_exact_claim_partition() -> None:
     assert validation.evidence_root_sha256 == bundle.evidence_root_sha256
     assert validation.snapshot_sha256 == bundle.snapshot_sha256
     assert validation.source_identity == bundle.source_identity
+    assert validation.evidence_observed_at == bundle.observed_at
+    assert validation.evidence_expires_at == bundle.expires_at
     assert validation.validated_at == now
     assert set(validation.observed_claim_ids).isdisjoint(validation.mapped_claim_ids)
     assert set(validation.observed_claim_ids) | set(validation.mapped_claim_ids) == {
@@ -290,7 +292,7 @@ def test_validator_rejects_snapshot_and_source_configuration_mismatch() -> None:
         )
 
 
-def test_validator_fails_closed_for_future_or_stale_bundle() -> None:
+def test_validator_fails_closed_for_future_stale_or_naive_validation_time() -> None:
     bundle = _bundle()
 
     with pytest.raises(DataHubDerivationValidationError, match="observed in the future"):
@@ -307,6 +309,14 @@ def test_validator_fails_closed_for_future_or_stale_bundle() -> None:
             _snapshot(),
             _settings(),
             now=bundle.expires_at,
+        )
+
+    with pytest.raises(DataHubDerivationValidationError, match="timezone-aware"):
+        validate_datahub_evidence_derivations(
+            bundle,
+            _snapshot(),
+            _settings(),
+            now=datetime(2026, 7, 25, 10, 0),
         )
 
 
