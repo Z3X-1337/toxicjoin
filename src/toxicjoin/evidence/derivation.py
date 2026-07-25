@@ -224,11 +224,7 @@ def validate_datahub_evidence_derivations(
             "DataHub evidence contains a derivation outside the validated partition"
         )
 
-    freshness_policy_seconds = (
-        expected.evidence_expires_at - expected.evidence_observed_at
-        if isinstance(expected, DataHubDerivationValidation)
-        else expected.expires_at - expected.observed_at
-    ).total_seconds()
+    freshness_policy_seconds = (expected.expires_at - expected.observed_at).total_seconds()
     payload = {
         "schema_version": "1.0",
         "validator_version": _VALIDATOR_VERSION,
