@@ -11,6 +11,8 @@ from toxicjoin.execute.duckdb_executor import (
     ExecutionResult,
 )
 from toxicjoin.execute.limits import ExecutionOutputLimits
+from toxicjoin.execute.proof_bound_authorization import ProofBoundExecutionAuthorization
+from toxicjoin.execute.proof_bound_strict import ProofBoundExecutionAuthorizer
 
 __all__ = [
     "DuckDBExecutor",
@@ -20,4 +22,6 @@ __all__ = [
     "ExecutionError",
     "ExecutionOutputLimits",
     "ExecutionResult",
+    "ProofBoundExecutionAuthorization",
+    "ProofBoundExecutionAuthorizer",
 ]
