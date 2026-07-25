@@ -1,8 +1,9 @@
 """Finite security-owned Future Action Grammar and deterministic Twin transitions.
 
 P0 never synthesizes arbitrary SQL or literals during prospective search. The grammar is
-instantiated once from a canonical, governed context and contains complete future semantic
-release variants. A transition accepts only an exact action committed by that grammar.
+instantiated from one canonical governed context and contains complete future semantic
+release variants. Serialized grammars are self-validating: the expected action set is
+regenerated from the committed context before the grammar hash is accepted.
 """
 
 from __future__ import annotations
@@ -43,6 +44,16 @@ _MAX_SNAPSHOT_TRANSITIONS = 8
 Sha256 = Annotated[str, Field(pattern=_HASH_PATTERN)]
 
 _SUPPORTED_AGGREGATES = {"AVG", "COUNT", "MAX", "MIN", "SUM"}
+_RAW_PROJECTION_KINDS = {
+    ProjectionExposureKind.RAW_VALUE,
+    ProjectionExposureKind.TRANSFORMED_RAW_VALUE,
+    ProjectionExposureKind.GROUP_KEY,
+    ProjectionExposureKind.NESTED_SCOPE,
+}
+_GROUP_REPLACEABLE_KINDS = {
+    ProjectionExposureKind.RAW_VALUE,
+    ProjectionExposureKind.TRANSFORMED_RAW_VALUE,
+}
 
 
 class FutureActionGrammarError(RuntimeError):
@@ -92,6 +103,7 @@ class FutureActionGrammarContext(StrictModel):
             raise ValueError("base composition must bind the base semantic release")
         if self.base_composition.protected_release != is_protected_release(self.base_semantic):
             raise ValueError("base composition protected classification mismatch")
+        _validate_base_semantic(self.base_semantic)
 
         _require_canonical_columns(self.relevant_projection_fields, "relevant_projection_fields")
         _require_canonical_columns(self.group_key_fields, "group_key_fields")
@@ -127,7 +139,7 @@ class FutureActionGrammarContext(StrictModel):
 
 
 class FutureAction(StrictModel):
-    """One complete, canonical future release or snapshot transition."""
+    """One complete canonical future release or snapshot transition."""
 
     schema_version: Literal["1.0"] = "1.0"
     grammar_version: Literal["0.1.0"] = _GRAMMAR_VERSION
@@ -149,17 +161,18 @@ class FutureAction(StrictModel):
                 raise ValueError("future action composition must bind its semantic release")
             if self.composition.protected_release != is_protected_release(self.semantic):
                 raise ValueError("future action protected classification mismatch")
+            _validate_base_semantic(self.semantic)
         if self.action_sha256 != compute_future_action_sha256(self):
             raise ValueError("future action hash mismatch")
         return self
 
 
 class FutureActionGrammar(StrictModel):
-    """Finite canonical action set committed to one security-owned context."""
+    """Finite canonical action set committed to one complete security-owned context."""
 
     schema_version: Literal["1.0"] = "1.0"
     grammar_version: Literal["0.1.0"] = _GRAMMAR_VERSION
-    context_sha256: str = Field(pattern=_HASH_PATTERN)
+    context: FutureActionGrammarContext
     actions: tuple[FutureAction, ...] = Field(min_length=1, max_length=_MAX_ACTIONS_PER_STATE)
     grammar_sha256: str = Field(pattern=_HASH_PATTERN)
 
@@ -170,9 +183,16 @@ class FutureActionGrammar(StrictModel):
             raise ValueError("future actions must be sorted and unique")
         if any(action.grammar_version != self.grammar_version for action in self.actions):
             raise ValueError("future action grammar version mismatch")
+        try:
+            expected = _instantiate_actions(self.context)
+        except FutureActionGrammarError as exc:
+            raise ValueError("future action grammar context exceeds the action budget") from exc
+        if self.actions != expected:
+            raise ValueError("future action set does not match deterministic context instantiation")
         if self.grammar_sha256 != compute_future_action_grammar_sha256(self):
             raise ValueError("future action grammar hash mismatch")
         return self
+
 
 
 def build_future_action_grammar_context(
@@ -185,7 +205,7 @@ def build_future_action_grammar_context(
     cohort_variant_hmacs: tuple[str, ...] = (),
     snapshot_transitions: tuple[str, ...] = (),
 ) -> FutureActionGrammarContext:
-    """Build one canonical context; callers cannot rely on insertion order."""
+    """Build one canonical context independent of caller insertion order."""
 
     relevant = tuple(sorted(relevant_projection_fields, key=lambda column: column.key))
     groups = tuple(sorted(group_key_fields, key=lambda column: column.key))
@@ -214,78 +234,24 @@ def build_future_action_grammar_context(
     )
 
 
+
 def instantiate_future_action_grammar(
     context: FutureActionGrammarContext,
 ) -> FutureActionGrammar:
-    """Instantiate all declared P0 actions; budget exhaustion fails closed."""
+    """Instantiate the complete declared P0 action set; exhaustion fails closed."""
 
-    actions: dict[str, FutureAction] = {}
-
-    def add(action: FutureAction) -> None:
-        actions[action.action_sha256] = action
-        if len(actions) > _MAX_ACTIONS_PER_STATE:
-            raise FutureActionGrammarError("future action budget exceeded")
-
-    add(_build_release_action(FutureActionKind.REPLAY, context.base_semantic, context.base_composition))
-
-    single_source_outputs = {
-        output.sources[0].key: output
-        for output in context.base_semantic.outputs
-        if len(output.sources) == 1
-    }
-    base_group_keys = {column.key for column in context.base_semantic.group_keys}
-
-    for column in context.relevant_projection_fields:
-        if column.key not in single_source_outputs:
-            semantic = _with_added_projection(context.base_semantic, column)
-            add(_release_variant_action(FutureActionKind.ADD_PROJECTION, semantic, context))
-
-    for column_key in sorted(single_source_outputs):
-        semantic = _with_removed_projection(context.base_semantic, column_key)
-        if semantic is not None:
-            add(_release_variant_action(FutureActionKind.REMOVE_PROJECTION, semantic, context))
-
-    for column in context.group_key_fields:
-        if column.key not in base_group_keys:
-            semantic = _with_added_group_key(context.base_semantic, column)
-            add(_release_variant_action(FutureActionKind.ADD_GROUP_KEY, semantic, context))
-
-    for column in context.base_semantic.group_keys:
-        semantic = _with_dropped_group_key(context.base_semantic, column.key)
-        add(_release_variant_action(FutureActionKind.DROP_GROUP_KEY, semantic, context))
-
-    current_aggregates = tuple(sorted(set(context.base_semantic.aggregate_functions)))
-    for current in current_aggregates:
-        for replacement in context.aggregate_allowlist:
-            if replacement == current:
-                continue
-            semantic = _with_changed_aggregate(context.base_semantic, current, replacement)
-            add(_release_variant_action(FutureActionKind.CHANGE_AGGREGATE, semantic, context))
-
-    for cohort_sha256 in context.cohort_variant_hmacs:
-        if cohort_sha256 == context.base_composition.cohort_hmac_sha256:
-            continue
-        variant = DisclosureComposition(
-            protected_release=context.base_composition.protected_release,
-            release_family_sha256=context.base_semantic.semantic_sha256,
-            cohort_hmac_sha256=cohort_sha256,
-        )
-        add(_build_release_action(FutureActionKind.COHORT_VARIANT, context.base_semantic, variant))
-
-    for snapshot_sha256 in context.snapshot_transitions:
-        add(_build_snapshot_action(snapshot_sha256))
-
-    ordered = tuple(actions[key] for key in sorted(actions))
+    actions = _instantiate_actions(context)
     provisional = FutureActionGrammar.model_construct(
-        context_sha256=context.context_sha256,
-        actions=ordered,
+        context=context,
+        actions=actions,
         grammar_sha256="0" * 64,
     )
     return FutureActionGrammar(
-        context_sha256=context.context_sha256,
-        actions=ordered,
+        context=context,
+        actions=actions,
         grammar_sha256=compute_future_action_grammar_sha256(provisional),
     )
+
 
 
 def apply_future_action(
@@ -293,10 +259,14 @@ def apply_future_action(
     action: FutureAction,
     grammar: FutureActionGrammar,
 ) -> DisclosureState:
-    """Apply only an exact grammar member to one immutable DisclosureState."""
+    """Apply only an exact member of a self-validating finite grammar."""
 
     canonical = next(
-        (candidate for candidate in grammar.actions if candidate.action_sha256 == action.action_sha256),
+        (
+            candidate
+            for candidate in grammar.actions
+            if candidate.action_sha256 == action.action_sha256
+        ),
         None,
     )
     if canonical is None or canonical != action:
@@ -327,16 +297,97 @@ def apply_future_action(
     )
 
 
+
 def compute_future_action_context_sha256(context: FutureActionGrammarContext) -> str:
     return canonical_json_sha256(context.model_dump(mode="json", exclude={"context_sha256"}))
+
 
 
 def compute_future_action_sha256(action: FutureAction) -> str:
     return canonical_json_sha256(action.model_dump(mode="json", exclude={"action_sha256"}))
 
 
+
 def compute_future_action_grammar_sha256(grammar: FutureActionGrammar) -> str:
     return canonical_json_sha256(grammar.model_dump(mode="json", exclude={"grammar_sha256"}))
+
+
+
+def _instantiate_actions(context: FutureActionGrammarContext) -> tuple[FutureAction, ...]:
+    actions: dict[str, FutureAction] = {}
+
+    def add(action: FutureAction) -> None:
+        actions[action.action_sha256] = action
+        if len(actions) > _MAX_ACTIONS_PER_STATE:
+            raise FutureActionGrammarError("future action budget exceeded")
+
+    add(
+        _build_release_action(
+            FutureActionKind.REPLAY,
+            context.base_semantic,
+            context.base_composition,
+        )
+    )
+
+    base_group_keys = {column.key for column in context.base_semantic.group_keys}
+    raw_projection_keys = {
+        output.sources[0].key
+        for output in context.base_semantic.outputs
+        if len(output.sources) == 1 and output.kind in _RAW_PROJECTION_KINDS
+    }
+
+    for column in context.relevant_projection_fields:
+        if column.key not in raw_projection_keys:
+            semantic = _with_added_projection(context.base_semantic, column)
+            add(_release_variant_action(FutureActionKind.ADD_PROJECTION, semantic, context))
+
+    for output in context.base_semantic.outputs:
+        if len(output.sources) != 1 or output.kind not in _RAW_PROJECTION_KINDS:
+            continue
+        semantic = _with_removed_projection(context.base_semantic, output)
+        if semantic is not None:
+            add(_release_variant_action(FutureActionKind.REMOVE_PROJECTION, semantic, context))
+
+    for column in context.group_key_fields:
+        if column.key not in base_group_keys:
+            semantic = _with_added_group_key(context.base_semantic, column)
+            add(_release_variant_action(FutureActionKind.ADD_GROUP_KEY, semantic, context))
+
+    for column in context.base_semantic.group_keys:
+        semantic = _with_dropped_group_key(context.base_semantic, column.key)
+        if semantic is not None:
+            add(_release_variant_action(FutureActionKind.DROP_GROUP_KEY, semantic, context))
+
+    current_aggregates = tuple(sorted(set(context.base_semantic.aggregate_functions)))
+    current_set = set(current_aggregates)
+    for current in current_aggregates:
+        for replacement in context.aggregate_allowlist:
+            if replacement == current or replacement in current_set:
+                continue
+            semantic = _with_changed_aggregate(context.base_semantic, current, replacement)
+            add(_release_variant_action(FutureActionKind.CHANGE_AGGREGATE, semantic, context))
+
+    for cohort_sha256 in context.cohort_variant_hmacs:
+        if cohort_sha256 == context.base_composition.cohort_hmac_sha256:
+            continue
+        variant = DisclosureComposition(
+            protected_release=context.base_composition.protected_release,
+            release_family_sha256=context.base_semantic.semantic_sha256,
+            cohort_hmac_sha256=cohort_sha256,
+        )
+        add(
+            _build_release_action(
+                FutureActionKind.COHORT_VARIANT,
+                context.base_semantic,
+                variant,
+            )
+        )
+
+    for snapshot_sha256 in context.snapshot_transitions:
+        add(_build_snapshot_action(snapshot_sha256))
+
+    return tuple(actions[key] for key in sorted(actions))
+
 
 
 def _release_variant_action(
@@ -350,6 +401,7 @@ def _release_variant_action(
         cohort_hmac_sha256=context.base_composition.cohort_hmac_sha256,
     )
     return _build_release_action(kind, semantic, composition)
+
 
 
 def _build_release_action(
@@ -372,6 +424,7 @@ def _build_release_action(
     )
 
 
+
 def _build_snapshot_action(snapshot_sha256: str) -> FutureAction:
     provisional = FutureAction.model_construct(
         kind=FutureActionKind.SNAPSHOT_ADVANCE,
@@ -387,37 +440,40 @@ def _build_snapshot_action(snapshot_sha256: str) -> FutureAction:
     )
 
 
+
 def _with_added_projection(
     base: DisclosureSemanticRelease,
     column: GovernedColumn,
 ) -> DisclosureSemanticRelease:
-    outputs = tuple(
-        sorted(
-            (*base.outputs, SemanticOutput(kind=ProjectionExposureKind.RAW_VALUE, sources=(column,))),
-            key=_output_key,
-        )
+    outputs = _canonical_outputs(
+        (*base.outputs, SemanticOutput(kind=ProjectionExposureKind.RAW_VALUE, sources=(column,)))
     )
     referenced = _merge_columns(base.referenced_columns, (column,))
     datasets = tuple(sorted(set((*base.source_dataset_urns, column.dataset_urn))))
     return _rebuild_semantic(base, outputs=outputs, referenced=referenced, datasets=datasets)
 
 
+
 def _with_removed_projection(
     base: DisclosureSemanticRelease,
-    column_key: str,
+    target: SemanticOutput,
 ) -> DisclosureSemanticRelease | None:
-    outputs = tuple(
-        output
-        for output in base.outputs
-        if not (len(output.sources) == 1 and output.sources[0].key == column_key)
-    )
-    if not outputs:
+    removed = False
+    outputs_list: list[SemanticOutput] = []
+    for output in base.outputs:
+        if not removed and output == target:
+            removed = True
+            continue
+        outputs_list.append(output)
+    if not removed or not outputs_list:
         return None
+    outputs = _canonical_outputs(tuple(outputs_list))
     still_needed = {
         source.key for output in outputs for source in output.sources
     } | {column.key for column in base.join_columns} | {column.key for column in base.group_keys}
     referenced = tuple(column for column in base.referenced_columns if column.key in still_needed)
     return _rebuild_semantic(base, outputs=outputs, referenced=referenced)
+
 
 
 def _with_added_group_key(
@@ -427,27 +483,42 @@ def _with_added_group_key(
     group_keys = _merge_columns(base.group_keys, (column,))
     referenced = _merge_columns(base.referenced_columns, (column,))
     datasets = tuple(sorted(set((*base.source_dataset_urns, column.dataset_urn))))
-    outputs = list(base.outputs)
+
+    outputs: list[SemanticOutput] = []
     replaced = False
-    for index, output in enumerate(outputs):
-        if len(output.sources) == 1 and output.sources[0].key == column.key:
-            outputs[index] = SemanticOutput(kind=ProjectionExposureKind.GROUP_KEY, sources=(column,))
+    for output in base.outputs:
+        if (
+            len(output.sources) == 1
+            and output.sources[0].key == column.key
+            and output.kind in _GROUP_REPLACEABLE_KINDS
+        ):
             replaced = True
-    if not replaced:
-        outputs.append(SemanticOutput(kind=ProjectionExposureKind.GROUP_KEY, sources=(column,)))
+            continue
+        outputs.append(output)
+    if replaced or not any(
+        len(output.sources) == 1
+        and output.sources[0].key == column.key
+        and output.kind == ProjectionExposureKind.GROUP_KEY
+        for output in outputs
+    ):
+        outputs.append(
+            SemanticOutput(kind=ProjectionExposureKind.GROUP_KEY, sources=(column,))
+        )
+
     return _rebuild_semantic(
         base,
-        outputs=tuple(sorted(outputs, key=_output_key)),
+        outputs=_canonical_outputs(tuple(outputs)),
         referenced=referenced,
         group_keys=group_keys,
         datasets=datasets,
     )
 
 
+
 def _with_dropped_group_key(
     base: DisclosureSemanticRelease,
     column_key: str,
-) -> DisclosureSemanticRelease:
+) -> DisclosureSemanticRelease | None:
     group_keys = tuple(column for column in base.group_keys if column.key != column_key)
     outputs = tuple(
         output
@@ -458,11 +529,19 @@ def _with_dropped_group_key(
             and output.sources[0].key == column_key
         )
     )
+    if not outputs:
+        return None
     still_needed = {
         source.key for output in outputs for source in output.sources
     } | {column.key for column in base.join_columns} | {column.key for column in group_keys}
     referenced = tuple(column for column in base.referenced_columns if column.key in still_needed)
-    return _rebuild_semantic(base, outputs=outputs, referenced=referenced, group_keys=group_keys)
+    return _rebuild_semantic(
+        base,
+        outputs=_canonical_outputs(outputs),
+        referenced=referenced,
+        group_keys=group_keys,
+    )
+
 
 
 def _with_changed_aggregate(
@@ -471,9 +550,15 @@ def _with_changed_aggregate(
     replacement: str,
 ) -> DisclosureSemanticRelease:
     aggregates = tuple(
-        sorted(replacement if value == current else value for value in base.aggregate_functions)
+        sorted(
+            set(
+                replacement if value == current else value
+                for value in base.aggregate_functions
+            )
+        )
     )
     return _rebuild_semantic(base, aggregates=aggregates)
+
 
 
 def _rebuild_semantic(
@@ -486,22 +571,37 @@ def _rebuild_semantic(
     datasets: tuple[str, ...] | None = None,
 ) -> DisclosureSemanticRelease:
     kwargs = {
-        "source_dataset_urns": datasets if datasets is not None else base.source_dataset_urns,
-        "outputs": tuple(sorted(outputs if outputs is not None else base.outputs, key=_output_key)),
+        "source_dataset_urns": tuple(
+            sorted(set(datasets if datasets is not None else base.source_dataset_urns))
+        ),
+        "outputs": _canonical_outputs(outputs if outputs is not None else base.outputs),
         "referenced_columns": tuple(
-            sorted(referenced if referenced is not None else base.referenced_columns, key=lambda c: c.key)
+            sorted(
+                referenced if referenced is not None else base.referenced_columns,
+                key=lambda column: column.key,
+            )
         ),
         "join_columns": base.join_columns,
         "group_keys": tuple(
-            sorted(group_keys if group_keys is not None else base.group_keys, key=lambda c: c.key)
+            sorted(
+                group_keys if group_keys is not None else base.group_keys,
+                key=lambda column: column.key,
+            )
         ),
         "aggregate_functions": tuple(
             sorted(set(aggregates if aggregates is not None else base.aggregate_functions))
         ),
         "minimum_group_size_present": base.minimum_group_size_present,
     }
-    provisional = DisclosureSemanticRelease.model_construct(**kwargs, semantic_sha256="0" * 64)
-    return DisclosureSemanticRelease(**kwargs, semantic_sha256=compute_semantic_sha256(provisional))
+    provisional = DisclosureSemanticRelease.model_construct(
+        **kwargs,
+        semantic_sha256="0" * 64,
+    )
+    return DisclosureSemanticRelease(
+        **kwargs,
+        semantic_sha256=compute_semantic_sha256(provisional),
+    )
+
 
 
 def _rebuild_state(
@@ -540,18 +640,78 @@ def _rebuild_state(
         raise FutureActionTransitionError("future action transition failed closed") from exc
 
 
+
+def _validate_base_semantic(semantic: DisclosureSemanticRelease) -> None:
+    if not semantic.outputs:
+        raise ValueError("future action base semantic release must contain at least one output")
+    columns = _semantic_columns(semantic)
+    if any(column.category == SensitivityCategory.UNCLASSIFIED for column in columns):
+        raise ValueError("future action semantics cannot contain unclassified columns")
+    dataset_urns = set(semantic.source_dataset_urns)
+    missing_datasets = sorted(
+        {column.dataset_urn for column in columns if column.dataset_urn not in dataset_urns}
+    )
+    if missing_datasets:
+        raise ValueError(
+            "future action semantic columns must belong to source datasets: "
+            + ", ".join(missing_datasets)
+        )
+    referenced = {column.key for column in semantic.referenced_columns}
+    required_references = {
+        source.key for output in semantic.outputs for source in output.sources
+    } | {column.key for column in semantic.join_columns} | {column.key for column in semantic.group_keys}
+    if not required_references.issubset(referenced):
+        raise ValueError("future action semantics require complete governed references")
+
+
+
+def _semantic_columns(semantic: DisclosureSemanticRelease) -> tuple[GovernedColumn, ...]:
+    by_key: dict[str, GovernedColumn] = {}
+    for column in (
+        *semantic.referenced_columns,
+        *semantic.join_columns,
+        *semantic.group_keys,
+        *(source for output in semantic.outputs for source in output.sources),
+    ):
+        existing = by_key.get(column.key)
+        if existing is not None and existing != column:
+            raise ValueError("future action semantic column governance conflict")
+        by_key[column.key] = column
+    return tuple(by_key[key] for key in sorted(by_key))
+
+
+
 def _merge_columns(
     left: tuple[GovernedColumn, ...],
     right: tuple[GovernedColumn, ...],
 ) -> tuple[GovernedColumn, ...]:
-    merged = {column.key: column for column in (*left, *right)}
+    merged = {column.key: column for column in left}
+    for column in right:
+        existing = merged.get(column.key)
+        if existing is not None and existing != column:
+            raise FutureActionGrammarError("governed column conflict in future action context")
+        merged[column.key] = column
     return tuple(merged[key] for key in sorted(merged))
+
 
 
 def _require_canonical_columns(columns: tuple[GovernedColumn, ...], label: str) -> None:
     keys = tuple(column.key for column in columns)
     if keys != tuple(sorted(set(keys))):
         raise ValueError(f"{label} must be sorted and unique by governed column key")
+
+
+
+def _canonical_outputs(outputs: tuple[SemanticOutput, ...]) -> tuple[SemanticOutput, ...]:
+    by_signature: dict[tuple[str, tuple[str, ...]], SemanticOutput] = {}
+    for output in outputs:
+        signature = _output_key(output)
+        existing = by_signature.get(signature)
+        if existing is not None and existing != output:
+            raise FutureActionGrammarError("semantic output signature conflict")
+        by_signature[signature] = output
+    return tuple(by_signature[key] for key in sorted(by_signature))
+
 
 
 def _output_key(output: SemanticOutput) -> tuple[str, tuple[str, ...]]:
