@@ -2,36 +2,49 @@
 
 This is the authoritative judge-facing release index.
 
-## Final runtime candidate
+## Release identity
+
+Landed `main` merge commit:
 
 ```text
-e139fa99bd666505ed83a18188423722405695a2
+ee4991a93070c148e41dd158c952d5f1e9a6ed2c
 ```
 
-Policy version: `0.2.0`.
+Exact security-remediation head validated before landing:
 
-The only runtime-source difference from the previously deep-validated baseline `fe4f8da2579e09bdbfb1d998b92dfea86549733b` is `src/toxicjoin/benchmark/evidence.py`: its packaged judge-facing benchmark identity was corrected from stale policy `0.1.0` / old report SHA to the already-measured final policy `0.2.0` / report SHA `3aadc0b357db50641c8ffdc0525dde0e3d9159f933abf62a31a6a74b777d1b08`.
+```text
+536c37c34de7b36495d33f63095585f72e5f4b46
+```
 
-The remaining changes in the release-cleanup PR are documentation/evidence synchronization. No parser, policy rule, rewriter, executor, verifier, authentication, disclosure, DataHub integration, dependency, Docker, or workflow behavior changed.
+PR #68 merged that exact head into `main`. The merge commit contains the validated head and introduces no file-tree difference relative to it. Policy version remains `0.2.0`.
 
-## Exact-head validation after the correction
+No new feature, refactor, dependency, or policy change is authorized during release freeze unless a proven release blocker requires reopening the candidate.
 
-The corrected runtime candidate `e139fa99bd666505ed83a18188423722405695a2` passed:
+## Exact final-security-head gates
+
+All release/security workflows below completed successfully on `536c37c34de7b36495d33f63095585f72e5f4b46`:
 
 | Gate | Run | Result |
 |---|---:|---:|
-| CI — Python 3.11 / 3.12, Web, hardened Container | `30140102648` | PASS |
-| CodeQL | `30140102673` | PASS |
-| Supply Chain Security | `30140102634` | PASS |
-| Governance Dependency Evidence | `30140102647` | PASS |
-| Adversarial Mutation Evidence | `30140102676` | PASS |
-| Compositional Ablation Evidence | `30140102635` | PASS |
+| CI — Python 3.11 / 3.12, Web, benchmark, hardened Container | `30143510873` | PASS |
+| CodeQL | `30143510868` | PASS |
+| Supply Chain Security | `30143510883` | PASS |
+| Governance Dependency Evidence | `30143510866` | PASS |
+| Adversarial Mutation Evidence | `30143510877` | PASS |
+| Compositional Ablation Evidence | `30143510871` | PASS |
+| Disclosure Sequence Evidence | `30143510867` | PASS |
+| Live DataHub Evidence | `30143510876` | PASS |
 
-The generated benchmark artifact on that exact SHA is:
+Python 3.12 pytest artifact: **309 passed**, with one upstream Starlette/FastAPI deprecation warning only.
 
-- artifact ID `8614180997`;
-- digest `sha256:3adec180defa9338fe970068f47bc3a479ceae2817941f41b8c7f32c8f4a10d6`;
+## Final 30-case benchmark
+
+Exact-head CI artifact:
+
+- artifact ID `8615270504`;
+- artifact digest `sha256:88737151d88603a0c3994a4e479a1e2c8ee6e0aa909615b9127703d92a128599`;
 - policy `0.2.0`;
+- data fingerprint `bfeae85c4b238e38012aadc6f4c95d24c7a28bcb1da1c35e8eeef5be28be7d16`;
 - 30 cases: 10 ALLOW / 10 REWRITE / 10 BLOCK;
 - 30/30 expected initial decisions;
 - 30/30 expected effective outcomes;
@@ -41,89 +54,89 @@ The generated benchmark artifact on that exact SHA is:
 - six rewrites remediated to verified ALLOW;
 - four rewrite paths failed closed;
 - 16 verified executions;
-- report SHA-256 `3aadc0b357db50641c8ffdc0525dde0e3d9159f933abf62a31a6a74b777d1b08`.
+- report SHA-256 `3e8ea32a802a6b512be42ddc81b774b34ec0234e7f4ca43ca9be65cc1f398a64`.
 
-The same exact candidate also reproduced the security evidence without outcome drift:
+This is a deterministic regression corpus for the supported SQL/policy profile, not a claim of universal privacy-detection accuracy.
 
-### Governance dependency
+## Security closure in PR #68
 
-- run `30140102647`;
-- artifact `8614165940`;
-- digest `sha256:b9bf5e1770b19ad46a597da7ab743ab50536b349f46a7305f661b27687bfe7fb`;
-- complete governance: REWRITE -> ALLOW -> verified execution;
-- three degraded-governance states: BLOCK, no execution;
-- zero unsafe effective allows;
-- report SHA-256 `25c1b7c189a8ca248723138df2065ddb0669a9f4f46f6e7abe8f81b7b1a48d9f`.
+The final audit found and fixed concrete issues before submission:
 
-### Adversarial mutations
+- protected conditional aggregate oracle paths such as `COUNT(CASE...)` and filtered counts;
+- cohort identity that previously discarded root SELECT predicates/thresholds/targets;
+- temporal differencing from repeated protected releases without trusted warehouse snapshot identity;
+- disclosure-state poisoning after failed execution;
+- unkeyed-only receipt integrity;
+- raw protected engine/database error leakage;
+- broad default Docker Compose host binding.
 
-- run `30140102676`;
-- artifact `8614165343`;
-- digest `sha256:41cf4a8203cbb11fb331c3e78630113de7d498e4732d77c0605dd78f0563ebd1`;
-- 144/144 initial BLOCK;
-- 144/144 effective BLOCK;
-- intended compositional-risk reason 144/144;
-- zero database executions;
-- zero unsafe allows;
-- report SHA-256 `86011fc74ef6ca03e7b83d21e8770037fb32ddb22d41b750abc09aeabe443565`.
+The resulting controls include:
 
-### Compositional interaction ablation
+- conditional aggregate exposure classification and fail-closed policy;
+- keyed cohort identity that preserves projection expressions while ignoring cosmetic aliases;
+- conservative one-new-protected-release semantics until trusted snapshot identity exists;
+- append-only `PENDING -> RELEASED | ABORTED` disclosure state;
+- receipt schema 1.5 with content SHA-256 plus HMAC-SHA256 authenticity;
+- fail-closed receipt-key handling and filename/payload identity checks;
+- stable public authorization errors with sanitized protected execution failures;
+- loopback-only default Compose publication.
 
-- run `30140102635`;
-- artifact `8614165227`;
-- digest `sha256:36a54ac332ab18a343742090fb3c04559b84813d5434d8171500b64972874d1e`;
-- evaluation version `2.0`;
-- shipped policy blocks 144/144 unsafe mutations;
-- targeted interaction ablation allows 144/144;
-- all 20 ALLOW/REWRITE controls preserved;
-- report SHA-256 `14d7fb64be2c838966fffe0e8f20273cba3877255da767e99f04df980f4f5cdf`.
+Regression coverage includes threshold/subject mutation, concurrent reservations, aborted release handling, receipt semantic/ID/timestamp/governance tampering, attacker recomputation of public SHA without the HMAC key, wrong/missing HMAC key handling, execution-error sanitization, and secure deployment defaults.
 
-See [`benchmark.md`](benchmark.md), [`governance-dependency.md`](governance-dependency.md), [`adversarial-mutations.md`](adversarial-mutations.md), and [`compositional-ablation.md`](compositional-ablation.md).
+## Final exact-image black-box validation
 
-## Deep security / DataHub baseline
+Validation-only PR #69 reran the independent production-image harness against the exact final security head. The validation branch itself was never merged.
 
-Before the judge-facing benchmark-summary correction, runtime baseline `fe4f8da2579e09bdbfb1d998b92dfea86549733b` passed the full P4/P5 closure. The correction does not touch any subsystem exercised below.
+Run `30145592349`: **24/24 PASS**.
 
-Exact-head baseline runs:
+- artifact ID `8615893443`;
+- artifact digest `sha256:347c1cb66116367183a15e70a1ea892881cdfcf98321db581fbf10db5ae75d0a`;
+- exact target `536c37c34de7b36495d33f63095585f72e5f4b46`;
+- report SHA-256 `c857cf8856e1850124f5d0c6bff2a2cdcbf1baa01ea21372db5bcb9fbb8d6dd3`;
+- failed probes `0`.
 
-| Gate | Run |
-|---|---:|
-| CI | `30136824481` |
-| CodeQL | `30136824457` |
-| Governance Dependency Evidence | `30136824433` |
-| Adversarial Mutation Evidence | `30136824442` |
-| Compositional Ablation Evidence | `30136824435` |
-| Disclosure Sequence Evidence | `30136824441` |
-| Supply Chain Security | `30136824509` |
-| Live DataHub Agent Registry | `30136824472` |
-| Live DataHub Evidence | `30136824466` |
-| Verify Hosted Replay | `30136824439` |
+Coverage includes authentication/scope separation, request limits, rate limiting, fail-closed mutation and compositional sensitive export, legitimate low-risk execution, receipt ownership isolation, receipt mode `0600`, persisted-receipt tamper detection, restricted production API surface, TrustedHost, non-root/read-only container boundaries, capability drop, no-new-privileges, localhost exposure, and response/log leakage checks.
 
-### Live DataHub OSS + official MCP
+See [`final-security-blackbox.md`](final-security-blackbox.md) and [`final-security-blackbox.json`](final-security-blackbox.json).
 
-Run `30136824466`:
+## Final Live DataHub OSS + official MCP
 
-- evidence artifact `8613145981`;
-- digest `sha256:b90596ffc15f298511abd1e79c97e987f92f5fdb820bf9525a7ac3fc0bce27f8`;
+Exact final security-head run `30143510876`: **PASS**.
+
+Evidence artifact:
+
+- artifact ID `8615316211`;
+- digest `sha256:18552f336e1e0a785bb2a19c984726b175902f16323ad8092323959d8a6e1dd2`.
+
+Diagnostics artifact:
+
+- artifact ID `8615316546`;
+- digest `sha256:4ecb6e0843e5804ac4c1f477b86e095e5398cbefb345573675a9f82f8e488922`.
+
+The exact-head run proved:
+
 - 5 datasets;
 - 19 governed fields;
 - 10 controlled tags;
 - 7 glossary terms;
 - 4 lineage writes;
-- seed report SHA-256 `161788c3f70caa37ddaa5972759eb498f10dae6631e9bb4f74fc22893dfd9e47`;
-- spike schema `1.3`;
+- official `mcp-server-datahub==0.6.0`;
 - role-separated read-only snapshot -> isolated writer -> fresh read-only read-back;
-- effective writer inventory exactly `save_document`;
+- raw upstream writer inventory retained honestly;
+- effective ToxicJoin writer inventory exactly `save_document` through a mandatory allowlist;
 - independent Decision read-back verified;
 - 3 upstream lineage relationships;
 - 2 lineage-bound fields;
 - 6 normalized lineage sources;
-- zero unclassified lineage sources;
-- spike report SHA-256 `d3650b38505870e0cb864913c1f9dfa56665a209f9c95cee637f32b003cf3b5e`.
+- zero unclassified lineage sources.
 
-See [`datahub-live.md`](datahub-live.md).
+Final exact-head seed report SHA-256: `538eef1abc7a02d1a0bcc939a51195831e78e8e6cb161400fbc3abf223f5f3b1`.
 
-### Frozen external 24-task v2
+Final exact-head spike report SHA-256: `6f295f0c399474834d66413353b5218af5c098fdb6f9875088b43011bcd6f292`.
+
+See [`datahub-live.md`](datahub-live.md), [`datahub-live-seed.json`](datahub-live-seed.json), and [`datahub-live-spike.json`](datahub-live-spike.json).
+
+## Frozen external 24-task validation
 
 Validation-only PR #38 reused the unchanged frozen tasks, SQL proposals, risk labels, expected execution semantics, baseline artifact, and UCI warehouse fingerprint.
 
@@ -131,7 +144,6 @@ Run `30137303763`: PASS.
 
 - artifact `8613263087`;
 - digest `sha256:b3988c8f9a43e7cdafe53384279eda91d3c04c92751dd4c93c918c234a3e422a`;
-- exact baseline candidate `fe4f8da2579e09bdbfb1d998b92dfea86549733b`;
 - 24 tasks;
 - 1 ALLOW / 23 BLOCK;
 - E01 executes;
@@ -141,27 +153,7 @@ Run `30137303763`: PASS.
 - no patient rows in sanitized evidence;
 - report SHA-256 `beb02e39ad2fe4838f78def0c8d0e5d8d396876845c29a758223d87464ff2cf9`.
 
-PR #38 was closed without merge.
-
-### Exact-image black-box pentest
-
-Validation-only PR #55 built the Docker image from the exact baseline and interacted with it through HTTP and container inspection.
-
-Run `30138071361`: **24/24 PASS**.
-
-- artifact `8613510441`;
-- digest `sha256:28dca12c6cab143f5d77e1b0e92c9d66c37af0fa0a1a9aacfb192101d0d25a0e`;
-- report SHA-256 `1582cd741818da3d2d9c6de97cd3cec52b7e1ba584b384b6211fdccc10a48b1f`.
-
-Coverage included authentication/scope separation, request limits, rate limiting, fail-closed mutation and sensitive export, legitimate stateful ALLOW, receipt ownership isolation, persisted-receipt tamper detection, restricted API surface, non-root/read-only container boundaries, capability drop, no-new-privileges, and response/log leakage checks.
-
-PR #55 was closed without merge.
-
-## Why the deep baseline remains applicable
-
-The post-P5 source correction changes only the packaged benchmark evidence object returned by the unrestricted fixture judge endpoint `/api/benchmark/summary`. The deep external replay exercises policy/parser/rewrite/verification/execution behavior; the black-box pentest exercises authenticated/restricted security boundaries where `/api/benchmark/summary` is intentionally not exposed; the Live DataHub gate exercises DataHub context/lineage/write-back paths. None of those code paths changed.
-
-The corrected candidate nevertheless reran CI, CodeQL, Supply Chain, Governance Dependency, Adversarial Mutation, and Compositional Ablation on its exact SHA, and all passed.
+This is retained as frozen external validation of the earlier deep-security baseline. The final security head has separate exact-head CI, semantic/security regression, Live DataHub, and black-box evidence above; we do not relabel the historical external run as if it were regenerated.
 
 ## Supply-chain posture
 
@@ -174,15 +166,18 @@ The release lineage retains:
 - CycloneDX SBOMs;
 - immutable GitHub Action SHA pins;
 - digest-pinned Docker base images;
-- Dependabot;
-- the narrow, machine-validated, expiring upstream-blocked `setuptools` exception documented under `docs/security/`.
+- Dependabot.
 
-Dependabot update PRs created after freeze were closed without merge; Dependabot remains enabled for post-submission maintenance.
+One narrow machine-validated upstream-constrained exception remains documented under `docs/security/`: the current DataHub dependency profile constrains `setuptools` below the upstream fixed version. The exception is temporary, scoped, non-runtime-applicability justified, and expiring; it is not described as a full fix.
 
-## Release state
+## Honest deployment modes
 
-`e139fa99bd666505ed83a18188423722405695a2` is the final audited runtime candidate. Later commits in the release-cleanup PR are documentation/evidence-only provenance synchronization and do not alter the runtime tree.
+The hosted browser experience at `https://toxicjoin-replay.vercel.app/` is intentionally labeled **Deterministic Replay**. It is not represented as live DuckDB execution or a live DataHub mutation.
 
-No feature, refactor, dependency, policy, or enforcement change is authorized before submission unless a new proven release blocker requires reopening the candidate.
+The Docker/FastAPI package is the executable product path. Real DataHub OSS/MCP behavior is proven independently by the exact-head gate above.
 
-The hosted browser experience remains a clearly labeled deterministic Replay. The Docker/FastAPI package is the executable path. Devpost remains NOT SUBMITTED pending explicit owner review and approval.
+## Claim boundaries
+
+ToxicJoin does not claim differential privacy, universal SQL repair, universal re-identification detection, formal verification, or legal-compliance certification. Unsupported SQL, unresolved/ambiguous lineage, missing/stale governance, failed rewrite, failed verification, integrity failure, or incomplete evidence fail closed.
+
+Devpost remains **NOT SUBMITTED** until the final public demo video and explicit owner review/approval are complete.
