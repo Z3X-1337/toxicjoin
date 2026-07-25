@@ -86,16 +86,11 @@ def build_remediation_space(
 
 
 def enumerate_cpcc_candidates(space: CpccRemediationSpace) -> tuple[CpccCandidate, ...]:
-    """Enumerate every one- and two-action candidate; invalid combinations are not hidden.
-
-    Applicability/compatibility is a GENERATE-stage validation concern. Keeping all pairs in
-    the committed finite space makes the optimization claim auditable: no candidate is silently
-    pruned by an uncommitted heuristic.
-    """
+    """Enumerate all singles and pairs without hidden compatibility pruning."""
 
     validated_space = CpccRemediationSpace.model_validate(space.model_dump(mode="json"))
     action_groups = [
-        *( (action,) for action in validated_space.actions ),
+        *((action,) for action in validated_space.actions),
         *combinations(validated_space.actions, 2),
     ]
     candidates = tuple(
@@ -149,10 +144,12 @@ def run_cpcc(
     remediation_space: CpccRemediationSpace,
     validator: CpccCandidateValidator,
 ) -> CpccResult:
-    """Exhaustively validate the entire committed finite space before selecting a repair."""
+    """Validate the entire finite space before selecting the minimum-cost safe repair."""
 
     try:
-        space = CpccRemediationSpace.model_validate(remediation_space.model_dump(mode="json"))
+        space = CpccRemediationSpace.model_validate(
+            remediation_space.model_dump(mode="json")
+        )
         candidates = enumerate_cpcc_candidates(space)
     except ValidationError as exc:
         raise CpccError("CPCC remediation space failed canonical validation") from exc
@@ -174,6 +171,7 @@ def run_cpcc(
                 selected=None,
                 failed_candidate_sha256=candidate.candidate_sha256,
             )
+
         if validation.candidate_sha256 != candidate.candidate_sha256:
             return _build_result(
                 status=CpccStatus.FAIL_CLOSED,
@@ -183,13 +181,32 @@ def run_cpcc(
                 selected=None,
                 failed_candidate_sha256=candidate.candidate_sha256,
             )
+
         validations.append(validation)
+        if validation.outcome == CpccValidationOutcome.FAIL_CLOSED:
+            return _build_result(
+                status=CpccStatus.FAIL_CLOSED,
+                remediation_space=space,
+                validations=tuple(validations),
+                eligible=tuple(eligible),
+                selected=None,
+                failed_candidate_sha256=candidate.candidate_sha256,
+            )
         if validation.outcome == CpccValidationOutcome.ELIGIBLE_SAFE:
             eligible.append(candidate)
 
-    selected = min(eligible, key=lambda candidate: candidate.ordering_key) if eligible else None
+    selected = (
+        min(eligible, key=lambda candidate: candidate.ordering_key)
+        if eligible
+        else None
+    )
+    status = (
+        CpccStatus.REPAIR_FOUND
+        if selected is not None
+        else CpccStatus.NO_ELIGIBLE_REPAIR
+    )
     return _build_result(
-        status=CpccStatus.REPAIR_FOUND if selected is not None else CpccStatus.NO_ELIGIBLE_REPAIR,
+        status=status,
         remediation_space=space,
         validations=tuple(validations),
         eligible=tuple(eligible),
@@ -235,7 +252,9 @@ def _build_result(
         "status": status,
         "remediation_space_sha256": remediation_space.space_sha256,
         "candidates_considered": len(validations),
-        "validation_sha256s": tuple(item.validation_sha256 for item in validations),
+        "validation_sha256s": tuple(
+            item.validation_sha256 for item in validations
+        ),
         "eligible_candidate_sha256s": tuple(
             sorted(candidate.candidate_sha256 for candidate in eligible)
         ),
@@ -243,4 +262,7 @@ def _build_result(
         "failed_candidate_sha256": failed_candidate_sha256,
     }
     provisional = CpccResult.model_construct(**payload, result_sha256="0" * 64)
-    return CpccResult(**payload, result_sha256=compute_cpcc_result_sha256(provisional))
+    return CpccResult(
+        **payload,
+        result_sha256=compute_cpcc_result_sha256(provisional),
+    )
