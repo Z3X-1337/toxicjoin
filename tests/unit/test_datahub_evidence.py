@@ -149,34 +149,34 @@ def test_bundle_binds_every_claim_to_exact_snapshot_root() -> None:
 
 def test_observed_and_mapped_facts_keep_distinct_trust_semantics() -> None:
     bundle = build_datahub_evidence_bundle(_snapshot(), _settings())
-    owner = _find_claim(bundle, subject=SOURCE_URN, predicate="datahub.owner")
-    category_subject = f"{SOURCE_URN}#customer_id"
+    field_subject = f"{SOURCE_URN}#customer_id"
+    tags = _find_claim(bundle, subject=field_subject, predicate="datahub.tags")
     category = _find_claim(
         bundle,
-        subject=category_subject,
+        subject=field_subject,
         predicate="toxicjoin.sensitivity_category",
     )
 
-    assert owner.derivation == DerivationKind.RUNTIME_OBSERVED
+    assert tags.derivation == DerivationKind.RUNTIME_OBSERVED
     assert category.derivation == DerivationKind.EXPLICIT_MAPPING
 
-    owner_resolution = resolve_evidence(
-        subject=SOURCE_URN,
-        predicate="datahub.owner",
-        claims=(owner,),
+    tags_resolution = resolve_evidence(
+        subject=field_subject,
+        predicate="datahub.tags",
+        claims=(tags,),
         policy=default_evidence_policy(),
         now=OBSERVED_AT,
     )
     category_resolution = resolve_evidence(
-        subject=category_subject,
+        subject=field_subject,
         predicate="toxicjoin.sensitivity_category",
         claims=(category,),
         policy=default_evidence_policy(),
         now=OBSERVED_AT,
     )
 
-    assert owner_resolution.state == EvidenceTrustState.TRUSTED
-    assert owner_resolution.value == "urn:li:corpuser:data-owner"
+    assert tags_resolution.state == EvidenceTrustState.TRUSTED
+    assert tags_resolution.value == '["toxicjoin:stable-pseudonym"]'
     assert category_resolution.state == EvidenceTrustState.UNKNOWN
     assert category_resolution.value is None
 
@@ -246,6 +246,8 @@ def test_owner_domain_tags_and_glossary_are_preserved_without_secret_leakage() -
 
     assert owner.value == "urn:li:corpuser:data-owner"
     assert domain.value == "urn:li:domain:customer-security"
+    assert owner.derivation == DerivationKind.EXPLICIT_MAPPING
+    assert domain.derivation == DerivationKind.EXPLICIT_MAPPING
     assert tags.value == '["toxicjoin:stable-pseudonym"]'
     assert glossary.value == '["Sensitive Attribute"]'
     assert all(
