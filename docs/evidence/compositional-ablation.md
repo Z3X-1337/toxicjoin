@@ -1,7 +1,7 @@
 # ToxicJoin Compositional Interaction Ablation
 
 **Gate:** PASS  
-**Exact release candidate:** `fe4f8da2579e09bdbfb1d998b92dfea86549733b`  
+**Exact runtime candidate:** `e139fa99bd666505ed83a18188423722405695a2`  
 **Policy version:** `0.2.0`  
 **Evaluation version:** `2.0`  
 **Unsafe mutation cases:** 144  
@@ -11,11 +11,11 @@
 **Unsafe decisions changed by the ablation:** 144/144  
 **ALLOW/REWRITE controls preserved:** 20/20
 
-Final provenance:
+Exact-head provenance:
 
-- workflow run `30136824435`;
-- artifact ID `8613091689`;
-- artifact digest `sha256:b89575b68e927cc5edb7c7072bfbed926c0e3feeb511d4b2ff53ddd63e247fcf`;
+- workflow run `30140102635`;
+- artifact ID `8614165227`;
+- artifact digest `sha256:36a54ac332ab18a343742090fb3c04559b84813d5434d8171500b64972874d1e`;
 - report SHA-256 `14d7fb64be2c838966fffe0e8f20273cba3877255da767e99f04df980f4f5cdf`.
 
 ## What was ablated
@@ -32,4 +32,4 @@ That isolates the causal contribution of ToxicJoin's compositional reasoning rat
 
 This does not claim every possible column-local policy would behave identically. It is a bounded internal causal evaluation over the declared suite.
 
-For the full exact-head validation chain, see [`release-candidate.md`](release-candidate.md).
+For the full validation chain, see [`release-candidate.md`](release-candidate.md).
