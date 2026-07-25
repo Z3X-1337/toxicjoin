@@ -66,12 +66,16 @@ def resolve_evidence(
             policy=policy,
         )
 
-    fresh = tuple(claim for claim in admissible if not claim.is_stale(current_time))
+    observed = tuple(
+        claim for claim in admissible if not claim.is_not_yet_applicable(current_time)
+    )
+    fresh = tuple(claim for claim in observed if not claim.is_stale(current_time))
     if not fresh:
+        state = EvidenceTrustState.STALE if observed else EvidenceTrustState.UNKNOWN
         return _result(
             subject=subject,
             predicate=predicate,
-            state=EvidenceTrustState.STALE,
+            state=state,
             value=None,
             claim_ids=claim_ids,
             policy=policy,
