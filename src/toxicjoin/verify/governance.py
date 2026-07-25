@@ -365,14 +365,14 @@ def _commitment_for_receipt(
 
 
 def _sanitize_execution_failure(result: VerificationResult) -> VerificationResult:
-    """Keep engine/database exception text server-side and expose stable codes only."""
+    """Hide database-engine exception text while preserving stable authorization codes."""
 
     failed_execution_checks = {
         check.name
         for check in result.checks
-        if not check.passed and check.name in {"execution", "execution_authorization"}
+        if not check.passed and check.name == "execution"
     }
-    if not failed_execution_checks and result.execution_error is None:
+    if not failed_execution_checks:
         return result
 
     if result.execution_error is not None:
