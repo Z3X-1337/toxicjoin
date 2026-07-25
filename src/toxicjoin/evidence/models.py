@@ -194,13 +194,13 @@ def build_evidence_claim(
         "source": source.value,
         "derivation": derivation.value,
         "source_identity": source_identity,
-        "observed_at": normalized_observed.isoformat(),
-        "expires_at": normalized_expires.isoformat() if normalized_expires else None,
+        "observed_at": _json_datetime(normalized_observed),
+        "expires_at": _json_datetime(normalized_expires) if normalized_expires else None,
         "effective_from": (
-            normalized_effective_from.isoformat() if normalized_effective_from else None
+            _json_datetime(normalized_effective_from) if normalized_effective_from else None
         ),
         "effective_until": (
-            normalized_effective_until.isoformat() if normalized_effective_until else None
+            _json_datetime(normalized_effective_until) if normalized_effective_until else None
         ),
         "complete": complete,
         "supporting_claim_ids": list(canonical_supporting),
@@ -278,3 +278,9 @@ def _utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         raise ValueError("evidence timestamps must be timezone-aware")
     return value.astimezone(timezone.utc)
+
+
+def _json_datetime(value: datetime) -> str:
+    """Match Pydantic's canonical UTC JSON representation used by model_dump."""
+
+    return value.isoformat().replace("+00:00", "Z")
