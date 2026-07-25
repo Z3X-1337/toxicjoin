@@ -4,7 +4,6 @@ import asyncio
 from datetime import datetime, timezone
 
 import pytest
-from pydantic import SecretStr
 
 from toxicjoin.agent import (
     AgentDataHubDiscoveryError,
@@ -16,6 +15,8 @@ from toxicjoin.context.fixture import FixtureCatalog, FixtureDataset, FixtureFie
 from toxicjoin.integrations.datahub_authority import (
     DataHubMcpRole,
     ReadOnlyDataHubMcpSettings,
+    read_only_credential_provenance_valid,
+    read_only_settings_from_env,
 )
 from toxicjoin.integrations.datahub_mcp import McpToolDefinition
 from toxicjoin.models import ColumnRef, LineageSource, SensitivityCategory
@@ -25,14 +26,13 @@ RAW_URN = "urn:li:dataset:(urn:li:dataPlatform:duckdb,raw_patients,PROD)"
 OBSERVED_AT = datetime(2026, 7, 25, 14, 0, tzinfo=timezone.utc)
 
 
-def _settings() -> ReadOnlyDataHubMcpSettings:
-    return ReadOnlyDataHubMcpSettings(
-        gms_url="https://datahub.example",
-        gms_token=SecretStr("agent-discovery-secret-token"),
-        command="uvx",
-        args=("mcp-server-datahub",),
-        timeout_seconds=30,
-    )
+def _settings(monkeypatch: pytest.MonkeyPatch) -> ReadOnlyDataHubMcpSettings:
+    monkeypatch.setenv("DATAHUB_GMS_URL", "https://datahub.example")
+    monkeypatch.setenv("DATAHUB_GMS_READ_TOKEN", "agent-discovery-secret-token")
+    monkeypatch.setenv("DATAHUB_MCP_COMMAND", "uvx")
+    monkeypatch.setenv("DATAHUB_MCP_ARGS", "mcp-server-datahub")
+    monkeypatch.setenv("DATAHUB_MCP_TIMEOUT_SECONDS", "30")
+    return read_only_settings_from_env()
 
 
 def _asset_map() -> DataHubAssetMap:
@@ -138,8 +138,10 @@ class FakeReadOnlyTransport:
         raise AssertionError(f"unexpected tool call: {name}")
 
 
-def test_discoverer_uses_dedicated_read_role_and_sanitizes_context() -> None:
-    original = _settings()
+def test_discoverer_uses_dedicated_read_role_and_sanitizes_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = _settings(monkeypatch)
     captured: list[FakeReadOnlyTransport] = []
 
     def factory(settings: ReadOnlyDataHubMcpSettings) -> FakeReadOnlyTransport:
@@ -156,6 +158,7 @@ def test_discoverer_uses_dedicated_read_role_and_sanitizes_context() -> None:
     )
 
     assert type(original) is ReadOnlyDataHubMcpSettings
+    assert read_only_credential_provenance_valid(original) is True
     assert original.role == DataHubMcpRole.READ_ONLY
     assert original.credential_source == "DATAHUB_GMS_READ_TOKEN"
     assert original.mutation_enabled is False
@@ -163,6 +166,7 @@ def test_discoverer_uses_dedicated_read_role_and_sanitizes_context() -> None:
     read_settings = captured[0].settings
     assert read_settings is not original
     assert type(read_settings) is ReadOnlyDataHubMcpSettings
+    assert read_only_credential_provenance_valid(read_settings) is True
     assert read_settings.role == DataHubMcpRole.READ_ONLY
     assert read_settings.credential_source == "DATAHUB_GMS_READ_TOKEN"
     assert read_settings.mutation_enabled is False
@@ -194,26 +198,27 @@ def test_discoverer_uses_dedicated_read_role_and_sanitizes_context() -> None:
     assert "TOOLS_IS_MUTATION_ENABLED" not in serialized
 
 
-def test_snapshot_conversion_is_deterministic() -> None:
-    transport = FakeReadOnlyTransport(_settings())
+def test_snapshot_conversion_is_deterministic(monkeypatch: pytest.MonkeyPatch) -> None:
+    transport = FakeReadOnlyTransport(_settings(monkeypatch))
 
     def factory(settings: ReadOnlyDataHubMcpSettings) -> FakeReadOnlyTransport:
         assert type(settings) is ReadOnlyDataHubMcpSettings
+        assert read_only_credential_provenance_valid(settings) is True
         assert settings.role == DataHubMcpRole.READ_ONLY
         assert settings.mutation_enabled is False
         return transport
 
     first = asyncio.run(
         DataHubAgentDiscoverer(
-            settings=_settings(),
+            settings=_settings(monkeypatch),
             asset_map=_asset_map(),
             transport_factory=factory,
         ).discover()
     )
-    transport2 = FakeReadOnlyTransport(_settings())
+    transport2 = FakeReadOnlyTransport(_settings(monkeypatch))
     second = asyncio.run(
         DataHubAgentDiscoverer(
-            settings=_settings(),
+            settings=_settings(monkeypatch),
             asset_map=_asset_map(),
             transport_factory=lambda settings: transport2,
         ).discover()
@@ -325,14 +330,14 @@ def test_invalid_dataset_identity_fails_closed() -> None:
     assert exc_info.value.code == "AGENT_DATAHUB_DATASET_IDENTITY_INVALID"
 
 
-def test_transport_exception_is_redacted() -> None:
+def test_transport_exception_is_redacted(monkeypatch: pytest.MonkeyPatch) -> None:
     def factory(settings: ReadOnlyDataHubMcpSettings) -> FakeReadOnlyTransport:
         return FakeReadOnlyTransport(settings, fail_list_tools=True)
 
     with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
         asyncio.run(
             DataHubAgentDiscoverer(
-                settings=_settings(),
+                settings=_settings(monkeypatch),
                 asset_map=_asset_map(),
                 transport_factory=factory,
             ).discover()
@@ -342,10 +347,12 @@ def test_transport_exception_is_redacted() -> None:
     assert "datahub.example" not in str(exc_info.value)
 
 
-def test_context_contains_no_tool_or_credential_handles() -> None:
+def test_context_contains_no_tool_or_credential_handles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     context = asyncio.run(
         DataHubAgentDiscoverer(
-            settings=_settings(),
+            settings=_settings(monkeypatch),
             asset_map=_asset_map(),
             transport_factory=lambda settings: FakeReadOnlyTransport(settings),
         ).discover()
