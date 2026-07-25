@@ -154,7 +154,49 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
+      - id: dependency-review
+        continue-on-error: true
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
         with:
           fail-on-severity: high
           allow-ghsas: GHSA-h35f-9h28-mq5c
+      - name: Capture dependency review diagnostics
+        if: always()
+        env:
+          REVIEW_OUTCOME: ${{ steps.dependency-review.outcome }}
+          DEPENDENCY_CHANGES: ${{ steps.dependency-review.outputs.dependency-changes }}
+          VULNERABLE_CHANGES: ${{ steps.dependency-review.outputs.vulnerable-changes }}
+          INVALID_LICENSE_CHANGES: ${{ steps.dependency-review.outputs.invalid-license-changes }}
+          DENIED_CHANGES: ${{ steps.dependency-review.outputs.denied-changes }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "outcome": os.environ.get("REVIEW_OUTCOME", ""),
+              "dependency_changes": os.environ.get("DEPENDENCY_CHANGES", ""),
+              "vulnerable_changes": os.environ.get("VULNERABLE_CHANGES", ""),
+              "invalid_license_changes": os.environ.get("INVALID_LICENSE_CHANGES", ""),
+              "denied_changes": os.environ.get("DENIED_CHANGES", ""),
+          }
+          Path("dependency-review-diagnostics.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(payload, indent=2, sort_keys=True))
+          PY
+      - name: Upload dependency review diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dependency-review-diagnostics
+          path: dependency-review-diagnostics.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Enforce dependency review outcome
+        if: always()
+        env:
+          REVIEW_OUTCOME: ${{ steps.dependency-review.outcome }}
+        run: test "$REVIEW_OUTCOME" = "success"
