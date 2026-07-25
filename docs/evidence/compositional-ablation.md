@@ -1,76 +1,35 @@
-# ToxicJoin Compositional Interaction Ablation Evidence
+# ToxicJoin Compositional Interaction Ablation
 
-## Result
+**Gate:** PASS  
+**Exact release candidate:** `fe4f8da2579e09bdbfb1d998b92dfea86549733b`  
+**Policy version:** `0.2.0`  
+**Evaluation version:** `2.0`  
+**Unsafe mutation cases:** 144  
+**Benign/remediable controls:** 20  
+**Full ToxicJoin policy blocks unsafe mutations:** 144/144  
+**Interaction-ablated policy allows unsafe mutations:** 144/144  
+**Unsafe decisions changed by the ablation:** 144/144  
+**ALLOW/REWRITE controls preserved:** 20/20
 
-The compositional interaction ablation passed in GitHub Actions on **July 23, 2026**.
+Final provenance:
 
-- Workflow: `Compositional Ablation Evidence`
-- GitHub Actions run: https://github.com/Z3X-1337/toxicjoin/actions/runs/30047247527
-- Tested branch commit: `21a68d2850397654fc54a9f5be55836937faeb18`
-- Artifact: `toxicjoin-compositional-ablation`
-- Artifact ID: `8579602510`
-- Artifact digest: `sha256:0e7d2769d28b9f19b7cf7fe07d86103122569664eeda49f64eea286b8b9932e9`
-- Generated report SHA-256: `98c83efb95f0b7feec89a87233ab3e015dd73428c2eaaafe9f5ad9cdad9b8959`
-
-## Measured result
-
-| Metric | Result |
-|---|---:|
-| Unsafe adversarial mutations | **144** |
-| Full ToxicJoin policy blocks unsafe mutations | **144 / 144** |
-| Interaction-ablated policy allows unsafe mutations | **144 / 144** |
-| Unsafe decisions changed by removing the interaction | **144 / 144** |
-| ALLOW/REWRITE benchmark controls | **20** |
-| Control decisions preserved by the ablation | **20 / 20** |
-| Gate failures | **0** |
+- workflow run `30136824435`;
+- artifact ID `8613091689`;
+- artifact digest `sha256:b89575b68e927cc5edb7c7072bfbed926c0e3feeb511d4b2ff53ddd63e247fcf`;
+- report SHA-256 `14d7fb64be2c838966fffe0e8f20273cba3877255da767e99f04df980f4f5cdf`.
 
 ## What was ablated
 
-This is an **internal ablation study**, not a competitor comparison.
+This is an internal ablation study, not a competitor comparison.
 
-Both sides use:
-
-- the same ToxicJoin SQL parser;
-- the same governed metadata catalog and context resolver;
-- the same deterministic `PolicyEngine` implementation;
-- the same policy configuration for all other branches.
-
-The ablated run changes one configuration dimension: the quasi-identifier interaction threshold is raised beyond the maximum possible in this finite evaluation. That prevents the declared non-grouped interaction
-
-```text
-stable pseudonym + quasi-identifiers + sensitive attribute
-```
-
-from firing, while fail-closed metadata handling, direct-identifier handling, and grouped sensitive-threshold logic remain active.
-
-## Evaluation design
-
-The unsafe side reuses the complete **144-case adversarial mutation matrix**. Those queries vary aliases, JOIN spelling, predicates, and bounded ordering while preserving the same individual-level sensitive composition.
-
-The control side uses all **20** non-BLOCK initial-decision cases from the balanced benchmark:
-
-- 10 expected `ALLOW` cases;
-- 10 expected `REWRITE` cases.
-
-The shipped ToxicJoin policy blocks every unsafe mutation. When only the cross-column interaction is disabled, every one of those 144 mutations becomes `ALLOW`, while all 20 ALLOW/REWRITE controls keep their expected initial decision.
+Both sides use the same ToxicJoin parser, governed metadata resolver, deterministic `PolicyEngine`, and all unrelated policy branches. The ablated side removes final-output semantic exposure evidence from the `QueryPlan` and raises the legacy quasi-identifier threshold so the declared non-grouped compositional interaction cannot fire in this finite evaluation.
 
 ## Interpretation
 
-On this declared evaluation, the security difference is attributable to ToxicJoin's **compositional interaction rule**, rather than to SQL parsing, metadata lookup, or a blanket-deny policy.
+The shipped policy blocks every one of the 144 unsafe individual profiles. When only the targeted compositional interaction is removed, all 144 become ALLOW while the 20 ALLOW/REWRITE controls remain unchanged.
 
-This supports the project's central design claim: fields that are acceptable in isolation can form a materially different privacy risk when combined, so authorization must reason across the composition rather than only over independent field labels.
+That isolates the causal contribution of ToxicJoin's compositional reasoning rather than comparing against another product or changing the parser, data, or general fail-closed behavior.
 
-## Scope and limitation
+This does not claim every possible column-local policy would behave identically. It is a bounded internal causal evaluation over the declared suite.
 
-This does **not** claim that every possible column-local policy would behave exactly like the ablated configuration, and it does not compare ToxicJoin against DataHub or any competing product.
-
-It is a controlled internal ablation measuring the causal contribution of one ToxicJoin policy interaction on the declared 144 unsafe cases and 20 controls.
-
-## Reproduce
-
-```bash
-python -m pip install -e '.[dev]'
-toxicjoin-ablation --output-dir artifacts/compositional-ablation
-```
-
-The command exits non-zero if the shipped policy fails to block the declared unsafe set, if the targeted ablation no longer isolates the interaction on that set, or if any ALLOW/REWRITE control changes unexpectedly.
+For the full exact-head validation chain, see [`release-candidate.md`](release-candidate.md).
