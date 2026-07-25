@@ -13,7 +13,13 @@ from toxicjoin.evidence.datahub import (
     build_datahub_evidence_bundle,
     datahub_source_identity,
 )
-from toxicjoin.evidence.models import EvidenceSource
+from toxicjoin.evidence.models import (
+    DerivationKind,
+    EvidenceSource,
+    EvidenceTrustState,
+)
+from toxicjoin.evidence.policy import default_evidence_policy
+from toxicjoin.evidence.resolver import resolve_evidence
 from toxicjoin.integrations.datahub_mcp import DataHubMcpSettings
 from toxicjoin.models import ColumnRef, LineageSource, SensitivityCategory
 
@@ -135,10 +141,44 @@ def test_bundle_binds_every_claim_to_exact_snapshot_root() -> None:
     assert root.supporting_claim_ids == ()
     assert all(claim.source == EvidenceSource.DATAHUB_MCP for claim in bundle.claims)
     assert all(
-        claim.supporting_claim_ids == (root.claim_id,)
+        root.claim_id in claim.supporting_claim_ids
         for claim in bundle.claims
         if claim.claim_id != root.claim_id
     )
+
+
+def test_observed_and_mapped_facts_keep_distinct_trust_semantics() -> None:
+    bundle = build_datahub_evidence_bundle(_snapshot(), _settings())
+    owner = _find_claim(bundle, subject=SOURCE_URN, predicate="datahub.owner")
+    category_subject = f"{SOURCE_URN}#customer_id"
+    category = _find_claim(
+        bundle,
+        subject=category_subject,
+        predicate="toxicjoin.sensitivity_category",
+    )
+
+    assert owner.derivation == DerivationKind.RUNTIME_OBSERVED
+    assert category.derivation == DerivationKind.EXPLICIT_MAPPING
+
+    owner_resolution = resolve_evidence(
+        subject=SOURCE_URN,
+        predicate="datahub.owner",
+        claims=(owner,),
+        policy=default_evidence_policy(),
+        now=OBSERVED_AT,
+    )
+    category_resolution = resolve_evidence(
+        subject=category_subject,
+        predicate="toxicjoin.sensitivity_category",
+        claims=(category,),
+        policy=default_evidence_policy(),
+        now=OBSERVED_AT,
+    )
+
+    assert owner_resolution.state == EvidenceTrustState.TRUSTED
+    assert owner_resolution.value == "urn:li:corpuser:data-owner"
+    assert category_resolution.state == EvidenceTrustState.UNKNOWN
+    assert category_resolution.value is None
 
 
 def test_category_and_lineage_governance_are_issued_fail_closed() -> None:
@@ -157,7 +197,9 @@ def test_category_and_lineage_governance_are_issued_fail_closed() -> None:
     )
     assert harmless_category.value == SensitivityCategory.PUBLIC_OR_LOW_RISK.value
     assert harmless_category.complete is True
+    assert harmless_category.derivation == DerivationKind.EXPLICIT_MAPPING
     assert harmless_lineage.value == "true"
+    assert harmless_lineage.derivation == DerivationKind.EXPLICIT_MAPPING
 
     unknown_subject = f"{DERIVED_URN}#unknown_value"
     unknown_category = _find_claim(
@@ -183,6 +225,7 @@ def test_category_and_lineage_governance_are_issued_fail_closed() -> None:
     assert len(edge_category_claims) == 1
     assert edge_category_claims[0].value == SensitivityCategory.UNCLASSIFIED.value
     assert edge_category_claims[0].complete is False
+    assert edge_category_claims[0].derivation == DerivationKind.EXPLICIT_MAPPING
 
 
 def test_owner_domain_tags_and_glossary_are_preserved_without_secret_leakage() -> None:
