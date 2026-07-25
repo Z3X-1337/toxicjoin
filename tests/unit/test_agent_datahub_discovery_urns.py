@@ -60,6 +60,10 @@ def _snapshot(*, dataset_urn: str = PATIENTS_URN, lineage_urn: str | None = None
         "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients,)",
         "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients PROD,PROD)",
         "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients,PROD",
+        "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients%ZZ,PROD)",
+        "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients%20name,PROD)",
+        "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients%2Farchive,PROD)",
+        "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients%2farchive,PROD)",
     ],
 )
 def test_dataset_identity_requires_canonical_datahub_urn(malformed: str) -> None:
@@ -75,6 +79,8 @@ def test_dataset_identity_requires_canonical_datahub_urn(malformed: str) -> None
         "urn:li:dataset:not-a-valid-dataset-urn",
         "urn:li:dataset:(urn:li:dataPlatform:duckdb,,PROD)",
         "urn:li:dataset:(urn:li:dataPlatform:duckdb,raw patients,PROD)",
+        "urn:li:dataset:(urn:li:dataPlatform:duckdb,raw%ZZpatients,PROD)",
+        "urn:li:dataset:(urn:li:dataPlatform:duckdb,raw%2Fpatients,PROD)",
     ],
 )
 def test_lineage_identity_requires_canonical_datahub_urn(malformed: str) -> None:
@@ -89,3 +95,9 @@ def test_canonical_dataset_and_lineage_urns_are_accepted() -> None:
     )
     assert context.datasets[0].dataset_urn == PATIENTS_URN
     assert context.datasets[0].fields[0].lineage[0].source_dataset_urn == RAW_URN
+
+
+def test_canonical_percent_encoded_unicode_component_round_trips() -> None:
+    encoded = "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients%E2%82%AC,PROD)"
+    context = build_agent_data_context_from_snapshot(_snapshot(dataset_urn=encoded))
+    assert context.datasets[0].dataset_urn == encoded
