@@ -73,12 +73,12 @@ class DataHubAgentDiscoverer:
             return build_agent_data_context_from_snapshot(snapshot)
         except AgentDataHubDiscoveryError:
             raise
-        except (DataHubMcpError, ValidationError, ValueError, TypeError) as exc:
-            raise AgentDataHubDiscoveryError("AGENT_DATAHUB_DISCOVERY_FAILED") from exc
-        except Exception as exc:
-            # External transport implementations are untrusted I/O boundaries. Do not surface
-            # their exception text because it may contain endpoint, credential, or payload data.
-            raise AgentDataHubDiscoveryError("AGENT_DATAHUB_DISCOVERY_FAILED") from exc
+        except (DataHubMcpError, ValidationError, ValueError, TypeError):
+            raise AgentDataHubDiscoveryError("AGENT_DATAHUB_DISCOVERY_FAILED") from None
+        except Exception:
+            # External transport implementations are untrusted I/O boundaries. Suppress the
+            # exception chain because it may contain endpoint, credential, or payload data.
+            raise AgentDataHubDiscoveryError("AGENT_DATAHUB_DISCOVERY_FAILED") from None
 
 
 def build_agent_data_context_from_snapshot(snapshot: DataHubSnapshot) -> AgentDataContext:
@@ -92,8 +92,8 @@ def build_agent_data_context_from_snapshot(snapshot: DataHubSnapshot) -> AgentDa
 
     try:
         trusted = DataHubSnapshot.model_validate(snapshot.model_dump(mode="json"))
-    except (AttributeError, ValidationError) as exc:
-        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SNAPSHOT_INVALID") from exc
+    except (AttributeError, ValidationError):
+        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SNAPSHOT_INVALID") from None
 
     dataset_views: list[AgentDatasetView] = []
     for logical_name, dataset in sorted(trusted.catalog.datasets.items()):
@@ -172,5 +172,5 @@ def _read_only_settings(settings: DataHubMcpSettings) -> DataHubMcpSettings:
             timeout_seconds=settings.timeout_seconds,
             mutation_enabled=False,
         )
-    except (AttributeError, ValidationError, ValueError) as exc:
-        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID") from exc
+    except (AttributeError, ValidationError, ValueError):
+        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID") from None
