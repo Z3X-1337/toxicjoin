@@ -51,6 +51,7 @@ class CpccValidationStage(StrEnum):
 class CpccValidationOutcome(StrEnum):
     ELIGIBLE_SAFE = "ELIGIBLE_SAFE"
     INELIGIBLE = "INELIGIBLE"
+    FAIL_CLOSED = "FAIL_CLOSED"
 
 
 class CpccStatus(StrEnum):
@@ -137,7 +138,9 @@ class CpccRemediationSpace(StrictModel):
         hashes = tuple(action.action_sha256 for action in self.actions)
         if hashes != tuple(sorted(set(hashes))):
             raise ValueError("CPCC remediation actions must be sorted and unique")
-        candidate_count = len(self.actions) + (len(self.actions) * (len(self.actions) - 1) // 2)
+        candidate_count = len(self.actions) + (
+            len(self.actions) * (len(self.actions) - 1) // 2
+        )
         if candidate_count > _MAX_ENUMERATED_CANDIDATES:
             raise ValueError("CPCC remediation-space candidate budget exceeded")
         if self.space_sha256 != compute_remediation_space_sha256(self):
@@ -209,16 +212,37 @@ class CpccCandidateValidation(StrictModel):
         )
         if self.outcome == CpccValidationOutcome.ELIGIBLE_SAFE:
             if self.failure_stage is not None or any(value is None for value in required):
-                raise ValueError("eligible CPCC candidate requires the complete validation chain")
+                raise ValueError(
+                    "eligible CPCC candidate requires the complete validation chain"
+                )
             if not self.local_policy_allowed:
                 raise ValueError("eligible CPCC candidate requires local PolicyEngine ALLOW")
             if self.ppmc_status != PpmcStatus.NO_COUNTEREXAMPLE_WITHIN_BOUND:
-                raise ValueError("eligible CPCC candidate requires bounded PPMC no-counterexample result")
-        else:
+                raise ValueError(
+                    "eligible CPCC candidate requires bounded PPMC no-counterexample result"
+                )
+        elif self.outcome == CpccValidationOutcome.INELIGIBLE:
             if self.failure_stage is None:
                 raise ValueError("ineligible CPCC candidate requires a failure stage")
-            if self.local_policy_allowed and self.failure_stage != CpccValidationStage.PPMC:
-                raise ValueError("locally allowed ineligible candidate must fail at PPMC")
+            if self.failure_stage == CpccValidationStage.PPMC:
+                if not self.local_policy_allowed:
+                    raise ValueError(
+                        "PPMC-ineligible CPCC candidate requires prior local ALLOW"
+                    )
+                if self.ppmc_status != PpmcStatus.PROSPECTIVE_UNSAFE:
+                    raise ValueError(
+                        "PPMC-ineligible candidate requires PROSPECTIVE_UNSAFE"
+                    )
+            elif self.local_policy_allowed:
+                raise ValueError(
+                    "locally allowed ineligible candidate may fail only at PPMC"
+                )
+        else:
+            if self.failure_stage is None:
+                raise ValueError("fail-closed CPCC validation requires a failure stage")
+            if self.ppmc_status == PpmcStatus.NO_COUNTEREXAMPLE_WITHIN_BOUND:
+                raise ValueError("safe PPMC result cannot be marked fail closed")
+
         if self.validation_sha256 != compute_cpcc_candidate_validation_sha256(self):
             raise ValueError("CPCC candidate-validation hash mismatch")
         return self
@@ -232,8 +256,14 @@ class CpccResult(StrictModel):
     status: CpccStatus
     remediation_space_sha256: Sha256
     candidates_considered: int = Field(ge=0, le=_MAX_ENUMERATED_CANDIDATES)
-    validation_sha256s: tuple[Sha256, ...] = Field(default=(), max_length=_MAX_ENUMERATED_CANDIDATES)
-    eligible_candidate_sha256s: tuple[Sha256, ...] = Field(default=(), max_length=_MAX_ENUMERATED_CANDIDATES)
+    validation_sha256s: tuple[Sha256, ...] = Field(
+        default=(),
+        max_length=_MAX_ENUMERATED_CANDIDATES,
+    )
+    eligible_candidate_sha256s: tuple[Sha256, ...] = Field(
+        default=(),
+        max_length=_MAX_ENUMERATED_CANDIDATES,
+    )
     selected_candidate: CpccCandidate | None = None
     failed_candidate_sha256: Sha256 | None = None
     result_sha256: Sha256
@@ -242,21 +272,31 @@ class CpccResult(StrictModel):
     def validate_result(self) -> "CpccResult":
         if len(self.validation_sha256s) != self.candidates_considered:
             raise ValueError("CPCC validation count does not match considered candidates")
-        if self.eligible_candidate_sha256s != tuple(sorted(set(self.eligible_candidate_sha256s))):
+        canonical_eligible = tuple(sorted(set(self.eligible_candidate_sha256s)))
+        if self.eligible_candidate_sha256s != canonical_eligible:
             raise ValueError("CPCC eligible candidate hashes must be sorted and unique")
+
         if self.status == CpccStatus.REPAIR_FOUND:
             if self.selected_candidate is None or self.failed_candidate_sha256 is not None:
                 raise ValueError("CPCC repair result requires one selected candidate")
+            if (
+                self.selected_candidate.remediation_space_sha256
+                != self.remediation_space_sha256
+            ):
+                raise ValueError("CPCC selected candidate belongs to another space")
             if self.selected_candidate.candidate_sha256 not in self.eligible_candidate_sha256s:
                 raise ValueError("CPCC selected candidate is not eligible")
         elif self.status == CpccStatus.NO_ELIGIBLE_REPAIR:
             if self.selected_candidate is not None or self.failed_candidate_sha256 is not None:
-                raise ValueError("no-repair CPCC result cannot contain selected/failed candidate")
+                raise ValueError(
+                    "no-repair CPCC result cannot contain selected/failed candidate"
+                )
             if self.eligible_candidate_sha256s:
                 raise ValueError("no-repair CPCC result cannot contain eligible candidates")
         else:
             if self.selected_candidate is not None or self.failed_candidate_sha256 is None:
                 raise ValueError("fail-closed CPCC result requires failed candidate only")
+
         if self.result_sha256 != compute_cpcc_result_sha256(self):
             raise ValueError("CPCC result hash mismatch")
         return self
@@ -282,7 +322,9 @@ def remediation_operator_cost(operator: RemediationOperator) -> RemediationCost:
 
 
 def compute_remediation_action_sha256(action: RemediationAction) -> str:
-    return canonical_json_sha256(action.model_dump(mode="json", exclude={"action_sha256"}))
+    return canonical_json_sha256(
+        action.model_dump(mode="json", exclude={"action_sha256"})
+    )
 
 
 def compute_remediation_space_sha256(space: CpccRemediationSpace) -> str:
@@ -290,14 +332,20 @@ def compute_remediation_space_sha256(space: CpccRemediationSpace) -> str:
 
 
 def compute_cpcc_candidate_sha256(candidate: CpccCandidate) -> str:
-    return canonical_json_sha256(candidate.model_dump(mode="json", exclude={"candidate_sha256"}))
+    return canonical_json_sha256(
+        candidate.model_dump(mode="json", exclude={"candidate_sha256"})
+    )
 
 
-def compute_cpcc_candidate_validation_sha256(validation: CpccCandidateValidation) -> str:
+def compute_cpcc_candidate_validation_sha256(
+    validation: CpccCandidateValidation,
+) -> str:
     return canonical_json_sha256(
         validation.model_dump(mode="json", exclude={"validation_sha256"})
     )
 
 
 def compute_cpcc_result_sha256(result: CpccResult) -> str:
-    return canonical_json_sha256(result.model_dump(mode="json", exclude={"result_sha256"}))
+    return canonical_json_sha256(
+        result.model_dump(mode="json", exclude={"result_sha256"})
+    )
