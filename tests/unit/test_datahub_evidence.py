@@ -105,8 +105,13 @@ def _find_claim(bundle: DataHubEvidenceBundle, *, subject: str, predicate: str):
 
 def test_source_identity_is_redacted_and_canonical() -> None:
     identity = datahub_source_identity(_settings())
+    normalized = datahub_source_identity(
+        _settings(gms_url="https://datahub.example")
+    )
 
-    assert identity.startswith("datahub-mcp:https://datahub.example|")
+    assert identity == normalized
+    assert identity.startswith("datahub-mcp:gms_sha256=")
+    assert "datahub.example" not in identity
     assert ":443" not in identity
     assert "do-not-leak-this-token" not in identity
     assert "launcher_sha256=" in identity
@@ -180,7 +185,7 @@ def test_category_and_lineage_governance_are_issued_fail_closed() -> None:
     assert edge_category_claims[0].complete is False
 
 
-def test_owner_domain_tags_and_glossary_are_preserved_without_raw_secret_material() -> None:
+def test_owner_domain_tags_and_glossary_are_preserved_without_secret_leakage() -> None:
     bundle = build_datahub_evidence_bundle(_snapshot(), _settings())
 
     owner = _find_claim(bundle, subject=SOURCE_URN, predicate="datahub.owner")
@@ -200,7 +205,11 @@ def test_owner_domain_tags_and_glossary_are_preserved_without_raw_secret_materia
     assert domain.value == "urn:li:domain:customer-security"
     assert tags.value == '["toxicjoin:stable-pseudonym"]'
     assert glossary.value == '["Sensitive Attribute"]'
-    assert all("do-not-leak-this-token" not in claim.model_dump_json() for claim in bundle.claims)
+    assert all(
+        "do-not-leak-this-token" not in claim.model_dump_json()
+        for claim in bundle.claims
+    )
+    assert all("datahub.example" not in claim.model_dump_json() for claim in bundle.claims)
 
 
 def test_bundle_is_deterministic_across_dataset_insertion_order() -> None:
@@ -243,8 +252,9 @@ def test_evidence_ttl_is_bounded() -> None:
 
 def test_bundle_claims_are_bound_to_configured_launcher_identity() -> None:
     default_bundle = build_datahub_evidence_bundle(_snapshot(), _settings())
-    alternate = _settings()
-    alternate = alternate.model_copy(update={"args": ("mcp-server-datahub", "--different")})
+    alternate = _settings().model_copy(
+        update={"args": ("mcp-server-datahub", "--different")}
+    )
     alternate_bundle = build_datahub_evidence_bundle(_snapshot(), alternate)
 
     assert default_bundle.source_identity != alternate_bundle.source_identity
