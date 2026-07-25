@@ -33,9 +33,21 @@ _HASH_PATTERN = r"^[0-9a-f]{64}$"
 _DEFAULT_EVIDENCE_TTL_SECONDS = 300.0
 _MAX_EVIDENCE_TTL_SECONDS = 3600.0
 _MAX_CLAIM_VALUE_LENGTH = 4096
-_ALLOWED_DERIVATIONS = {
-    DerivationKind.RUNTIME_OBSERVED,
-    DerivationKind.EXPLICIT_MAPPING,
+
+_PREDICATE_DERIVATIONS: dict[str, DerivationKind] = {
+    "datahub.snapshot_sha256": DerivationKind.RUNTIME_OBSERVED,
+    "datahub.owner": DerivationKind.RUNTIME_OBSERVED,
+    "datahub.domain": DerivationKind.RUNTIME_OBSERVED,
+    "datahub.tags": DerivationKind.RUNTIME_OBSERVED,
+    "datahub.glossary_terms": DerivationKind.RUNTIME_OBSERVED,
+    "datahub.lineage_source_urn": DerivationKind.RUNTIME_OBSERVED,
+    "datahub.catalog_version": DerivationKind.EXPLICIT_MAPPING,
+    "datahub.logical_name": DerivationKind.EXPLICIT_MAPPING,
+    "toxicjoin.sensitivity_category": DerivationKind.EXPLICIT_MAPPING,
+    "datahub.lineage_transport_complete": DerivationKind.EXPLICIT_MAPPING,
+    "toxicjoin.lineage_governance_complete": DerivationKind.EXPLICIT_MAPPING,
+    "datahub.lineage_source_ref": DerivationKind.EXPLICIT_MAPPING,
+    "toxicjoin.lineage_source_category": DerivationKind.EXPLICIT_MAPPING,
 }
 
 
@@ -88,12 +100,22 @@ class DataHubEvidenceBundle(StrictModel):
         for claim in self.claims:
             if claim.source != EvidenceSource.DATAHUB_MCP:
                 raise ValueError("DataHub evidence bundle contains a non-DataHub source")
-            if claim.derivation not in _ALLOWED_DERIVATIONS:
-                raise ValueError("DataHub evidence claim uses an unsupported derivation")
+            expected_derivation = _PREDICATE_DERIVATIONS.get(claim.predicate)
+            if expected_derivation is None:
+                raise ValueError(
+                    f"unsupported DataHub evidence predicate: {claim.predicate}"
+                )
+            if claim.derivation != expected_derivation:
+                raise ValueError(
+                    "DataHub evidence predicate derivation mismatch: "
+                    f"{claim.predicate} requires {expected_derivation.value}"
+                )
             if claim.source_identity != self.source_identity:
                 raise ValueError("DataHub evidence source identity mismatch")
             if claim.observed_at != self.observed_at or claim.expires_at != self.expires_at:
                 raise ValueError("DataHub evidence claim freshness binding mismatch")
+            if claim.predicate == "datahub.snapshot_sha256" and claim.claim_id != root.claim_id:
+                raise ValueError("DataHub evidence bundle may contain only one snapshot root")
             if claim.claim_id == root.claim_id:
                 if claim.supporting_claim_ids:
                     raise ValueError("DataHub snapshot root claim must not depend on another claim")
