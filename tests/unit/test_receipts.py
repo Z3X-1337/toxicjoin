@@ -217,6 +217,7 @@ def _receipt(
 def test_receipt_preserves_rewrite_to_allow_lifecycle() -> None:
     receipt = _receipt()
 
+    assert receipt.schema_version == "1.4"
     assert receipt.initial_decision == Decision.REWRITE
     assert receipt.initial_reason_codes == (ReasonCode.SMALL_GROUP_RISK,)
     assert receipt.final_decision == Decision.ALLOW
@@ -243,16 +244,18 @@ def test_sanitized_sql_redacts_literal_values() -> None:
     assert "?" in sanitized
 
 
-def test_content_hash_is_independent_of_id_and_time() -> None:
+def test_content_hash_binds_receipt_id_and_created_at() -> None:
     first = _receipt()
-    second = _receipt(
-        receipt_id="tj_fedcba9876543210",
+    changed_id = _receipt(receipt_id="tj_fedcba9876543210")
+    changed_time = _receipt(
         created_at=datetime(2026, 7, 23, 20, 0, tzinfo=timezone.utc),
     )
 
-    assert first.content_sha256 == second.content_sha256
+    assert first.content_sha256 != changed_id.content_sha256
+    assert first.content_sha256 != changed_time.content_sha256
     assert compute_content_hash(first) == first.content_sha256
-    assert compute_content_hash(second) == second.content_sha256
+    assert compute_content_hash(changed_id) == changed_id.content_sha256
+    assert compute_content_hash(changed_time) == changed_time.content_sha256
 
 
 def test_store_writes_reads_and_is_idempotent(tmp_path) -> None:
@@ -268,7 +271,7 @@ def test_store_writes_reads_and_is_idempotent(tmp_path) -> None:
     assert first_path.stat().st_size > 0
 
 
-def test_store_detects_tampering(tmp_path) -> None:
+def test_store_detects_semantic_tampering(tmp_path) -> None:
     receipt = _receipt()
     store = ReceiptStore(tmp_path)
     path = store.write(receipt)
@@ -277,6 +280,43 @@ def test_store_detects_tampering(tmp_path) -> None:
     path.write_text(json.dumps(raw), encoding="utf-8")
 
     with pytest.raises(ValueError, match="hash mismatch"):
+        store.read(receipt.receipt_id)
+
+
+def test_store_detects_receipt_id_tampering(tmp_path) -> None:
+    receipt = _receipt()
+    store = ReceiptStore(tmp_path)
+    path = store.write(receipt)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["receipt_id"] = "tj_fedcba9876543210"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="identity mismatch|hash mismatch"):
+        store.read(receipt.receipt_id)
+
+
+def test_store_detects_created_at_tampering(tmp_path) -> None:
+    receipt = _receipt()
+    store = ReceiptStore(tmp_path)
+    path = store.write(receipt)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["created_at"] = "2026-01-01T00:00:00Z"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="hash mismatch"):
+        store.read(receipt.receipt_id)
+
+
+def test_filename_identity_binding_survives_attacker_rehash(tmp_path) -> None:
+    receipt = _receipt()
+    store = ReceiptStore(tmp_path)
+    path = store.write(receipt)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["receipt_id"] = "tj_fedcba9876543210"
+    raw["content_sha256"] = compute_content_hash(raw)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="receipt identity mismatch"):
         store.read(receipt.receipt_id)
 
 
