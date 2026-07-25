@@ -13,10 +13,7 @@ from toxicjoin.agent import (
 )
 from toxicjoin.context.datahub import DataHubAssetMap, DataHubSnapshot
 from toxicjoin.context.fixture import FixtureCatalog, FixtureDataset, FixtureField
-from toxicjoin.integrations.datahub_mcp import (
-    DataHubMcpSettings,
-    McpToolDefinition,
-)
+from toxicjoin.integrations.datahub_mcp import DataHubMcpSettings, McpToolDefinition
 from toxicjoin.models import ColumnRef, LineageSource, SensitivityCategory
 
 PATIENTS_URN = "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients,PROD)"
@@ -61,6 +58,8 @@ class FakeReadOnlyTransport:
             raise RuntimeError(
                 "transport leaked agent-discovery-secret-token https://datahub.example"
             )
+        # A healthy read-only MCP process exposes no mutation-shaped tool. Mutation exposure is
+        # covered separately as a fail-closed authority-boundary regression.
         return (
             McpToolDefinition(
                 name="get_entities",
@@ -90,12 +89,6 @@ class FakeReadOnlyTransport:
                     }
                 },
             ),
-            # A server may advertise additional tools. They never enter AgentDataContext and
-            # this adapter never invokes mutation tools.
-            McpToolDefinition(
-                name="save_document",
-                input_schema={"properties": {"title": {}, "content": {}}},
-            ),
         )
 
     async def call_tool(self, name: str, arguments: dict):
@@ -110,17 +103,19 @@ class FakeReadOnlyTransport:
                 {"urn": RAW_URN},
             ]
         if name == "list_schema_fields":
-            fields = [
-                {
-                    "fieldPath": "country",
-                    "tags": ["toxicjoin:public-or-low-risk"],
-                },
-                {
-                    "fieldPath": "customer_id",
-                    "tags": ["toxicjoin:stable-pseudonym"],
-                },
-            ]
-            return {"fields": fields, "remainingCount": 0}
+            return {
+                "fields": [
+                    {
+                        "fieldPath": "country",
+                        "tags": ["toxicjoin:public-or-low-risk"],
+                    },
+                    {
+                        "fieldPath": "customer_id",
+                        "tags": ["toxicjoin:stable-pseudonym"],
+                    },
+                ],
+                "remainingCount": 0,
+            }
         if name == "get_lineage":
             urn = arguments["urn"]
             column = arguments["column"]
@@ -156,8 +151,11 @@ def test_discoverer_forces_read_only_settings_and_sanitizes_context() -> None:
 
     assert original.mutation_enabled is True
     assert len(captured) == 1
-    assert captured[0].settings.mutation_enabled is False
-    assert captured[0].settings.child_environment()["TOOLS_IS_MUTATION_ENABLED"] == "false"
+    read_settings = captured[0].settings
+    assert read_settings.mutation_enabled is False
+    child_env = read_settings.child_environment()
+    assert child_env["TOOLS_IS_MUTATION_ENABLED"] == "false"
+    assert child_env["SAVE_DOCUMENT_TOOL_ENABLED"] == "false"
     assert all(name != "save_document" for name, _ in captured[0].calls)
 
     assert context.security_authoritative is False
@@ -190,13 +188,13 @@ def test_snapshot_conversion_is_deterministic() -> None:
         assert settings.mutation_enabled is False
         return transport
 
-    discoverer = DataHubAgentDiscoverer(
-        settings=_settings(),
-        asset_map=_asset_map(),
-        transport_factory=factory,
+    first = asyncio.run(
+        DataHubAgentDiscoverer(
+            settings=_settings(),
+            asset_map=_asset_map(),
+            transport_factory=factory,
+        ).discover()
     )
-    first = asyncio.run(discoverer.discover())
-
     transport2 = FakeReadOnlyTransport(_settings(mutation_enabled=False))
     second = asyncio.run(
         DataHubAgentDiscoverer(
