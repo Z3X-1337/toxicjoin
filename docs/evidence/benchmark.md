@@ -1,7 +1,8 @@
 # ToxicJoin Benchmark
 
 **Gate:** PASS  
-**Exact runtime candidate:** `e139fa99bd666505ed83a18188423722405695a2`  
+**Exact final security head:** `536c37c34de7b36495d33f63095585f72e5f4b46`  
+**Landed main merge commit:** `ee4991a93070c148e41dd158c952d5f1e9a6ed2c`  
 **Policy version:** `0.2.0`  
 **Cases:** 30 (10 ALLOW / 10 REWRITE / 10 BLOCK)  
 **Initial decision accuracy:** 100.0%  
@@ -13,13 +14,13 @@
 **Rewrites failed closed:** 4  
 **Verified executions:** 16  
 **Data fingerprint:** `bfeae85c4b238e38012aadc6f4c95d24c7a28bcb1da1c35e8eeef5be28be7d16`  
-**Report SHA-256:** `3aadc0b357db50641c8ffdc0525dde0e3d9159f933abf62a31a6a74b777d1b08`
+**Report SHA-256:** `3e8ea32a802a6b512be42ddc81b774b34ec0234e7f4ca43ca9be65cc1f398a64`
 
 Exact-head CI provenance:
 
-- workflow run `30140102648`;
-- artifact ID `8614180997`;
-- artifact digest `sha256:3adec180defa9338fe970068f47bc3a479ceae2817941f41b8c7f32c8f4a10d6`.
+- workflow run `30143510873`;
+- artifact ID `8615270504`;
+- artifact digest `sha256:88737151d88603a0c3994a4e479a1e2c8ee6e0aa909615b9127703d92a128599`.
 
 ## Initial decision confusion matrix
 
@@ -67,6 +68,8 @@ Exact-head CI provenance:
 ## Interpretation
 
 This is a deterministic regression corpus for ToxicJoin's declared SQL and policy profile. It is not a claim of universal privacy detection and does not replace evaluation against an organization's own schemas, classifications, policies, identities, and workloads.
+
+The exact report hash changes when run-specific receipt identities change. Release comparison therefore treats semantic decisions, effective outcomes, reasons, execution behavior, and declared data fingerprint as the stable regression contract rather than assuming receipt IDs are deterministic.
 
 Reproduce with:
 
