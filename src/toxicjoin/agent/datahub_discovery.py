@@ -104,6 +104,8 @@ _SECRET_TEXT_MARKERS = (
 )
 _AUTHORIZATION_TEXT_MARKERS = ("authorization=", "authorization:")
 _AUTHORIZATION_MARKER_BOUNDARY_CHARS = frozenset("=;,&'\"([{")
+_AUTHORIZATION_CLI_NAMES = frozenset({"auth", "authorization"})
+_AUTHORIZATION_MODE_SELECTORS = frozenset({"bearer", "basic", "digest", "none"})
 _RECOGNIZED_AUTHORIZATION_SCHEMES = ("bearer", "basic")
 _AUTHORIZATION_STRONG_PARAMETER_NAMES = frozenset({"response"})
 _SECRET_VALUE_DELIMITERS = frozenset(";&,\t\r\n ")
@@ -353,7 +355,8 @@ class DataHubAgentDiscoverer:
                     client,
                     self._asset_map,
                 ).load(require_mutations=False)
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as cancellation:
+            cancellation.__traceback__ = None
             runtime_settings = None
             secret_guard = None
             transport = None
@@ -361,7 +364,7 @@ class DataHubAgentDiscoverer:
             snapshot = None
             context = None
             self = None  # type: ignore[assignment]
-            raise
+            raise cancellation
         except Exception:
             discovery_failed = True
 
@@ -565,7 +568,7 @@ def _add_cli_guard_values(
     strong_secret_values: set[str],
     args: tuple[str, ...],
 ) -> None:
-    pending_secret_value = False
+    pending_secret_name: str | None = None
     for raw_argument in args:
         argument = _exact_guard_text(raw_argument)
 
@@ -578,23 +581,25 @@ def _add_cli_guard_values(
             strong_secret_values=strong_secret_values,
         )
 
-        if pending_secret_value:
-            _register_strong_guard_views(
-                values,
-                strong_secret_values,
-                argument,
-            )
-            _register_authorization_value(
-                values,
-                strong_secret_values,
-                argument,
-            )
+        if pending_secret_name is not None:
+            if _cli_name_is_authorization(pending_secret_name):
+                _register_authorization_value(
+                    values,
+                    strong_secret_values,
+                    argument,
+                )
+            else:
+                _register_strong_guard_views(
+                    values,
+                    strong_secret_values,
+                    argument,
+                )
             _add_secret_marked_guard_values(
                 values,
                 strong_secret_values,
                 argument,
             )
-            pending_secret_value = False
+            pending_secret_name = None
             continue
 
         handled_assignment = False
@@ -606,15 +611,27 @@ def _add_cli_guard_values(
                 strong_secret_values=strong_secret_values,
             )
             if _cli_name_is_sensitive(name):
-                _register_strong_guard_views(
-                    values,
-                    strong_secret_values,
-                    value,
-                )
+                if _cli_name_is_authorization(name):
+                    _register_authorization_value(
+                        values,
+                        strong_secret_values,
+                        value,
+                    )
+                    _add_secret_marked_guard_values(
+                        values,
+                        strong_secret_values,
+                        value,
+                    )
+                else:
+                    _register_strong_guard_views(
+                        values,
+                        strong_secret_values,
+                        value,
+                    )
                 handled_assignment = True
 
         if not handled_assignment and _is_standalone_sensitive_name(argument):
-            pending_secret_value = True
+            pending_secret_name = argument
 
         _add_secret_marked_guard_values(
             values,
@@ -626,6 +643,11 @@ def _add_cli_guard_values(
 def _cli_name_is_sensitive(value: str) -> bool:
     lowered = value.lower()
     return any(hint in lowered for hint in _SECRET_CLI_HINTS)
+
+
+def _cli_name_is_authorization(value: str) -> bool:
+    text = _exact_guard_text(value).strip().lstrip("-").rstrip("=").lower()
+    return text in _AUTHORIZATION_CLI_NAMES
 
 
 def _is_standalone_sensitive_name(value: str) -> bool:
@@ -725,9 +747,11 @@ def _register_authorization_value(
         return
 
     lowered = value.lower()
+    if lowered in _AUTHORIZATION_MODE_SELECTORS:
+        _add_guard_value(values, value)
+        return
+
     for scheme in _RECOGNIZED_AUTHORIZATION_SCHEMES:
-        if lowered == scheme:
-            return
         prefix = scheme + " "
         if lowered.startswith(prefix):
             credential, _ = _extract_marked_value(
