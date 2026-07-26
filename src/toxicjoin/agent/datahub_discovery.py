@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import re
@@ -352,6 +353,15 @@ class DataHubAgentDiscoverer:
                     client,
                     self._asset_map,
                 ).load(require_mutations=False)
+        except asyncio.CancelledError:
+            runtime_settings = None
+            secret_guard = None
+            transport = None
+            client = None
+            snapshot = None
+            context = None
+            self = None  # type: ignore[assignment]
+            raise
         except Exception:
             discovery_failed = True
 
@@ -570,6 +580,16 @@ def _add_cli_guard_values(
 
         if pending_secret_value:
             _register_strong_guard_views(
+                values,
+                strong_secret_values,
+                argument,
+            )
+            _register_authorization_value(
+                values,
+                strong_secret_values,
+                argument,
+            )
+            _add_secret_marked_guard_values(
                 values,
                 strong_secret_values,
                 argument,
