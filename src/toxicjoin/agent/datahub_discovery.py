@@ -357,6 +357,9 @@ class DataHubAgentDiscoverer:
                 ).load(require_mutations=False)
         except asyncio.CancelledError as cancellation:
             cancellation.__traceback__ = None
+            cancellation.__context__ = None
+            cancellation.__cause__ = None
+            cancellation.__suppress_context__ = True
             runtime_settings = None
             secret_guard = None
             transport = None
