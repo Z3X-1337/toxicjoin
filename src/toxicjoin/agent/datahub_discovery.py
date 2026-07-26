@@ -182,11 +182,21 @@ def _project_trusted_snapshot(snapshot: DataHubSnapshot) -> AgentDataContext:
     )
 
 
+def _require_read_only_provenance(settings: object) -> None:
+    """Validate read credential provenance without exposing malformed bearer internals."""
+
+    try:
+        valid = read_only_credential_provenance_valid(settings)
+    except Exception:
+        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID") from None
+    if not valid:
+        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_READ_ROLE_REQUIRED")
+
+
 def _read_only_settings(settings: ReadOnlyDataHubMcpSettings) -> ReadOnlyDataHubMcpSettings:
     """Return a detached private copy only when factory-issued read provenance is intact."""
 
-    if not read_only_credential_provenance_valid(settings):
-        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_READ_ROLE_REQUIRED")
+    _require_read_only_provenance(settings)
 
     try:
         token_value = settings.gms_token.get_secret_value()
@@ -197,9 +207,13 @@ def _read_only_settings(settings: ReadOnlyDataHubMcpSettings) -> ReadOnlyDataHub
         )
     except Exception:
         raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID") from None
-    if not read_only_credential_provenance_valid(copied):
-        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_READ_ROLE_REQUIRED")
-    if copied.gms_token is settings.gms_token:
+
+    _require_read_only_provenance(copied)
+    try:
+        shared_bearer = copied.gms_token is settings.gms_token
+    except Exception:
+        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID") from None
+    if shared_bearer:
         raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID")
     return copied
 
