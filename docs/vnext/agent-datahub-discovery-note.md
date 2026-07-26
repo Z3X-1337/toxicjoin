@@ -10,10 +10,10 @@ The security-owned path is:
 DATAHUB_GMS_READ_TOKEN
   -> read_only_settings_from_env()
   -> ReadOnlyDataHubMcpSettings concrete credential type
-  -> private factory seal + bearer-token fingerprint
-  -> reject direct construction, legacy/base, writer type, relabeling, or token swapping
-  -> normalize bearer to exact built-in str
-  -> detach bearer SecretStr into a private read-settings copy
+  -> authority-owned identity registry (not stored on settings)
+  -> commit role/source/endpoint/launcher/timeout/token fingerprint
+  -> reject direct construction, copies, relabeling, endpoint mutation, or token mutation
+  -> authority-owned detached registered child clone
   -> mutation_enabled=false
   -> TOOLS_IS_MUTATION_ENABLED=false
   -> SAVE_DOCUMENT_TOOL_ENABLED=false
@@ -33,90 +33,60 @@ The existing `DataHubSnapshotLoader` remains the ingestion/normalization authori
 
 ## Credential provenance and tool boundary
 
-The planner never receives:
-
-- DataHub credentials;
-- raw GMS endpoint;
-- read/write MCP settings;
-- MCP transport/session/client objects;
-- discovered MCP tool definitions;
-- callable tools;
-- mutation handles.
+The planner never receives DataHub credentials, raw GMS endpoints, MCP settings, MCP transport/session/client objects, tool definitions/handles, or mutation capability.
 
 DataHub authority has concrete credential types:
 
 - `ReadOnlyDataHubMcpSettings`, issued by `read_only_settings_from_env()` from `DATAHUB_GMS_READ_TOKEN`;
 - `MutationDataHubMcpSettings`, issued by `mutation_settings_from_env()` from `DATAHUB_GMS_WRITE_TOKEN`.
 
-Concrete class identity alone is not treated as sufficient provenance. Factory-issued role-bound settings also carry two non-serialized private commitments: a process-local factory seal and a fingerprint of the bearer token present when the trusted factory issued the settings. `DataHubAgentDiscoverer` accepts only an exact `ReadOnlyDataHubMcpSettings` object whose read-factory seal and token fingerprint still match the current token field.
+Factory provenance is **not stored on the settings object**. There is no `_factory_seal`, token-fingerprint private attribute, or settings method capable of rebinding provenance. The authority module keeps a process-local identity registry keyed by the issued object's identity and a weak reference. Each registration commits the exact authority-relevant snapshot: concrete role/source, `gms_url`, launcher command/arguments, timeout, mutation flag, and a normalized bearer-token fingerprint.
 
-Generic `DataHubMcpSettings`, the abstract role-bound base, the writer concrete type, and directly constructed read objects are not eligible. Authority/token fields (`role`, `mutation_enabled`, `credential_source`, and `gms_token`) are locked against ordinary Pydantic `model_copy(update=...)`. Regressions also deliberately bypass that override through `BaseModel.model_copy(...)`: relabeling a writer preserves writer class identity, while swapping a writer token into a factory-issued read object leaves the private read-token fingerprint unchanged, so provenance validation fails before transport creation.
+A newly constructed or `BaseModel.model_copy(...)` object has a different identity and is therefore unregistered. Mutating an issued object's bearer, endpoint, launcher configuration, timeout, role/source, or mutation flag changes the captured security snapshot and invalidates the registration. The registry entry also verifies that its weak reference still points to the same object, preventing stale identity reuse.
 
-After initial provenance validation, the discoverer reads the current bearer and requires it to be a `str`. It then calls the base `str.__str__` descriptor directly and requires the result to be an exact built-in `str` before constructing the detached `SecretStr`. This strips `str` subclasses and therefore removes overridden methods such as a malicious `encode()` or `__str__()` from the credential material used for the second provenance check and child environment. A regression demonstrates the attack precondition with a write-token `str` subclass whose `encode()` returns the original read-token bytes: the initial legacy fingerprint operation is intentionally fooled, but normalization exposes the real write-token text and the second provenance check fails closed before transport creation.
+The Agent never rebinds provenance. It asks `clone_read_only_settings_for_child()` for a detached child credential. That authority-owned function captures the supplied object once, compares that exact capture against the registry, and only then creates and registers a new read credential from the same validated snapshot. Invalid but well-formed objects return no clone; malformed internals are caught by the Agent's settings-redaction boundary.
 
-The normalized bearer is copied into a new `SecretStr` on the private settings object, and the factory seal/fingerprint are revalidated against that detached bearer. This also prevents a caller that retains the original settings object from mutating the original `SecretStr._secret_value` after construction and thereby changing the credential later supplied to the MCP child. The read child always emits both `TOOLS_IS_MUTATION_ENABLED=false` and `SAVE_DOCUMENT_TOOL_ENABLED=false`. Snapshot loading is invoked with `require_mutations=false` through `RoleBoundDataHubMcpClient(role=READ_ONLY)`. If the read server nevertheless exposes `save_document` or another mutation-shaped tool, discovery fails closed before metadata calls are accepted.
+Bearer capture requires an exact `SecretStr` wrapper and normalizes its secret through the base `str.__str__` descriptor to an exact built-in `str` before hashing or cloning. This defeats `str` subclasses with overridden `encode()`/`__str__()` behavior. The child clone receives a distinct `SecretStr`, so later mutation of a caller-retained bearer object cannot alter the child credential.
+
+Ordinary `model_copy(update=...)` also blocks authority/token fields as defense in depth, but registry identity and snapshot matching—not Pydantic copy ergonomics—are the authority boundary.
+
+The read child always emits `TOOLS_IS_MUTATION_ENABLED=false` and `SAVE_DOCUMENT_TOOL_ENABLED=false`. Snapshot loading uses `RoleBoundDataHubMcpClient(role=READ_ONLY)`. If the read server exposes `save_document` or another mutation-shaped tool, discovery fails closed before metadata calls.
 
 ## Sanitized planning projection
 
-`AgentDataContext` contains only:
+`AgentDataContext` contains only the source snapshot commitment, catalog version, logical dataset name and exact DataHub dataset URN, optional owner/domain labels, field paths, normalized sensitivity categories, sorted tags/glossary terms, and upstream lineage identity/category. Every context/dataset/field/lineage record remains `security_authoritative=false`.
 
-- exact `DataHubSnapshot.snapshot_sha256` commitment;
-- catalog version;
-- logical dataset name and exact DataHub dataset URN;
-- optional owner/domain labels;
-- field path;
-- normalized sensitivity category label;
-- sorted tags and glossary terms;
-- upstream lineage dataset URN, field path, and category.
-
-Every resulting context, dataset, field, and lineage record remains `security_authoritative=false`.
-
-These labels are hints for planning. They are not EvidenceClaims, trust resolutions, authorization facts, proof evidence, or a substitute for the downstream DataHub evidence/policy path.
+These values are planning hints, not EvidenceClaims, trust resolutions, authorization facts, proof evidence, or a substitute for downstream evidence/policy evaluation.
 
 ## Fail-closed canonical DataHub identity
 
-A mere `urn:li:dataset:` prefix is not treated as resolved identity. P0 accepts only the three-part dataset-URN structure used by the governed ToxicJoin asset manifest:
+P0 accepts only:
 
 ```text
 urn:li:dataset:(urn:li:dataPlatform:<platform>,<dataset>,<environment>)
 ```
 
-Each component is percent-decoded as strict UTF-8, checked for empty values, whitespace, DataHub tuple delimiters, and every Unicode `C*` (Other) category such as C0/C1 controls, DEL, zero-width format controls, surrogates/private-use/unassigned characters. The decoded component is then re-encoded with a security-owned safe-character set and must exactly equal its input.
+Each component is percent-decoded as strict UTF-8, checked for empty values, whitespace, tuple delimiters, and every Unicode `C*` category, then re-encoded with security-owned safe characters and required to exact-round-trip. This rejects malformed escapes, DEL/zero-width controls, private-use/unassigned characters, hidden whitespace, non-canonical encodings, truncated structures, and empty components.
 
-This rejects malformed escapes such as `%ZZ`, encoded DEL such as `%7F`, zero-width/joiner controls such as `%E2%80%8B`/`%E2%80%8D`, private-use characters, hidden whitespace, non-canonical encoding of safe characters such as `%2F` where `/` is canonical, truncated structures, and empty components while still permitting canonical percent-encoded visible Unicode such as the Euro sign.
-
-The existing DataHub normalizer can represent incomplete lineage using a deterministic unresolved synthetic ref with `datahub_urn=None`. The agent projection does **not** silently drop such an edge and does not invent a trusted-looking URN. It rejects the discovery context with `AGENT_DATAHUB_LINEAGE_IDENTITY_UNRESOLVED`.
-
-An upstream edge with a canonical DataHub dataset URN but category `UNCLASSIFIED` may be shown to the planner because it remains explicitly non-authoritative. Downstream security evaluation still fails closed where trusted classification is required.
+Incomplete lineage represented by `datahub_urn=None` is not silently dropped or fabricated; Agent projection fails closed with `AGENT_DATAHUB_LINEAGE_IDENTITY_UNRESOLVED`. Exact-URN lineage with `UNCLASSIFIED` may remain visible to the planner only because it stays explicitly non-authoritative.
 
 ## Error redaction
 
-Credential provenance validation is itself a redacted boundary. An exact read-settings object may be corrupted through unvalidated model-copy internals or bearer mutation; if inspecting that malformed bearer throws, the exception is replaced with `AGENT_DATAHUB_SETTINGS_INVALID` and raised `from None`. A false but well-formed provenance result remains the distinct fail-closed `AGENT_DATAHUB_READ_ROLE_REQUIRED` code.
+Credential clone/provenance acquisition is a redacted boundary. Malformed credential internals become `AGENT_DATAHUB_SETTINGS_INVALID` with `from None`; a well-formed but unregistered/mutated/non-read credential becomes `AGENT_DATAHUB_READ_ROLE_REQUIRED`.
 
-The pluggable transport/factory and MCP snapshot acquisition execute inside a separate untrusted I/O boundary. Any exception escaping that boundary—including a forged `AgentDataHubDiscoveryError`—is replaced with the stable `AGENT_DATAHUB_DISCOVERY_FAILED` error and raised `from None`.
-
-Snapshot serialization and revalidation form another redacted boundary. This is necessary because `DataHubSnapshot.lineage_sample` intentionally contains `dict[str, Any]`; a malicious/non-JSON value can make Pydantic serialization itself fail before ordinary validation. Every serialization/revalidation exception is collapsed to `AGENT_DATAHUB_SNAPSHOT_INVALID` with exception chaining suppressed.
-
-After successful revalidation, security-owned fixed identity failures retain finite stable codes. Any other projection failure, including Pydantic validation caused by raw MCP-derived metadata, is collapsed to `AGENT_DATAHUB_PROJECTION_FAILED` with `from None`. Regression coverage renders complete propagated tracebacks and verifies planted credential/endpoint/metadata/type material is absent.
+Transport/factory/MCP failures become `AGENT_DATAHUB_DISCOVERY_FAILED`. Snapshot serialization/revalidation failures become `AGENT_DATAHUB_SNAPSHOT_INVALID`. Other projection failures become `AGENT_DATAHUB_PROJECTION_FAILED`. External/raw exception chains are suppressed at these boundaries.
 
 ## Live least-privilege coupling
 
-`tests/security/test_datahub_mcp_least_privilege.py` feeds the real `read_only_settings_from_env()` factory-issued read credential into `DataHubAgentDiscoverer`, exposes mutation tools from a fake read server, and requires failure before any metadata call.
+`tests/security/test_datahub_mcp_least_privilege.py` feeds the real factory-issued read credential into `DataHubAgentDiscoverer`, exposes mutation tools from a fake read server, and requires failure before metadata calls.
 
-In addition, `.github/workflows/datahub-live.yml` watches `src/toxicjoin/agent/**` directly and runs `DataHubAgentDiscoverer` itself against DataHub OSS quickstart. The live step verifies dedicated read provenance, mutation-disabled child settings, real snapshot acquisition, non-authoritative Agent context, expected dataset/field/lineage counts, and absence of credential/endpoint/tool-control material from serialized Agent context. A sanitized Agent discovery report is included in the Live DataHub evidence artifact.
+`.github/workflows/datahub-live.yml` also runs `DataHubAgentDiscoverer` against DataHub OSS quickstart and verifies dedicated read provenance, role-separated MCP read/write/readback, real snapshot acquisition, non-authoritative Agent context, expected dataset/field/lineage counts, live semantic policy behavior, sanitized evidence, and absence of credential/endpoint/tool-control material from serialized Agent context.
 
 ## Non-goals
 
-This slice does not:
+This slice does not give the Agent direct MCP access, authority to choose credentials/mutation mode, EvidenceClaim trust, SQL authorization/execution, governance/disclosure mutation, PPMC/CPCC/proof control, or self-validation authority.
 
-- give the agent direct MCP access;
-- let the agent choose MCP settings or mutation mode;
-- create or trust EvidenceClaims;
-- authorize or execute SQL;
-- alter PolicyEngine, PPMC, CPCC, proof, authorization, verifier, or disclosure semantics;
-- claim that the planning context is objectively correct or current forever.
-
-The proposed SQL remains subject to independent reacquisition/revalidation of governance and evidence before any security decision or execution.
+Proposed SQL remains subject to independent governance/evidence reacquisition and downstream security evaluation before execution.
 
 ## Retarget provenance
 
