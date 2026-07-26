@@ -29,6 +29,14 @@ from toxicjoin.disclosure.semantic import (
     build_semantic_release_from_resolution,
     resolve_governed_subject_domain,
 )
+from toxicjoin.evidence import (
+    DataHubDerivationValidation,
+    DataHubEvidenceBundle,
+    DerivationKind,
+    build_evidence_claim,
+    compute_datahub_derivation_validation_sha256,
+    compute_datahub_evidence_root,
+)
 from toxicjoin.evidence.canonical import canonical_json_sha256
 from toxicjoin.integrations.datahub_authority import read_only_settings_from_env
 from toxicjoin.models import ColumnRef, SensitivityCategory
@@ -66,6 +74,7 @@ def _snapshot() -> DataHubSnapshot:
             datasets={
                 "patients": FixtureDataset(
                     urn=DATASET_URN,
+                    owner="urn:li:corpuser:unused-owner",
                     fields={
                         "customer_id": FixtureField(
                             category=SensitivityCategory.STABLE_PSEUDONYM,
@@ -160,6 +169,7 @@ def _rebuild_state_for_evaluation(state: DisclosureState, evaluation) -> Disclos
             "governance_commitment_sha256": canonical_json_sha256(
                 evaluation.governance_binding.model_dump(mode="json")
             ),
+            "evidence_root_sha256": evaluation.evidence_bundle.evidence_root_sha256,
             "state_sha256": "0" * 64,
         }
     )
@@ -267,3 +277,119 @@ def test_evaluation_subclass_is_rejected_before_virtual_serialization(
         )
 
     assert calls == []
+
+
+def test_dangling_evidence_support_cannot_clear_f6(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evaluation, binding, state = _artifacts(monkeypatch)
+    bundle = evaluation.evidence_bundle
+    original = next(claim for claim in bundle.claims if claim.predicate == "datahub.owner")
+    dangling_support = "evc_" + "f" * 32
+    assert dangling_support not in {claim.claim_id for claim in bundle.claims}
+
+    forged_claim = build_evidence_claim(
+        subject=original.subject,
+        predicate=original.predicate,
+        value=original.value,
+        source=original.source,
+        derivation=original.derivation,
+        source_identity=original.source_identity,
+        observed_at=original.observed_at,
+        expires_at=original.expires_at,
+        effective_from=original.effective_from,
+        effective_until=original.effective_until,
+        complete=original.complete,
+        supporting_claim_ids=tuple(
+            sorted((*original.supporting_claim_ids, dangling_support))
+        ),
+    )
+    claims = tuple(
+        sorted(
+            (forged_claim if claim.claim_id == original.claim_id else claim for claim in bundle.claims),
+            key=lambda claim: claim.claim_id,
+        )
+    )
+    provisional_bundle = bundle.model_copy(
+        update={"claims": claims, "evidence_root_sha256": "0" * 64}
+    )
+    forged_bundle = DataHubEvidenceBundle.model_validate(
+        provisional_bundle.model_copy(
+            update={"evidence_root_sha256": compute_datahub_evidence_root(provisional_bundle)}
+        ).model_dump(mode="json")
+    )
+
+    validation = evaluation.evidence_validation
+    provisional_validation = validation.model_copy(
+        update={
+            "evidence_root_sha256": forged_bundle.evidence_root_sha256,
+            "observed_claim_ids": tuple(
+                sorted(
+                    claim.claim_id
+                    for claim in forged_bundle.claims
+                    if claim.derivation == DerivationKind.RUNTIME_OBSERVED
+                )
+            ),
+            "mapped_claim_ids": tuple(
+                sorted(
+                    claim.claim_id
+                    for claim in forged_bundle.claims
+                    if claim.derivation == DerivationKind.EXPLICIT_MAPPING
+                )
+            ),
+            "validation_sha256": "0" * 64,
+        }
+    )
+    forged_validation = DataHubDerivationValidation.model_validate(
+        provisional_validation.model_copy(
+            update={
+                "validation_sha256": compute_datahub_derivation_validation_sha256(
+                    provisional_validation
+                )
+            }
+        ).model_dump(mode="json")
+    )
+
+    provisional_evaluation = evaluation.model_copy(
+        update={
+            "evidence_bundle": forged_bundle,
+            "evidence_validation": forged_validation,
+            "evaluation_sha256": "0" * 64,
+        }
+    )
+    forged_evaluation = TrustedAgentProposalEvaluation.model_validate(
+        provisional_evaluation.model_copy(
+            update={
+                "evaluation_sha256": compute_trusted_agent_proposal_evaluation_sha256(
+                    provisional_evaluation
+                )
+            }
+        ).model_dump(mode="json")
+    )
+    provisional_binding = binding.model_copy(
+        update={
+            "evaluation_sha256": forged_evaluation.evaluation_sha256,
+            "evidence_root_sha256": forged_bundle.evidence_root_sha256,
+            "binding_sha256": "0" * 64,
+        }
+    )
+    forged_binding = GovernanceTrustBinding.model_validate(
+        provisional_binding.model_copy(
+            update={
+                "binding_sha256": compute_governance_trust_binding_sha256(
+                    provisional_binding
+                )
+            }
+        ).model_dump(mode="json")
+    )
+    forged_state = _rebuild_state_for_evaluation(state, forged_evaluation)
+
+    with pytest.raises(
+        F6GovernanceClearanceError,
+        match="F6_GOVERNANCE_EVIDENCE_SUPPORT_MISSING",
+    ):
+        DataHubF6GovernanceAuthority(clock=lambda: NOW + timedelta(seconds=3)).clear(
+            evaluation=forged_evaluation,
+            governance_trust=forged_binding,
+            state=forged_state,
+        )
