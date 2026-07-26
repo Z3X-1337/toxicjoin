@@ -31,6 +31,17 @@ def _asset_map() -> DataHubAssetMap:
     )
 
 
+def _discovery_frame_locals(exc: BaseException) -> str:
+    rendered: list[str] = []
+    cursor = exc.__traceback__
+    while cursor is not None:
+        frame = cursor.tb_frame
+        if frame.f_globals.get("__name__") == "toxicjoin.agent.datahub_discovery":
+            rendered.append(repr(frame.f_locals))
+        cursor = cursor.tb_next
+    return "\n".join(rendered)
+
+
 def test_initial_provenance_failure_is_redacted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -70,4 +81,11 @@ def test_initial_provenance_failure_is_redacted(
     assert "malformed bearer leaked" not in rendered
     assert "ExplodingBearer" not in rendered
     assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
     assert exc_info.value.__suppress_context__ is True
+
+    rendered_locals = _discovery_frame_locals(exc_info.value)
+    assert _SECRET not in rendered_locals
+    assert _ENDPOINT not in rendered_locals
+    assert "ExplodingBearer" not in rendered_locals
+    assert "malformed bearer leaked" not in rendered_locals
