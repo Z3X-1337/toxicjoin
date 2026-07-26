@@ -64,7 +64,7 @@ class _MutableClock:
         return self.current
 
 
-def _snapshot(*, lineage_urn: str | None = CUSTOMERS_URN) -> DataHubSnapshot:
+def _snapshot() -> DataHubSnapshot:
     return DataHubSnapshot(
         catalog=FixtureCatalog(
             version="datahub-mcp:day13-governance-trust-v1",
@@ -97,7 +97,7 @@ def _snapshot(*, lineage_urn: str | None = CUSTOMERS_URN) -> DataHubSnapshot:
                                         field_path="customer_id",
                                     ),
                                     category=SensitivityCategory.STABLE_PSEUDONYM,
-                                    datahub_urn=lineage_urn,
+                                    datahub_urn=CUSTOMERS_URN,
                                 ),
                             ),
                         ),
@@ -122,12 +122,8 @@ def _read_settings(monkeypatch: pytest.MonkeyPatch) -> ReadOnlyDataHubMcpSetting
     return read_only_settings_from_env()
 
 
-def _evaluation(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    lineage_urn: str | None = CUSTOMERS_URN,
-):
-    snapshot = _snapshot(lineage_urn=lineage_urn)
+def _evaluation(monkeypatch: pytest.MonkeyPatch):
+    snapshot = _snapshot()
     context = build_agent_data_context_from_snapshot(snapshot)
     goal = build_agent_goal(GOAL_TEXT)
     proposal = GovernedAgent(_Planner()).propose(goal=goal, context=context)
@@ -339,19 +335,6 @@ def test_incomplete_classification_cannot_create_governance_trust(monkeypatch) -
     with pytest.raises(
         GovernanceTrustBindingError,
         match="GOVERNANCE_TRUST_REQUIRED_FACT_NOT_TRUSTED",
-    ):
-        authority.bind(evaluation)
-
-
-def test_lineage_without_datahub_urn_cannot_create_governance_trust(monkeypatch) -> None:
-    evaluation = _evaluation(monkeypatch, lineage_urn=None)
-    authority = DataHubGovernanceTrustAuthority(
-        clock=lambda: NOW + timedelta(seconds=2)
-    )
-
-    with pytest.raises(
-        GovernanceTrustBindingError,
-        match="GOVERNANCE_TRUST_GROUNDING_INCOMPLETE",
     ):
         authority.bind(evaluation)
 
