@@ -103,6 +103,7 @@ _SECRET_TEXT_MARKERS = (
 )
 _AUTHORIZATION_TEXT_MARKERS = ("authorization=", "authorization:")
 _RECOGNIZED_AUTHORIZATION_SCHEMES = ("bearer", "basic")
+_AUTHORIZATION_STRONG_PARAMETER_NAMES = frozenset({"response"})
 _SECRET_VALUE_DELIMITERS = frozenset(";&,\t\r\n ")
 _AUTHORIZATION_VALUE_DELIMITERS = frozenset(";&\t\r\n")
 _MIN_CONFIGURATION_SUBSTRING_LENGTH = 8
@@ -712,8 +713,9 @@ def _register_authorization_value(
             return
 
     # Unknown/raw Authorization syntax is still launch credential material. Protect the complete
-    # value and every syntactically extractable auth-param RHS. This covers parameterized schemes
-    # such as Digest without promoting the scheme word itself to a standalone secret.
+    # value and independently classify parsed auth-param RHS values. This covers schemes such as
+    # Digest without promoting short descriptive fields (for example username/realm) into broad
+    # substring blockers.
     _register_strong_guard_views(
         values,
         strong_secret_values,
@@ -731,12 +733,12 @@ def _register_authorization_parameter_values(
     strong_secret_values: set[str],
     authorization_value: str,
 ) -> None:
-    """Protect every assignment value in a parameterized Authorization scheme.
+    """Protect parsed auth-param values with credential-sensitive strength.
 
-    The scan starts after the scheme token and advances past each extracted value. Quoted values
-    remain intact, including commas/semicolons inside the quotes, while unquoted values terminate
-    at the normal secret-token delimiters. This is intentionally conservative: every auth-param RHS
-    is launch authentication material and is protected regardless of the parameter name.
+    Values such as Digest ``response`` are proof-of-possession material and receive length-
+    independent substring protection. Descriptive parameters such as username/realm are still
+    protected configuration values, but short ones remain exact-match-only to avoid turning a
+    one-character username into a planner-wide denial-of-service pattern.
     """
 
     value = _exact_guard_text(authorization_value).strip()
@@ -751,17 +753,29 @@ def _register_authorization_parameter_values(
         if equals_index < 0:
             break
 
+        name_fragment = parameters[search_from:equals_index]
+        if "," in name_fragment:
+            name_fragment = name_fragment.rsplit(",", 1)[-1]
+        parameter_name = name_fragment.strip()
+
         parameter_value, next_index = _extract_marked_value(
             parameters,
             equals_index + 1,
             delimiters=_SECRET_VALUE_DELIMITERS,
         )
         if parameter_value:
-            _register_strong_guard_views(
-                values,
-                strong_secret_values,
-                parameter_value,
-            )
+            normalized_name = parameter_name.lower()
+            if (
+                normalized_name in _AUTHORIZATION_STRONG_PARAMETER_NAMES
+                or _cli_name_is_sensitive(parameter_name)
+            ):
+                _register_strong_guard_views(
+                    values,
+                    strong_secret_values,
+                    parameter_value,
+                )
+            else:
+                _add_guard_value(values, parameter_value)
 
         search_from = max(equals_index + 1, next_index)
 
