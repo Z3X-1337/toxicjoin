@@ -78,3 +78,36 @@ def test_standalone_authorization_bearer_protects_token_without_tainting_scheme(
 
     assert guard.context_is_safe(_context_with_tag("classification:prefix-q7-suffix")) is False
     assert guard.context_is_safe(_context_with_tag("classification:Bearer-compatible")) is True
+
+
+def test_auth_assignment_digest_protects_response_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(
+        monkeypatch,
+        args='mcp-server-datahub --auth=\'Digest username="u", response="q7"\'',
+    )
+    guard = _AgentMetadataSecretGuard.from_runtime_settings(settings)
+
+    assert guard.context_is_safe(_context_with_tag("classification:prefix-q7-suffix")) is False
+    assert guard.context_is_safe(_context_with_tag("classification:username-u")) is True
+
+
+@pytest.mark.parametrize(
+    ("args", "metadata"),
+    (
+        ("mcp-server-datahub --auth bearer", "classification:bearer-compatible"),
+        ("mcp-server-datahub --auth none", "classification:nonetheless"),
+        ("mcp-server-datahub --auth=bearer", "classification:bearer-compatible"),
+        ("mcp-server-datahub --auth=none", "classification:nonetheless"),
+    ),
+)
+def test_auth_mode_selectors_do_not_become_short_substring_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+    args: str,
+    metadata: str,
+) -> None:
+    settings = _settings(monkeypatch, args=args)
+    guard = _AgentMetadataSecretGuard.from_runtime_settings(settings)
+
+    assert guard.context_is_safe(_context_with_tag(metadata)) is True
