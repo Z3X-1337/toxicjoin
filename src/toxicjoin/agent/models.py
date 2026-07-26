@@ -15,7 +15,12 @@ from toxicjoin.prospective.ppmc import PpmcStatus
 _HASH_PATTERN = r"^[0-9a-f]{64}$"
 _AGENT_MODEL_VERSION = "0.1.0"
 _MAX_AGENT_ITERATIONS = 8
+_MAX_METADATA_LABEL_LENGTH = 512
 Sha256 = Annotated[str, Field(pattern=_HASH_PATTERN)]
+MetadataLabel = Annotated[
+    str,
+    Field(min_length=1, max_length=_MAX_METADATA_LABEL_LENGTH),
+]
 
 
 class AgentCapability(StrEnum):
@@ -44,8 +49,8 @@ class AgentFieldView(StrictModel):
 
     field_path: str = Field(min_length=1, max_length=512)
     category: SensitivityCategory
-    tags: tuple[str, ...] = Field(default=(), max_length=128)
-    glossary_terms: tuple[str, ...] = Field(default=(), max_length=128)
+    tags: tuple[MetadataLabel, ...] = Field(default=(), max_length=128)
+    glossary_terms: tuple[MetadataLabel, ...] = Field(default=(), max_length=128)
     lineage: tuple[AgentLineageView, ...] = Field(default=(), max_length=128)
     security_authoritative: Literal[False] = False
 

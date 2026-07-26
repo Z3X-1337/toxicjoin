@@ -7,6 +7,8 @@ from typing import Any, Self
 
 import pytest
 
+from toxicjoin.agent import AgentDataHubDiscoveryError, DataHubAgentDiscoverer
+from toxicjoin.context.datahub import DataHubAssetMap
 from toxicjoin.integrations.datahub_authority import (
     DataHubMcpRole,
     RoleBoundDataHubMcpClient,
@@ -174,6 +176,33 @@ def test_read_only_client_rejects_mutation_contract_exposure() -> None:
 
     with pytest.raises(DataHubMcpContractError, match="exposed mutation tools"):
         asyncio.run(client.discover_and_validate(require_mutations=False))
+
+
+def test_agent_discovery_retains_role_bound_read_only_protections(monkeypatch) -> None:
+    _configure_common_env(monkeypatch)
+    monkeypatch.setenv("DATAHUB_GMS_READ_TOKEN", "READ_ONLY_TOKEN")
+    settings = read_only_settings_from_env()
+    transport = FakeTransport(tools=_read_tools(include_mutation=True))
+    asset_map = DataHubAssetMap(
+        version="agent-least-privilege-v1",
+        datasets={"patients": "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients,PROD)"},
+        flagship_dataset="patients",
+        flagship_column="customer_id",
+    )
+
+    with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
+        asyncio.run(
+            DataHubAgentDiscoverer(
+                settings=settings,
+                asset_map=asset_map,
+                transport_factory=lambda received: transport,
+            ).discover()
+        )
+
+    assert exc_info.value.code == "AGENT_DATAHUB_DISCOVERY_FAILED"
+    assert settings.role == DataHubMcpRole.READ_ONLY
+    assert settings.child_environment()["SAVE_DOCUMENT_TOOL_ENABLED"] == "false"
+    assert transport.calls == []
 
 
 def test_read_only_client_cannot_request_or_call_mutation_authority() -> None:

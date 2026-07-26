@@ -1,6 +1,16 @@
 """Planning-only Governed Agent primitives."""
 
-from toxicjoin.agent.governed import AgentPlanner, AgentProposalError, GovernedAgent
+from toxicjoin.agent.datahub_discovery import (
+    AgentDataHubDiscoveryError,
+    DataHubAgentDiscoverer,
+    build_agent_data_context_from_snapshot,
+)
+from toxicjoin.agent.governed import (
+    AgentPlanner,
+    AgentProposalError,
+    GovernedAgent,
+    TrustedPlannerAdapter,
+)
 from toxicjoin.agent.models import (
     AgentCapability,
     AgentDataContext,
@@ -19,6 +29,7 @@ from toxicjoin.agent.models import (
 __all__ = [
     "AgentCapability",
     "AgentDataContext",
+    "AgentDataHubDiscoveryError",
     "AgentDatasetView",
     "AgentDraft",
     "AgentFeedback",
@@ -28,8 +39,11 @@ __all__ = [
     "AgentPlanner",
     "AgentProposal",
     "AgentProposalError",
+    "DataHubAgentDiscoverer",
     "GovernedAgent",
+    "TrustedPlannerAdapter",
     "build_agent_data_context",
+    "build_agent_data_context_from_snapshot",
     "build_agent_feedback",
     "build_agent_goal",
 ]

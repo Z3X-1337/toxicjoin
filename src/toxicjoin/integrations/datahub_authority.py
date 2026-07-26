@@ -2,18 +2,23 @@
 
 Secure/live ToxicJoin paths must not use an ambiguous MCP process that can both acquire
 policy context and mutate DataHub. Read-only and mutation roles use distinct credential
-environment variables and application-level capabilities. The upstream DataHub MCP 0.6.x
-server registers ``save_document`` inside its general mutation registration path, so the
-isolated writer must start that path but ToxicJoin places a transport-level allowlist in
-front of it and exposes only ``save_document`` to the writer client.
+environment variables, concrete credential types, and application-level capabilities. The
+upstream DataHub MCP 0.6.x server registers ``save_document`` inside its general mutation
+registration path, so the isolated writer must start that path but ToxicJoin places a
+transport-level allowlist in front of it and exposes only ``save_document`` to the writer client.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import shlex
+import weakref
+from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from threading import RLock
+from typing import Any, Literal, Self
 
 from pydantic import SecretStr
 
@@ -52,32 +57,68 @@ _REQUIRED_SAVE_DOCUMENT_PROPERTIES = {
     "related_assets",
 }
 _WRITER_ALLOWED_TOOLS = frozenset({"save_document"})
+_PROTECTED_ROLE_FIELDS = frozenset(
+    {"role", "mutation_enabled", "credential_source", "gms_token"}
+)
+_PROVENANCE_LOCK = RLock()
+_CHILD_ENVIRONMENT_LOCK = RLock()
+
+
+@dataclass(frozen=True, slots=True)
+class _CredentialSnapshot:
+    role: DataHubMcpRole
+    credential_source: str
+    gms_url: str
+    command: str
+    args: tuple[str, ...]
+    timeout_seconds: float
+    mutation_enabled: bool
+    token_fingerprint: str
+
+
+@dataclass(frozen=True, slots=True)
+class _CapturedCredential:
+    snapshot: _CredentialSnapshot
+    token_value: str
+
+
+@dataclass(frozen=True, slots=True)
+class _CredentialRegistration:
+    reference: weakref.ReferenceType[Any]
+    snapshot: _CredentialSnapshot
+
+
+@dataclass(frozen=True, slots=True)
+class _ChildEnvironmentRegistration:
+    reference: weakref.ReferenceType[Any]
+    environment: tuple[tuple[str, str], ...]
+
+
+_PROVENANCE_REGISTRY: dict[int, _CredentialRegistration] = {}
+_CHILD_ENVIRONMENT_REGISTRY: dict[int, _ChildEnvironmentRegistration] = {}
 
 
 class RoleBoundDataHubMcpSettings(DataHubMcpSettings):
-    """MCP settings that force upstream tool registration for one authority role."""
+    """Base settings whose concrete subclass identifies local DataHub authority role."""
 
     role: DataHubMcpRole
+    credential_source: str
 
     def child_environment(self) -> dict[str, str]:
-        environment = super().child_environment()
-        if self.role == DataHubMcpRole.READ_ONLY:
-            environment["TOOLS_IS_MUTATION_ENABLED"] = "false"
-            environment["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] = "false"
-            environment["SAVE_DOCUMENT_TOOL_ENABLED"] = "false"
-        else:
-            # mcp-server-datahub 0.6.x only registers save_document from inside
-            # register_mutation_tools(), so this switch must be true for the isolated
-            # writer child. ToolAllowlistTransport is mandatory at the ToxicJoin
-            # boundary and permits save_document only.
-            environment["TOOLS_IS_MUTATION_ENABLED"] = "true"
-            environment["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] = "false"
-            environment["SAVE_DOCUMENT_TOOL_ENABLED"] = "true"
-        return environment
+        """Return one immutable-per-instance launch environment snapshot.
+
+        The first call captures inherited network/process variables plus the role-owned
+        DataHub settings. Subsequent calls return copies of that exact snapshot. This binds
+        pre-launch security inspection and the eventual stdio launch to identical material
+        even if process environment variables rotate concurrently.
+        """
+
+        return _role_bound_child_environment(self)
 
     def redacted_summary(self) -> dict[str, Any]:
         summary = super().redacted_summary()
         summary["role"] = self.role.value
+        summary["credential_source"] = self.credential_source
         summary["document_write_enabled"] = self.role == DataHubMcpRole.MUTATION
         summary["writer_transport_allowlist"] = (
             sorted(_WRITER_ALLOWED_TOOLS)
@@ -86,30 +127,108 @@ class RoleBoundDataHubMcpSettings(DataHubMcpSettings):
         )
         return summary
 
+    def model_copy(
+        self,
+        *,
+        update: dict[str, Any] | None = None,
+        deep: bool = False,
+    ) -> Self:
+        """Forbid changing credential authority or bearer-token material through model_copy."""
 
-def read_only_settings_from_env() -> RoleBoundDataHubMcpSettings:
+        if update and _PROTECTED_ROLE_FIELDS.intersection(update):
+            raise ValueError(
+                "DataHub credential authority/token fields cannot be changed by model_copy"
+            )
+        return super().model_copy(update=update, deep=deep)
+
+
+class ReadOnlyDataHubMcpSettings(RoleBoundDataHubMcpSettings):
+    """Credential type sourced only from the dedicated DataHub read-token channel."""
+
+    role: Literal[DataHubMcpRole.READ_ONLY] = DataHubMcpRole.READ_ONLY
+    mutation_enabled: Literal[False] = False
+    credential_source: Literal["DATAHUB_GMS_READ_TOKEN"] = _READ_TOKEN_ENV
+
+
+class MutationDataHubMcpSettings(RoleBoundDataHubMcpSettings):
+    """Credential type sourced only from the dedicated DataHub writer-token channel."""
+
+    role: Literal[DataHubMcpRole.MUTATION] = DataHubMcpRole.MUTATION
+    mutation_enabled: Literal[True] = True
+    credential_source: Literal["DATAHUB_GMS_WRITE_TOKEN"] = _WRITE_TOKEN_ENV
+
+
+def read_only_credential_provenance_valid(settings: Any) -> bool:
+    """Return whether a read settings object is an unchanged authority-registry issuance."""
+
+    if type(settings) is not ReadOnlyDataHubMcpSettings:
+        return False
+    try:
+        captured = _capture_credential(settings)
+    except Exception:
+        return False
+    return _read_snapshot_shape_valid(captured.snapshot) and _registration_matches(
+        settings,
+        captured.snapshot,
+    )
+
+
+def clone_read_only_settings_for_child(
+    settings: Any,
+) -> ReadOnlyDataHubMcpSettings | None:
+    """Issue a detached registered read credential only from an unchanged registered reader.
+
+    ``None`` means the supplied object is well-formed but not an eligible read-factory issuance.
+    Malformed credential internals raise and are expected to be collapsed by the caller's
+    redaction boundary.
+    """
+
+    if type(settings) is not ReadOnlyDataHubMcpSettings:
+        return None
+    captured = _capture_credential(settings)
+    if not _read_snapshot_shape_valid(captured.snapshot):
+        return None
+    if not _registration_matches(settings, captured.snapshot):
+        return None
+
+    clone = ReadOnlyDataHubMcpSettings(
+        gms_url=captured.snapshot.gms_url,
+        gms_token=SecretStr(captured.token_value),
+        command=captured.snapshot.command,
+        args=captured.snapshot.args,
+        timeout_seconds=captured.snapshot.timeout_seconds,
+    )
+    _register_factory_credential(clone)
+    return clone
+
+
+def read_only_settings_from_env() -> ReadOnlyDataHubMcpSettings:
     """Build settings for a context/read-back process with all writes disabled."""
 
-    return _settings_from_env(
+    settings = _settings_from_env(
         token_env=_READ_TOKEN_ENV,
         role=DataHubMcpRole.READ_ONLY,
     )
+    assert isinstance(settings, ReadOnlyDataHubMcpSettings)
+    return settings
 
 
-def mutation_settings_from_env() -> RoleBoundDataHubMcpSettings:
+def mutation_settings_from_env() -> MutationDataHubMcpSettings:
     """Build settings for the isolated Decision writer process."""
 
-    return _settings_from_env(
+    settings = _settings_from_env(
         token_env=_WRITE_TOKEN_ENV,
         role=DataHubMcpRole.MUTATION,
     )
+    assert isinstance(settings, MutationDataHubMcpSettings)
+    return settings
 
 
 def _settings_from_env(
     *,
     token_env: str,
     role: DataHubMcpRole,
-) -> RoleBoundDataHubMcpSettings:
+) -> ReadOnlyDataHubMcpSettings | MutationDataHubMcpSettings:
     url = os.getenv("DATAHUB_GMS_URL")
     if not url:
         raise DataHubMcpError("DATAHUB_GMS_URL is required")
@@ -125,15 +244,179 @@ def _settings_from_env(
     except ValueError as exc:
         raise DataHubMcpError("DATAHUB_MCP_TIMEOUT_SECONDS must be numeric") from exc
 
-    return RoleBoundDataHubMcpSettings(
-        gms_url=url,
-        gms_token=SecretStr(os.environ[token_env]),
-        command=command,
-        args=args,
-        timeout_seconds=timeout,
-        mutation_enabled=role == DataHubMcpRole.MUTATION,
-        role=role,
+    common = {
+        "gms_url": url,
+        "gms_token": SecretStr(os.environ[token_env]),
+        "command": command,
+        "args": args,
+        "timeout_seconds": timeout,
+    }
+    if role == DataHubMcpRole.READ_ONLY:
+        if token_env != _READ_TOKEN_ENV:
+            raise DataHubMcpError("read-only DataHub role requires the dedicated read token")
+        settings = ReadOnlyDataHubMcpSettings(**common)
+        _register_factory_credential(settings)
+        return settings
+    if token_env != _WRITE_TOKEN_ENV:
+        raise DataHubMcpError("mutation DataHub role requires the dedicated write token")
+    settings = MutationDataHubMcpSettings(**common)
+    _register_factory_credential(settings)
+    return settings
+
+
+def _read_snapshot_shape_valid(snapshot: _CredentialSnapshot) -> bool:
+    return (
+        snapshot.role is DataHubMcpRole.READ_ONLY
+        and snapshot.mutation_enabled is False
+        and snapshot.credential_source == _READ_TOKEN_ENV
     )
+
+
+def _register_factory_credential(settings: RoleBoundDataHubMcpSettings) -> None:
+    captured = _capture_credential(settings)
+    key = id(settings)
+
+    def _cleanup(reference: weakref.ReferenceType[Any], *, registry_key: int = key) -> None:
+        with _PROVENANCE_LOCK:
+            current = _PROVENANCE_REGISTRY.get(registry_key)
+            if current is not None and current.reference is reference:
+                _PROVENANCE_REGISTRY.pop(registry_key, None)
+
+    reference = weakref.ref(settings, _cleanup)
+    registration = _CredentialRegistration(
+        reference=reference,
+        snapshot=captured.snapshot,
+    )
+    with _PROVENANCE_LOCK:
+        _PROVENANCE_REGISTRY[key] = registration
+
+
+def _registration_matches(
+    settings: RoleBoundDataHubMcpSettings,
+    snapshot: _CredentialSnapshot,
+) -> bool:
+    with _PROVENANCE_LOCK:
+        registration = _PROVENANCE_REGISTRY.get(id(settings))
+        if registration is None or registration.reference() is not settings:
+            return False
+        registered = registration.snapshot
+
+    return (
+        registered.role is snapshot.role
+        and registered.credential_source == snapshot.credential_source
+        and registered.gms_url == snapshot.gms_url
+        and registered.command == snapshot.command
+        and registered.args == snapshot.args
+        and registered.timeout_seconds == snapshot.timeout_seconds
+        and registered.mutation_enabled is snapshot.mutation_enabled
+        and hmac.compare_digest(
+            registered.token_fingerprint,
+            snapshot.token_fingerprint,
+        )
+    )
+
+
+def _capture_credential(settings: RoleBoundDataHubMcpSettings) -> _CapturedCredential:
+    role = settings.role
+    if type(role) is not DataHubMcpRole:
+        raise TypeError("DataHub credential role is malformed")
+    mutation_enabled = settings.mutation_enabled
+    if type(mutation_enabled) is not bool:
+        raise TypeError("DataHub mutation flag is malformed")
+    timeout_seconds = settings.timeout_seconds
+    if type(timeout_seconds) is not float:
+        raise TypeError("DataHub timeout is malformed")
+    args = settings.args
+    if type(args) is not tuple:
+        raise TypeError("DataHub command arguments are malformed")
+
+    credential_source = _exact_text(settings.credential_source)
+    gms_url = _exact_text(settings.gms_url)
+    command = _exact_text(settings.command)
+    exact_args = tuple(_exact_text(argument) for argument in args)
+    token_value = _secret_text(settings.gms_token)
+    token_fingerprint = _credential_fingerprint_value(token_value)
+    return _CapturedCredential(
+        snapshot=_CredentialSnapshot(
+            role=role,
+            credential_source=credential_source,
+            gms_url=gms_url,
+            command=command,
+            args=exact_args,
+            timeout_seconds=timeout_seconds,
+            mutation_enabled=mutation_enabled,
+            token_fingerprint=token_fingerprint,
+        ),
+        token_value=token_value,
+    )
+
+
+def _secret_text(token: SecretStr) -> str:
+    if type(token) is not SecretStr:
+        raise TypeError("DataHub bearer wrapper is malformed")
+    return _exact_text(token.get_secret_value())
+
+
+def _exact_text(value: Any) -> str:
+    if not isinstance(value, str):
+        raise TypeError("DataHub credential text is malformed")
+    exact = str.__str__(value)
+    if type(exact) is not str:
+        raise TypeError("DataHub credential text normalization failed")
+    return exact
+
+
+def _role_bound_child_environment(
+    settings: RoleBoundDataHubMcpSettings,
+) -> dict[str, str]:
+    """Capture and reuse the exact child environment for one role-bound settings object."""
+
+    key = id(settings)
+    with _CHILD_ENVIRONMENT_LOCK:
+        current = _CHILD_ENVIRONMENT_REGISTRY.get(key)
+        if current is not None and current.reference() is settings:
+            return dict(current.environment)
+
+    environment = DataHubMcpSettings.child_environment(settings)
+    if settings.role == DataHubMcpRole.READ_ONLY:
+        environment["TOOLS_IS_MUTATION_ENABLED"] = "false"
+        environment["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] = "false"
+        environment["SAVE_DOCUMENT_TOOL_ENABLED"] = "false"
+    else:
+        environment["TOOLS_IS_MUTATION_ENABLED"] = "true"
+        environment["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] = "false"
+        environment["SAVE_DOCUMENT_TOOL_ENABLED"] = "true"
+
+    frozen_environment = tuple(
+        sorted(
+            (_exact_text(name), _exact_text(value))
+            for name, value in environment.items()
+        )
+    )
+
+    def _cleanup(reference: weakref.ReferenceType[Any], *, registry_key: int = key) -> None:
+        with _CHILD_ENVIRONMENT_LOCK:
+            registered = _CHILD_ENVIRONMENT_REGISTRY.get(registry_key)
+            if registered is not None and registered.reference is reference:
+                _CHILD_ENVIRONMENT_REGISTRY.pop(registry_key, None)
+
+    reference = weakref.ref(settings, _cleanup)
+    registration = _ChildEnvironmentRegistration(
+        reference=reference,
+        environment=frozen_environment,
+    )
+    with _CHILD_ENVIRONMENT_LOCK:
+        current = _CHILD_ENVIRONMENT_REGISTRY.get(key)
+        if current is not None and current.reference() is settings:
+            return dict(current.environment)
+        _CHILD_ENVIRONMENT_REGISTRY[key] = registration
+    return dict(frozen_environment)
+
+
+def _credential_fingerprint_value(value: str) -> str:
+    return hashlib.sha256(
+        b"toxicjoin:datahub-credential:v2\x00" + value.encode("utf-8")
+    ).hexdigest()
 
 
 class ToolAllowlistTransport:
