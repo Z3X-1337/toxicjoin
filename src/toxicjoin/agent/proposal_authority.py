@@ -225,6 +225,12 @@ class DataHubAgentProposalAuthority:
             self = None  # type: ignore[assignment]
             raise AgentProposalAuthorityError("AGENT_AUTHORITY_DIALECT_INVALID")
 
+        if type(snapshot) is not DataHubSnapshot:
+            read_settings = None  # type: ignore[assignment]
+            snapshot = None  # type: ignore[assignment]
+            self = None  # type: ignore[assignment]
+            raise AgentProposalAuthorityError("AGENT_AUTHORITY_SOURCE_INVALID") from None
+
         trusted_snapshot = None
         source_identity = None
         evidence_bundle = None
@@ -290,7 +296,7 @@ class DataHubAgentProposalAuthority:
         self._policy_engine_source = policy_engine
         self._policy_config_sha256 = policy_config_sha256
         self._policy_version = policy_version
-        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._clock = (lambda: datetime.now(timezone.utc)) if clock is None else clock
         self._clock_lock = threading.Lock()
         self._last_clock_sample: datetime | None = None
         self._datahub_max_age_seconds = normalized_max_age_seconds
