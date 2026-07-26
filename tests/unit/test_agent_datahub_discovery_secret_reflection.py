@@ -324,6 +324,56 @@ def test_live_discovery_rejects_standalone_launcher_env_secret(
     assert exc_info.value.code == "AGENT_DATAHUB_SECRET_REFLECTION"
 
 
+def test_live_discovery_rejects_short_bearer_embedded_in_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    short_token = "q7"
+    settings = _configure(monkeypatch, token=short_token)
+
+    with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
+        _discover(
+            settings,
+            channel="tag",
+            reflected_value=f"prefix-{short_token}-suffix",
+        )
+
+    assert exc_info.value.code == "AGENT_DATAHUB_SECRET_REFLECTION"
+
+
+def test_live_discovery_rejects_short_secret_endpoint_query_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    query_secret = "r9"
+    endpoint = f"https://datahub-reflection.example/api?access_token={query_secret}"
+    settings = _configure(monkeypatch, endpoint=endpoint)
+
+    with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
+        _discover(
+            settings,
+            channel="tag",
+            reflected_value=f"prefix-{query_secret}-suffix",
+        )
+
+    assert exc_info.value.code == "AGENT_DATAHUB_SECRET_REFLECTION"
+
+
+def test_short_nonsecret_endpoint_component_is_not_broad_substring_pattern(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _configure(
+        monkeypatch,
+        endpoint="https://datahub-reflection.example/api",
+    )
+    context = _discover(
+        settings,
+        channel="tag",
+        reflected_value="safe-api-metadata",
+    )
+
+    assert context.security_authoritative is False
+    assert context.datasets[0].fields[0].tags == ("classification:safe-api-metadata:marker",)
+
+
 def test_live_discovery_allows_nonsecret_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
