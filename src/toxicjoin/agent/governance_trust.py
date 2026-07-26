@@ -147,9 +147,7 @@ class DataHubGovernanceTrustAuthority:
             _detach_exception(error)
 
         evaluation = None  # type: ignore[assignment]
-        self_ref = self
         self = None  # type: ignore[assignment]
-        self_ref = None  # type: ignore[assignment]
         raise GovernanceTrustBindingError(stable_code) from None
 
     def _bind_impl(
