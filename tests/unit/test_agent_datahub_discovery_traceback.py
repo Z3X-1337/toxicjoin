@@ -56,6 +56,17 @@ def _render_exception(exc: BaseException) -> str:
     return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
 
 
+def _discovery_frame_locals(exc: BaseException) -> str:
+    rendered: list[str] = []
+    cursor = exc.__traceback__
+    while cursor is not None:
+        frame = cursor.tb_frame
+        if frame.f_globals.get("__name__") == "toxicjoin.agent.datahub_discovery":
+            rendered.append(repr(frame.f_locals))
+        cursor = cursor.tb_next
+    return "\n".join(rendered)
+
+
 def test_discovery_suppresses_sensitive_transport_exception_chain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -81,7 +92,13 @@ def test_discovery_suppresses_sensitive_transport_exception_chain(
     assert _ENDPOINT not in rendered
     assert "transport leaked" not in rendered
     assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
     assert exc_info.value.__suppress_context__ is True
+
+    rendered_locals = _discovery_frame_locals(exc_info.value)
+    assert _SECRET not in rendered_locals
+    assert _ENDPOINT not in rendered_locals
+    assert "transport leaked" not in rendered_locals
 
 
 def test_snapshot_serialization_failure_does_not_echo_raw_metadata() -> None:
@@ -118,7 +135,13 @@ def test_snapshot_serialization_failure_does_not_echo_raw_metadata() -> None:
     assert _ENDPOINT not in rendered
     assert "NonSerializableMetadata" not in rendered
     assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
     assert exc_info.value.__suppress_context__ is True
+
+    rendered_locals = _discovery_frame_locals(exc_info.value)
+    assert _SECRET not in rendered_locals
+    assert _ENDPOINT not in rendered_locals
+    assert "NonSerializableMetadata" not in rendered_locals
 
 
 def test_projection_validation_failure_does_not_echo_raw_metadata() -> None:
@@ -154,4 +177,10 @@ def test_projection_validation_failure_does_not_echo_raw_metadata() -> None:
     assert _ENDPOINT not in rendered
     assert "corpuser" not in rendered
     assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
     assert exc_info.value.__suppress_context__ is True
+
+    rendered_locals = _discovery_frame_locals(exc_info.value)
+    assert _SECRET not in rendered_locals
+    assert _ENDPOINT not in rendered_locals
+    assert "corpuser" not in rendered_locals
