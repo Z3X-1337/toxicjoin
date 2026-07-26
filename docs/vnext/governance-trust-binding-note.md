@@ -37,12 +37,14 @@ A positive `GovernanceTrustBinding` requires exact, trusted values for the gover
 
 - DataHub snapshot root commitment;
 - catalog version;
-- referenced dataset logical-name mappings;
+- every physical source dataset logical-name mapping in `QueryPlan.source_datasets`, including dataset-only aggregates such as `COUNT(*)` that produce no `ColumnContext`;
 - field tags and glossary-term observations;
 - field sensitivity classifications;
 - positive lineage transport/governance completeness facts;
 - grounded lineage source refs, categories, and DataHub URNs;
 - upstream lineage dataset logical-name mappings and upstream field sensitivity classifications.
+
+Source-dataset mapping discovery is fail closed: the canonical evidence bundle must expose exactly one dataset subject for each logical source name. Missing or ambiguous logical-name candidates cannot produce a positive binding. Requirement/resolution scope matching is structural `(subject, predicate)` matching rather than delimiter-concatenated text.
 
 Missing claims, wrong values, `UNKNOWN`, `STALE`, `INCOMPLETE`, `CONTESTED`, `AGENT_ASSERTED`, evidence from the future, validation from the future, or a non-DataHub governance source fail closed.
 
