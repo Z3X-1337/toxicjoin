@@ -9,6 +9,7 @@ proof-bound execution chain.
 
 from __future__ import annotations
 
+import math
 import threading
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -189,11 +190,22 @@ class DataHubAgentProposalAuthority:
         datahub_max_age_seconds: float = 300.0,
         dialect: str = "duckdb",
     ) -> None:
-        if datahub_max_age_seconds <= 0 or datahub_max_age_seconds > 3600:
+        try:
+            if type(datahub_max_age_seconds) not in (int, float):
+                raise TypeError("freshness lifetime must be numeric")
+            normalized_max_age_seconds = float(datahub_max_age_seconds)
+            if (
+                not math.isfinite(normalized_max_age_seconds)
+                or normalized_max_age_seconds <= 0
+                or normalized_max_age_seconds > 3600
+            ):
+                raise ValueError("freshness lifetime is outside the allowed range")
+        except Exception:
             read_settings = None  # type: ignore[assignment]
             snapshot = None  # type: ignore[assignment]
             self = None  # type: ignore[assignment]
-            raise AgentProposalAuthorityError("AGENT_AUTHORITY_FRESHNESS_INVALID")
+            raise AgentProposalAuthorityError("AGENT_AUTHORITY_FRESHNESS_INVALID") from None
+
         try:
             normalized_dialect = _normalized_nonempty_text(dialect)
         except Exception:
@@ -224,7 +236,7 @@ class DataHubAgentProposalAuthority:
             evidence_bundle = build_datahub_evidence_bundle(
                 trusted_snapshot,
                 read_settings,
-                max_age_seconds=datahub_max_age_seconds,
+                max_age_seconds=normalized_max_age_seconds,
             )
             if not secret_guard.context_is_safe(evidence_bundle):  # type: ignore[arg-type]
                 raise ValueError("DataHub evidence reflects runtime launch material")
@@ -232,7 +244,7 @@ class DataHubAgentProposalAuthority:
                 evidence_bundle,
                 trusted_snapshot,
                 read_settings,
-                max_age_seconds=datahub_max_age_seconds,
+                max_age_seconds=normalized_max_age_seconds,
                 now=trusted_snapshot.observed_at,
             )
             _require_evidence_validation_alignment(evidence_bundle, evidence_validation)
@@ -275,7 +287,7 @@ class DataHubAgentProposalAuthority:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._clock_lock = threading.Lock()
         self._last_clock_sample: datetime | None = None
-        self._datahub_max_age_seconds = float(datahub_max_age_seconds)
+        self._datahub_max_age_seconds = normalized_max_age_seconds
         self._dialect = normalized_dialect
 
     def evaluate(
@@ -352,10 +364,15 @@ class DataHubAgentProposalAuthority:
             raise AgentProposalAuthorityError("AGENT_AUTHORITY_INPUT_INVALID") from None
 
         try:
-            normalized_purpose = _normalized_nonempty_text(authorized_task_purpose)
+            exact_purpose = _exact_text(authorized_task_purpose)
+            normalized_purpose = exact_purpose.strip()
         except Exception:
             raise AgentProposalAuthorityError("AGENT_AUTHORITY_PURPOSE_INVALID") from None
-        if len(normalized_purpose) > 4096:
+        if (
+            not normalized_purpose
+            or normalized_purpose != exact_purpose
+            or len(normalized_purpose) > 4096
+        ):
             raise AgentProposalAuthorityError("AGENT_AUTHORITY_PURPOSE_INVALID")
         if trusted_proposal.goal_sha256 != trusted_goal.goal_sha256:
             raise AgentProposalAuthorityError("AGENT_AUTHORITY_GOAL_BINDING_MISMATCH")
@@ -412,8 +429,6 @@ class DataHubAgentProposalAuthority:
         try:
             governance_binding.assert_fresh(pre_issue_at)
             self._require_fresh_at(pre_issue_at)
-        except AgentProposalAuthorityError:
-            raise
         except Exception:
             raise AgentProposalAuthorityError("AGENT_AUTHORITY_STALE_AT_ISSUE") from None
 
@@ -461,8 +476,6 @@ class DataHubAgentProposalAuthority:
         try:
             governance_binding.assert_fresh(returned_at)
             self._require_fresh_at(returned_at)
-        except AgentProposalAuthorityError:
-            raise
         except Exception:
             raise AgentProposalAuthorityError("AGENT_AUTHORITY_STALE_AT_ISSUE") from None
         return result
