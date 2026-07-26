@@ -99,10 +99,11 @@ _SECRET_TEXT_MARKERS = (
     "apikey:",
     "credential=",
     "credential:",
-    "authorization=",
-    "authorization:",
 )
+_AUTHORIZATION_TEXT_MARKERS = ("authorization=", "authorization:")
+_RECOGNIZED_AUTHORIZATION_SCHEMES = ("bearer", "basic")
 _SECRET_VALUE_DELIMITERS = frozenset(";&,\t\r\n ")
+_AUTHORIZATION_VALUE_DELIMITERS = frozenset(";&,\t\r\n")
 _MIN_CONFIGURATION_SUBSTRING_LENGTH = 8
 _MAX_VARIANT_SOURCE_BYTES = 4096
 _STANDARD_BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -596,7 +597,7 @@ def _add_cli_guard_values(
                 )
                 handled_assignment = True
 
-        if not handled_assignment and _cli_name_is_sensitive(argument.rstrip("=")):
+        if not handled_assignment and _is_standalone_sensitive_name(argument):
             pending_secret_value = True
 
         _add_secret_marked_guard_values(
@@ -611,6 +612,15 @@ def _cli_name_is_sensitive(value: str) -> bool:
     return any(hint in lowered for hint in _SECRET_CLI_HINTS)
 
 
+def _is_standalone_sensitive_name(value: str) -> bool:
+    text = _exact_guard_text(value).strip().rstrip("=")
+    if not text or any(character.isspace() for character in text):
+        return False
+    if any(character in text for character in ":;,&="):
+        return False
+    return _cli_name_is_sensitive(text)
+
+
 def _add_secret_marked_guard_values(
     values: set[str],
     strong_secret_values: set[str],
@@ -618,6 +628,12 @@ def _add_secret_marked_guard_values(
 ) -> None:
     text = _exact_guard_text(value)
     lowered = text.lower()
+
+    _add_authorization_guard_values(
+        values,
+        strong_secret_values,
+        text,
+    )
 
     # Scan every marker independently so compound launch material such as
     # ``token=q7;password=p8`` protects each credential rather than stopping after the first.
@@ -629,47 +645,144 @@ def _add_secret_marked_guard_values(
             if index < 0:
                 break
 
-            value_start = index + len(marker)
-            while value_start < len(text) and text[value_start].isspace():
-                value_start += 1
-
-            value_end = value_start
-            while (
-                value_end < len(text)
-                and text[value_end] not in _SECRET_VALUE_DELIMITERS
-            ):
-                value_end += 1
-
-            secret_value = text[value_start:value_end].strip()
-            if (
-                len(secret_value) >= 2
-                and secret_value[0] in {'"', "'"}
-                and secret_value[-1] == secret_value[0]
-            ):
-                secret_value = secret_value[1:-1].strip()
-
+            secret_value, next_index = _extract_marked_value(
+                text,
+                index + len(marker),
+                delimiters=_SECRET_VALUE_DELIMITERS,
+            )
             if secret_value:
                 extracted.add(secret_value)
 
-            search_from = max(index + len(marker), value_end + 1)
+            search_from = max(index + len(marker), next_index)
 
     for secret_value in sorted(extracted):
-        # Register both the literal marker value and its declared one-layer normalized/decoded
-        # forms as strong secrets. This keeps percent-encoded marker values from becoming a bypass.
-        for candidate in _planner_text_detection_views(secret_value):
-            if not candidate:
-                continue
-            _add_guard_value(
-                values,
-                candidate,
-                strong_secret_values=strong_secret_values,
-                strong=True,
+        _register_strong_guard_views(
+            values,
+            strong_secret_values,
+            secret_value,
+        )
+
+
+def _add_authorization_guard_values(
+    values: set[str],
+    strong_secret_values: set[str],
+    text: str,
+) -> None:
+    lowered = text.lower()
+    for marker in _AUTHORIZATION_TEXT_MARKERS:
+        search_from = 0
+        while True:
+            index = lowered.find(marker, search_from)
+            if index < 0:
+                break
+
+            authorization_value, next_index = _extract_marked_value(
+                text,
+                index + len(marker),
+                delimiters=_AUTHORIZATION_VALUE_DELIMITERS,
             )
-            _add_url_guard_values(
-                values,
-                candidate,
-                strong_secret_values=strong_secret_values,
+            if authorization_value:
+                _register_authorization_value(
+                    values,
+                    strong_secret_values,
+                    authorization_value,
+                )
+            search_from = max(index + len(marker), next_index)
+
+
+def _register_authorization_value(
+    values: set[str],
+    strong_secret_values: set[str],
+    authorization_value: str,
+) -> None:
+    value = _exact_guard_text(authorization_value).strip()
+    if not value:
+        return
+
+    lowered = value.lower()
+    for scheme in _RECOGNIZED_AUTHORIZATION_SCHEMES:
+        if lowered == scheme:
+            return
+        prefix = scheme + " "
+        if lowered.startswith(prefix):
+            credential, _ = _extract_marked_value(
+                value,
+                len(scheme),
+                delimiters=_AUTHORIZATION_VALUE_DELIMITERS,
             )
+            if credential:
+                _register_strong_guard_views(
+                    values,
+                    strong_secret_values,
+                    credential,
+                )
+            return
+
+    # Unknown/raw Authorization syntax is still launch credential material. Protect the bounded
+    # value itself without inventing a scheme parser that could silently discard material.
+    _register_strong_guard_views(
+        values,
+        strong_secret_values,
+        value,
+    )
+
+
+def _extract_marked_value(
+    text: str,
+    value_start: int,
+    *,
+    delimiters: frozenset[str],
+) -> tuple[str, int]:
+    while value_start < len(text) and text[value_start].isspace():
+        value_start += 1
+    if value_start >= len(text):
+        return "", len(text)
+
+    opening_quote = text[value_start] if text[value_start] in {'"', "'"} else None
+    if opening_quote is not None:
+        cursor = value_start + 1
+        escaped = False
+        while cursor < len(text):
+            character = text[cursor]
+            if character == opening_quote and not escaped:
+                return text[value_start + 1 : cursor].strip(), cursor + 1
+            if character == "\\" and not escaped:
+                escaped = True
+            else:
+                escaped = False
+            cursor += 1
+
+        # Unmatched quotes are malformed launch material. Fail closed by treating everything after
+        # the opening quote as the protected value instead of truncating at an internal delimiter.
+        return text[value_start + 1 :].strip(), len(text)
+
+    value_end = value_start
+    while value_end < len(text) and text[value_end] not in delimiters:
+        value_end += 1
+    return text[value_start:value_end].strip(), value_end
+
+
+def _register_strong_guard_views(
+    values: set[str],
+    strong_secret_values: set[str],
+    secret_value: str,
+) -> None:
+    # Register both the literal marker value and its declared one-layer normalized/decoded forms as
+    # strong secrets. This keeps percent-encoded marker values from becoming a bypass.
+    for candidate in _planner_text_detection_views(secret_value):
+        if not candidate:
+            continue
+        _add_guard_value(
+            values,
+            candidate,
+            strong_secret_values=strong_secret_values,
+            strong=True,
+        )
+        _add_url_guard_values(
+            values,
+            candidate,
+            strong_secret_values=strong_secret_values,
+        )
 
 
 def _add_no_proxy_guard_values(
