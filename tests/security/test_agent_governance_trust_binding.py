@@ -64,7 +64,7 @@ class _MutableClock:
         return self.current
 
 
-def _snapshot() -> DataHubSnapshot:
+def _snapshot(*, lineage_urn: str | None = CUSTOMERS_URN) -> DataHubSnapshot:
     return DataHubSnapshot(
         catalog=FixtureCatalog(
             version="datahub-mcp:day13-governance-trust-v1",
@@ -97,7 +97,7 @@ def _snapshot() -> DataHubSnapshot:
                                         field_path="customer_id",
                                     ),
                                     category=SensitivityCategory.STABLE_PSEUDONYM,
-                                    datahub_urn=CUSTOMERS_URN,
+                                    datahub_urn=lineage_urn,
                                 ),
                             ),
                         ),
@@ -122,8 +122,12 @@ def _read_settings(monkeypatch: pytest.MonkeyPatch) -> ReadOnlyDataHubMcpSetting
     return read_only_settings_from_env()
 
 
-def _evaluation(monkeypatch: pytest.MonkeyPatch):
-    snapshot = _snapshot()
+def _evaluation(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    lineage_urn: str | None = CUSTOMERS_URN,
+):
+    snapshot = _snapshot(lineage_urn=lineage_urn)
     context = build_agent_data_context_from_snapshot(snapshot)
     goal = build_agent_goal(GOAL_TEXT)
     proposal = GovernedAgent(_Planner()).propose(goal=goal, context=context)
@@ -254,11 +258,16 @@ def test_positive_binding_requires_trusted_exact_governance_facts(monkeypatch) -
         for requirement in binding.requirements
     }
     diagnosis_subject = f"{PATIENTS_URN}#diagnosis"
+    customer_subject = f"{CUSTOMERS_URN}#customer_id"
     assert requirements[(diagnosis_subject, "toxicjoin.sensitivity_category")] == (
         SensitivityCategory.SENSITIVE_ATTRIBUTE.value
     )
     assert requirements[(diagnosis_subject, "datahub.lineage_transport_complete")] == "true"
     assert requirements[(diagnosis_subject, "toxicjoin.lineage_governance_complete")] == "true"
+    assert requirements[(CUSTOMERS_URN, "datahub.logical_name")] == "customers"
+    assert requirements[(customer_subject, "toxicjoin.sensitivity_category")] == (
+        SensitivityCategory.STABLE_PSEUDONYM.value
+    )
 
 
 def test_binding_round_trip_preserves_positive_authority_invariants(monkeypatch) -> None:
@@ -330,6 +339,19 @@ def test_incomplete_classification_cannot_create_governance_trust(monkeypatch) -
     with pytest.raises(
         GovernanceTrustBindingError,
         match="GOVERNANCE_TRUST_REQUIRED_FACT_NOT_TRUSTED",
+    ):
+        authority.bind(evaluation)
+
+
+def test_lineage_without_datahub_urn_cannot_create_governance_trust(monkeypatch) -> None:
+    evaluation = _evaluation(monkeypatch, lineage_urn=None)
+    authority = DataHubGovernanceTrustAuthority(
+        clock=lambda: NOW + timedelta(seconds=2)
+    )
+
+    with pytest.raises(
+        GovernanceTrustBindingError,
+        match="GOVERNANCE_TRUST_GROUNDING_INCOMPLETE",
     ):
         authority.bind(evaluation)
 
