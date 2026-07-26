@@ -105,6 +105,42 @@ def test_guard_bounds_compound_endpoint_secret_marker_value(
     assert guard.context_is_safe(_context_with_tag("classification:prefix-q7-suffix")) is False
 
 
+def test_guard_splits_compound_sensitive_query_parameter_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(
+        monkeypatch,
+        endpoint="https://datahub-launch-material.example/api?access_token=q7;mode=prod",
+    )
+    guard = _AgentMetadataSecretGuard.from_runtime_settings(settings)
+
+    assert guard.context_is_safe(_context_with_tag("classification:prefix-q7-suffix")) is False
+
+
+def test_guard_splits_compound_sensitive_fragment_parameter_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(
+        monkeypatch,
+        endpoint="https://datahub-launch-material.example/api#access_token=q7;mode=prod",
+    )
+    guard = _AgentMetadataSecretGuard.from_runtime_settings(settings)
+
+    assert guard.context_is_safe(_context_with_tag("classification:prefix-q7-suffix")) is False
+
+
+def test_guard_does_not_promote_compound_nonsecret_query_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(
+        monkeypatch,
+        endpoint="https://datahub-launch-material.example/api?mode=q7;scope=prod",
+    )
+    guard = _AgentMetadataSecretGuard.from_runtime_settings(settings)
+
+    assert guard.context_is_safe(_context_with_tag("classification:prefix-q7-suffix")) is True
+
+
 def test_guard_extracts_each_secret_from_compound_launcher_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -257,3 +293,53 @@ def test_standalone_sensitive_launcher_name_still_protects_following_value(
     guard = _AgentMetadataSecretGuard.from_runtime_settings(settings)
 
     assert guard.context_is_safe(_context_with_tag("classification:prefix-q7-suffix")) is False
+
+
+def test_sensitive_launcher_base64_value_protects_decoded_plaintext(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(
+        monkeypatch,
+        args="mcp-server-datahub --token-base64 cTc=",
+    )
+    guard = _AgentMetadataSecretGuard.from_runtime_settings(settings)
+
+    assert guard.context_is_safe(_context_with_tag("classification:prefix-q7-suffix")) is False
+    assert guard.context_is_safe(_context_with_tag("classification:cTc=:marker")) is False
+
+
+def test_sensitive_launcher_noncanonical_base64_value_protects_decoded_plaintext(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(
+        monkeypatch,
+        args="mcp-server-datahub --token-base64 cTd=",
+    )
+    guard = _AgentMetadataSecretGuard.from_runtime_settings(settings)
+
+    assert guard.context_is_safe(_context_with_tag("classification:prefix-q7-suffix")) is False
+
+
+def test_sensitive_launcher_hex_value_protects_decoded_plaintext(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(
+        monkeypatch,
+        args="mcp-server-datahub --token-hex=7137",
+    )
+    guard = _AgentMetadataSecretGuard.from_runtime_settings(settings)
+
+    assert guard.context_is_safe(_context_with_tag("classification:prefix-q7-suffix")) is False
+    assert guard.context_is_safe(_context_with_tag("classification:7137:marker")) is False
+
+
+def test_nonsecret_launcher_base64_value_does_not_protect_decoded_plaintext(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(
+        monkeypatch,
+        args="mcp-server-datahub --label cTc=",
+    )
+    guard = _AgentMetadataSecretGuard.from_runtime_settings(settings)
+
+    assert guard.context_is_safe(_context_with_tag("classification:prefix-q7-suffix")) is True
