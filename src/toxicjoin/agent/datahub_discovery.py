@@ -102,6 +102,7 @@ _SECRET_TEXT_MARKERS = (
     "credential:",
 )
 _AUTHORIZATION_TEXT_MARKERS = ("authorization=", "authorization:")
+_AUTHORIZATION_MARKER_BOUNDARY_CHARS = frozenset("=;,&'\"([{")
 _RECOGNIZED_AUTHORIZATION_SCHEMES = ("bearer", "basic")
 _AUTHORIZATION_STRONG_PARAMETER_NAMES = frozenset({"response"})
 _SECRET_VALUE_DELIMITERS = frozenset(";&,\t\r\n ")
@@ -670,6 +671,9 @@ def _add_authorization_guard_values(
             index = lowered.find(marker, search_from)
             if index < 0:
                 break
+            if not _authorization_marker_has_boundary(text, index):
+                search_from = index + len(marker)
+                continue
 
             authorization_value, next_index = _extract_authorization_value(
                 text,
@@ -682,6 +686,13 @@ def _add_authorization_guard_values(
                     authorization_value,
                 )
             search_from = max(index + len(marker), next_index)
+
+
+def _authorization_marker_has_boundary(text: str, index: int) -> bool:
+    if index == 0:
+        return True
+    previous = text[index - 1]
+    return previous.isspace() or previous in _AUTHORIZATION_MARKER_BOUNDARY_CHARS
 
 
 def _register_authorization_value(
