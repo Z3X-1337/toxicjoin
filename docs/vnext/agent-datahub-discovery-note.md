@@ -27,14 +27,15 @@ DATAHUB_GMS_READ_TOKEN
   -> canonical DataHub dataset-URN exact round-trip + Unicode control rejection
   -> redacted deterministic projection
   -> AgentDataContext (security_authoritative=false)
-  -> untrusted planner
+  -> trusted in-process AgentPlanner adapter
+  -> untrusted remote/model output
 ```
 
 The existing `DataHubSnapshotLoader` remains the ingestion/normalization authority. There is no second DataHub parser for the agent.
 
 ## Credential provenance and tool boundary
 
-The planner never receives DataHub credentials, raw GMS endpoints, MCP settings, MCP transport/session/client objects, tool definitions/handles, or mutation capability.
+The planner-adapter call surface never receives DataHub credentials, raw GMS endpoints, MCP settings, MCP transport/session/client objects, tool definitions/handles, or mutation capability.
 
 DataHub authority has concrete credential types:
 
@@ -47,13 +48,21 @@ A newly constructed or `BaseModel.model_copy(...)` object has a different identi
 
 The Agent never rebinds provenance. It asks `clone_read_only_settings_for_child()` for a detached constructor credential. That authority-owned function captures the supplied object once, compares that exact capture against the registry, and only then creates and registers a new read credential from the same validated snapshot. Invalid but well-formed objects return no clone; malformed internals are caught by the Agent's settings-redaction boundary.
 
-The stored constructor clone is **not trusted indefinitely**. Every call to `discover()` asks the authority registry for another detached runtime clone immediately before transport creation. If code has modified `discoverer._settings` after construction—including its `SecretStr`, endpoint, role, or launcher settings—the registry comparison fails and discovery collapses to `AGENT_DATAHUB_DISCOVERY_FAILED` before the transport factory runs.
+The stored constructor clone is **not trusted indefinitely**. Every call to `discover()` asks the authority registry for another detached runtime clone immediately before transport creation. If trusted in-process code has accidentally or maliciously modified `discoverer._settings` after construction—including its `SecretStr`, endpoint, role, or launcher settings—the registry comparison fails and discovery collapses to `AGENT_DATAHUB_DISCOVERY_FAILED` before the transport factory runs.
 
 Bearer capture requires an exact `SecretStr` wrapper and normalizes its secret through the base `str.__str__` descriptor to an exact built-in `str` before hashing or cloning. This defeats `str` subclasses with overridden `encode()`/`__str__()` behavior. Each issued clone receives a distinct `SecretStr`, so later mutation of a caller-retained bearer object cannot alter a subsequently used child credential.
 
 Ordinary `model_copy(update=...)` also blocks authority/token fields as defense in depth, but registry identity and snapshot matching—not Pydantic copy ergonomics—are the authority boundary.
 
 The read child always emits `TOOLS_IS_MUTATION_ENABLED=false` and `SAVE_DOCUMENT_TOOL_ENABLED=false`. Snapshot loading uses `RoleBoundDataHubMcpClient(role=READ_ONLY)`. If the read server exposes `save_document` or another mutation-shaped tool, discovery fails closed before metadata calls.
+
+## Interpreter trust boundary
+
+The process-local credential registry is **not a sandbox against arbitrary Python running in the same interpreter**. Any code with arbitrary in-process execution can inspect module globals, environment, objects, or monkey-patch trusted functions and is therefore inside ToxicJoin's trusted computing base.
+
+Accordingly, `AgentPlanner` means a trusted in-process adapter around an untrusted remote/model planner. The model/provider receives only serialized sanitized planning data and its returned values are treated as hostile input. A planner implementation that itself consists of untrusted executable code must run in a separate process/container/sandbox; it may not be loaded as an `AgentPlanner` object in the credential-bearing ToxicJoin process.
+
+This is a threat-model boundary, not a naming convention. ToxicJoin does not claim that Python leading underscores, weak references, Pydantic models, or the provenance registry can isolate arbitrary hostile code sharing the process.
 
 ## Sanitized planning projection
 
@@ -88,6 +97,8 @@ Runtime revalidation occurs inside the discovery I/O boundary. Any changed inter
 ## Non-goals
 
 This slice does not give the Agent direct MCP access, authority to choose credentials/mutation mode, EvidenceClaim trust, SQL authorization/execution, governance/disclosure mutation, PPMC/CPCC/proof control, or self-validation authority.
+
+It also does not provide an in-process sandbox for arbitrary hostile Python. Process isolation for untrusted executable planner code is mandatory and belongs at the provider/adapter deployment boundary.
 
 Proposed SQL remains subject to independent governance/evidence reacquisition and downstream security evaluation before execution.
 
