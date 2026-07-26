@@ -199,7 +199,12 @@ def _read_only_settings(settings: ReadOnlyDataHubMcpSettings) -> ReadOnlyDataHub
     _require_read_only_provenance(settings)
 
     try:
-        token_value = settings.gms_token.get_secret_value()
+        raw_token = settings.gms_token.get_secret_value()
+        if not isinstance(raw_token, str):
+            raise TypeError("DataHub bearer must be text")
+        token_value = str.__str__(raw_token)
+        if type(token_value) is not str:
+            raise TypeError("DataHub bearer normalization failed")
         copied = BaseModel.model_copy(
             settings,
             update={"gms_token": SecretStr(token_value)},
