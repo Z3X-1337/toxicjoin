@@ -12,6 +12,7 @@ DATAHUB_GMS_READ_TOKEN
   -> ReadOnlyDataHubMcpSettings concrete credential type
   -> private factory seal + bearer-token fingerprint
   -> reject direct construction, legacy/base, writer type, relabeling, or token swapping
+  -> normalize bearer to exact built-in str
   -> detach bearer SecretStr into a private read-settings copy
   -> mutation_enabled=false
   -> TOOLS_IS_MUTATION_ENABLED=false
@@ -51,7 +52,9 @@ Concrete class identity alone is not treated as sufficient provenance. Factory-i
 
 Generic `DataHubMcpSettings`, the abstract role-bound base, the writer concrete type, and directly constructed read objects are not eligible. Authority/token fields (`role`, `mutation_enabled`, `credential_source`, and `gms_token`) are locked against ordinary Pydantic `model_copy(update=...)`. Regressions also deliberately bypass that override through `BaseModel.model_copy(...)`: relabeling a writer preserves writer class identity, while swapping a writer token into a factory-issued read object leaves the private read-token fingerprint unchanged, so provenance validation fails before transport creation.
 
-After provenance validation, the discoverer snapshots the current bearer value into an immutable Python string and creates a new `SecretStr` for its private settings copy through a security-owned base-model copy. The private seal/fingerprint are then revalidated against that detached bearer. This prevents a caller that retains the original settings object from mutating the original `SecretStr._secret_value` after construction and thereby changing the credential later supplied to the MCP child. The read child always emits both `TOOLS_IS_MUTATION_ENABLED=false` and `SAVE_DOCUMENT_TOOL_ENABLED=false`. Snapshot loading is invoked with `require_mutations=false` through `RoleBoundDataHubMcpClient(role=READ_ONLY)`. If the read server nevertheless exposes `save_document` or another mutation-shaped tool, discovery fails closed before metadata calls are accepted.
+After initial provenance validation, the discoverer reads the current bearer and requires it to be a `str`. It then calls the base `str.__str__` descriptor directly and requires the result to be an exact built-in `str` before constructing the detached `SecretStr`. This strips `str` subclasses and therefore removes overridden methods such as a malicious `encode()` or `__str__()` from the credential material used for the second provenance check and child environment. A regression demonstrates the attack precondition with a write-token `str` subclass whose `encode()` returns the original read-token bytes: the initial legacy fingerprint operation is intentionally fooled, but normalization exposes the real write-token text and the second provenance check fails closed before transport creation.
+
+The normalized bearer is copied into a new `SecretStr` on the private settings object, and the factory seal/fingerprint are revalidated against that detached bearer. This also prevents a caller that retains the original settings object from mutating the original `SecretStr._secret_value` after construction and thereby changing the credential later supplied to the MCP child. The read child always emits both `TOOLS_IS_MUTATION_ENABLED=false` and `SAVE_DOCUMENT_TOOL_ENABLED=false`. Snapshot loading is invoked with `require_mutations=false` through `RoleBoundDataHubMcpClient(role=READ_ONLY)`. If the read server nevertheless exposes `save_document` or another mutation-shaped tool, discovery fails closed before metadata calls are accepted.
 
 ## Sanitized planning projection
 
