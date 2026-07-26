@@ -4,6 +4,7 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from pydantic import SecretStr
 
 from toxicjoin.agent import (
     AgentProposalAuthorityError,
@@ -213,3 +214,97 @@ def test_sql_parse_failure_crosses_only_sanitized_error_boundary(monkeypatch) ->
             cursor = cursor.tb_next
     else:
         raise AssertionError("malformed SQL was accepted")
+
+
+@pytest.mark.parametrize("bad_max_age", [None, "300"])
+def test_constructor_rejects_nonnumeric_freshness_without_credential_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    bad_max_age: object,
+) -> None:
+    settings = _read_settings(monkeypatch)
+
+    try:
+        DataHubAgentProposalAuthority(
+            snapshot=_snapshot(),
+            read_settings=settings,
+            policy_engine=PolicyEngine(load_policy()),
+            clock=_MutableClock(NOW + timedelta(seconds=1)),
+            datahub_max_age_seconds=bad_max_age,  # type: ignore[arg-type]
+        )
+    except AgentProposalAuthorityError as error:
+        assert error.code == "AGENT_AUTHORITY_FRESHNESS_INVALID"
+        assert error.__context__ is None
+        assert error.__cause__ is None
+        cursor = error.__traceback__
+        while cursor is not None:
+            if cursor.tb_frame.f_code.co_filename.endswith("proposal_authority.py"):
+                for name, value in cursor.tb_frame.f_locals.items():
+                    assert not isinstance(value, ReadOnlyDataHubMcpSettings), (
+                        f"authority traceback local {name!r} retained read settings"
+                    )
+                    assert not isinstance(value, SecretStr), (
+                        f"authority traceback local {name!r} retained bearer wrapper"
+                    )
+                    assert READ_TOKEN not in repr(value), (
+                        f"authority traceback local {name!r} retained bearer text"
+                    )
+            cursor = cursor.tb_next
+    else:
+        raise AssertionError("nonnumeric freshness input was accepted")
+
+
+@pytest.mark.parametrize("fail_on_call", [2, 3])
+def test_post_start_freshness_failures_map_to_issuance_error(
+    monkeypatch: pytest.MonkeyPatch,
+    fail_on_call: int,
+) -> None:
+    snapshot = _snapshot()
+    goal, context, proposal = _request(snapshot)
+    authority = _authority(
+        monkeypatch,
+        snapshot,
+        clock=_MutableClock(NOW + timedelta(seconds=1)),
+    )
+    original = authority._require_fresh_at
+    calls = 0
+
+    def fail_selected_call(current: datetime) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == fail_on_call:
+            raise AgentProposalAuthorityError("AGENT_AUTHORITY_EVIDENCE_STALE")
+        original(current)
+
+    monkeypatch.setattr(authority, "_require_fresh_at", fail_selected_call)
+
+    with pytest.raises(
+        AgentProposalAuthorityError,
+        match="AGENT_AUTHORITY_STALE_AT_ISSUE",
+    ):
+        _evaluate(authority, goal=goal, context=context, proposal=proposal)
+
+
+@pytest.mark.parametrize("trusted_purpose", [f" {PURPOSE}", f"{PURPOSE} "])
+def test_authority_rejects_noncanonical_trusted_purpose(
+    monkeypatch: pytest.MonkeyPatch,
+    trusted_purpose: str,
+) -> None:
+    snapshot = _snapshot()
+    goal, context, proposal = _request(snapshot)
+    authority = _authority(
+        monkeypatch,
+        snapshot,
+        clock=_MutableClock(NOW + timedelta(seconds=1)),
+    )
+
+    with pytest.raises(
+        AgentProposalAuthorityError,
+        match="AGENT_AUTHORITY_PURPOSE_INVALID",
+    ):
+        authority.evaluate(
+            proposal=proposal,
+            goal=goal,
+            planning_context=context,
+            authorized_task_purpose=trusted_purpose,
+            subject_key=ColumnRef(dataset="patients", field_path="customer_id"),
+        )
