@@ -124,7 +124,8 @@ class _AgentMetadataSecretGuard:
     information-theoretic noninterference against that threat. This guard enforces the narrower,
     auditable boundary ToxicJoin can actually prove here: values delivered to the child as
     credentials or secret-bearing configuration must not be reflected directly, embedded in a
-    larger planner-visible string, or returned through common reversible encodings.
+    larger planner-visible string, or returned through the declared single-layer reversible
+    encodings and normalization variants.
 
     Strong credential values are substring-protected regardless of length. Protected configuration
     values are always exact-match protected and become substring-protected once long enough to
@@ -217,27 +218,26 @@ class _AgentMetadataSecretGuard:
             strong_secret_values=strong_secret_values,
         )
 
-    def assert_context_safe(self, context: AgentDataContext) -> None:
+    def context_is_safe(self, context: AgentDataContext) -> bool:
+        """Return False on a reflection or any guard-processing uncertainty.
+
+        This method intentionally does not raise: raw planner metadata and guard variants must not
+        be retained in traceback frames if the caller ultimately rejects the context.
+        """
+
         try:
             payload = context.model_dump(mode="python")
             for text in _iter_planner_visible_text(payload):
                 for normalized in _text_detection_views(text):
                     if normalized in self._exact_variants:
-                        raise AgentDataHubDiscoveryError(
-                            "AGENT_DATAHUB_SECRET_REFLECTION"
-                        )
+                        return False
                     if any(
                         variant in normalized for variant in self._substring_variants
                     ):
-                        raise AgentDataHubDiscoveryError(
-                            "AGENT_DATAHUB_SECRET_REFLECTION"
-                        )
-        except AgentDataHubDiscoveryError:
-            raise
+                        return False
+            return True
         except Exception:
-            raise AgentDataHubDiscoveryError(
-                "AGENT_DATAHUB_SECRET_REFLECTION"
-            ) from None
+            return False
 
 
 class DataHubAgentDiscoverer:
@@ -262,6 +262,14 @@ class DataHubAgentDiscoverer:
     async def discover(self) -> AgentDataContext:
         """Return one immutable, explicitly non-authoritative planning context."""
 
+        runtime_settings = None
+        secret_guard = None
+        transport = None
+        client = None
+        snapshot = None
+        context = None
+        discovery_failed = False
+
         try:
             runtime_settings = clone_read_only_settings_for_child(self._settings)
             if runtime_settings is None:
@@ -278,10 +286,44 @@ class DataHubAgentDiscoverer:
                     self._asset_map,
                 ).load(require_mutations=False)
         except Exception:
+            discovery_failed = True
+
+        if discovery_failed:
+            runtime_settings = None
+            secret_guard = None
+            transport = None
+            client = None
+            snapshot = None
+            context = None
             raise AgentDataHubDiscoveryError("AGENT_DATAHUB_DISCOVERY_FAILED") from None
 
-        context = build_agent_data_context_from_snapshot(snapshot)
-        secret_guard.assert_context_safe(context)
+        projection_error_code: str | None = None
+        try:
+            context = build_agent_data_context_from_snapshot(snapshot)
+        except AgentDataHubDiscoveryError as error:
+            projection_error_code = error.code
+        except Exception:
+            projection_error_code = "AGENT_DATAHUB_PROJECTION_FAILED"
+
+        if projection_error_code is not None:
+            runtime_settings = None
+            secret_guard = None
+            transport = None
+            client = None
+            snapshot = None
+            context = None
+            raise AgentDataHubDiscoveryError(projection_error_code) from None
+
+        context_safe = secret_guard.context_is_safe(context)
+        if not context_safe:
+            runtime_settings = None
+            secret_guard = None
+            transport = None
+            client = None
+            snapshot = None
+            context = None
+            raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SECRET_REFLECTION") from None
+
         return context
 
 
