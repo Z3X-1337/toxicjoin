@@ -271,6 +271,59 @@ def test_live_discovery_rejects_base64_bearer_reflection(
     assert exc_info.value.code == "AGENT_DATAHUB_SECRET_REFLECTION"
 
 
+def test_live_discovery_rejects_lowercase_full_percent_encoded_bearer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = "reflection:/+%secret-42"
+    settings = _configure(monkeypatch, token=token)
+    reflected = "".join(f"%{byte:02x}" for byte in token.encode("utf-8"))
+
+    with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
+        _discover(settings, channel="tag", reflected_value=reflected)
+
+    assert exc_info.value.code == "AGENT_DATAHUB_SECRET_REFLECTION"
+
+
+def test_live_discovery_rejects_zero_width_obfuscated_bearer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _configure(monkeypatch)
+    reflected = "\u200b".join(_READ_TOKEN)
+
+    with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
+        _discover(settings, channel="tag", reflected_value=reflected)
+
+    assert exc_info.value.code == "AGENT_DATAHUB_SECRET_REFLECTION"
+
+
+def test_live_discovery_rejects_endpoint_path_secret_reflection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path_secret = "endpoint-path-secret-42"
+    endpoint = f"https://datahub-reflection.example/internal/{path_secret}"
+    settings = _configure(monkeypatch, endpoint=endpoint)
+
+    with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
+        _discover(settings, channel="tag", reflected_value=path_secret)
+
+    assert exc_info.value.code == "AGENT_DATAHUB_SECRET_REFLECTION"
+
+
+def test_live_discovery_rejects_standalone_launcher_env_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher_secret = "launcher-env-secret-42"
+    settings = _configure(
+        monkeypatch,
+        args=f"mcp-server-datahub --env DATAHUB_TOKEN {launcher_secret}",
+    )
+
+    with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
+        _discover(settings, channel="tag", reflected_value=launcher_secret)
+
+    assert exc_info.value.code == "AGENT_DATAHUB_SECRET_REFLECTION"
+
+
 def test_live_discovery_allows_nonsecret_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
