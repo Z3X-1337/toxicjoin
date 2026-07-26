@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from toxicjoin.agent import AgentDataHubDiscoveryError, DataHubAgentDiscoverer
@@ -93,3 +95,25 @@ def test_registry_binds_child_endpoint_and_launcher_configuration(
         )
     assert exc_info.value.code == "AGENT_DATAHUB_READ_ROLE_REQUIRED"
     assert transport_created is False
+
+
+def test_discovery_revalidates_internal_registered_credential_before_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure(monkeypatch)
+    discoverer = DataHubAgentDiscoverer(
+        settings=read_only_settings_from_env(),
+        asset_map=_asset_map(),
+        transport_factory=lambda _settings: (_ for _ in ()).throw(
+            AssertionError("mutated internal credential must fail before transport creation")
+        ),
+    )
+    assert read_only_credential_provenance_valid(discoverer._settings) is True
+
+    # Deliberately mutate the private clone after construction. discover() must not trust it.
+    discoverer._settings.gms_token._secret_value = _WRITE_SECRET
+    assert read_only_credential_provenance_valid(discoverer._settings) is False
+
+    with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
+        asyncio.run(discoverer.discover())
+    assert exc_info.value.code == "AGENT_DATAHUB_DISCOVERY_FAILED"
