@@ -61,6 +61,7 @@ _PROTECTED_ROLE_FIELDS = frozenset(
     {"role", "mutation_enabled", "credential_source", "gms_token"}
 )
 _PROVENANCE_LOCK = RLock()
+_CHILD_ENVIRONMENT_LOCK = RLock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +88,14 @@ class _CredentialRegistration:
     snapshot: _CredentialSnapshot
 
 
+@dataclass(frozen=True, slots=True)
+class _ChildEnvironmentRegistration:
+    reference: weakref.ReferenceType[Any]
+    environment: tuple[tuple[str, str], ...]
+
+
 _PROVENANCE_REGISTRY: dict[int, _CredentialRegistration] = {}
+_CHILD_ENVIRONMENT_REGISTRY: dict[int, _ChildEnvironmentRegistration] = {}
 
 
 class RoleBoundDataHubMcpSettings(DataHubMcpSettings):
@@ -97,16 +105,15 @@ class RoleBoundDataHubMcpSettings(DataHubMcpSettings):
     credential_source: str
 
     def child_environment(self) -> dict[str, str]:
-        environment = super().child_environment()
-        if self.role == DataHubMcpRole.READ_ONLY:
-            environment["TOOLS_IS_MUTATION_ENABLED"] = "false"
-            environment["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] = "false"
-            environment["SAVE_DOCUMENT_TOOL_ENABLED"] = "false"
-        else:
-            environment["TOOLS_IS_MUTATION_ENABLED"] = "true"
-            environment["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] = "false"
-            environment["SAVE_DOCUMENT_TOOL_ENABLED"] = "true"
-        return environment
+        """Return one immutable-per-instance launch environment snapshot.
+
+        The first call captures inherited network/process variables plus the role-owned
+        DataHub settings. Subsequent calls return copies of that exact snapshot. This binds
+        pre-launch security inspection and the eventual stdio launch to identical material
+        even if process environment variables rotate concurrently.
+        """
+
+        return _role_bound_child_environment(self)
 
     def redacted_summary(self) -> dict[str, Any]:
         summary = super().redacted_summary()
@@ -357,6 +364,53 @@ def _exact_text(value: Any) -> str:
     if type(exact) is not str:
         raise TypeError("DataHub credential text normalization failed")
     return exact
+
+
+def _role_bound_child_environment(
+    settings: RoleBoundDataHubMcpSettings,
+) -> dict[str, str]:
+    """Capture and reuse the exact child environment for one role-bound settings object."""
+
+    key = id(settings)
+    with _CHILD_ENVIRONMENT_LOCK:
+        current = _CHILD_ENVIRONMENT_REGISTRY.get(key)
+        if current is not None and current.reference() is settings:
+            return dict(current.environment)
+
+    environment = DataHubMcpSettings.child_environment(settings)
+    if settings.role == DataHubMcpRole.READ_ONLY:
+        environment["TOOLS_IS_MUTATION_ENABLED"] = "false"
+        environment["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] = "false"
+        environment["SAVE_DOCUMENT_TOOL_ENABLED"] = "false"
+    else:
+        environment["TOOLS_IS_MUTATION_ENABLED"] = "true"
+        environment["DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED"] = "false"
+        environment["SAVE_DOCUMENT_TOOL_ENABLED"] = "true"
+
+    frozen_environment = tuple(
+        sorted(
+            (_exact_text(name), _exact_text(value))
+            for name, value in environment.items()
+        )
+    )
+
+    def _cleanup(reference: weakref.ReferenceType[Any], *, registry_key: int = key) -> None:
+        with _CHILD_ENVIRONMENT_LOCK:
+            registered = _CHILD_ENVIRONMENT_REGISTRY.get(registry_key)
+            if registered is not None and registered.reference is reference:
+                _CHILD_ENVIRONMENT_REGISTRY.pop(registry_key, None)
+
+    reference = weakref.ref(settings, _cleanup)
+    registration = _ChildEnvironmentRegistration(
+        reference=reference,
+        environment=frozen_environment,
+    )
+    with _CHILD_ENVIRONMENT_LOCK:
+        current = _CHILD_ENVIRONMENT_REGISTRY.get(key)
+        if current is not None and current.reference() is settings:
+            return dict(current.environment)
+        _CHILD_ENVIRONMENT_REGISTRY[key] = registration
+    return dict(frozen_environment)
 
 
 def _credential_fingerprint_value(value: str) -> str:
