@@ -179,6 +179,35 @@ class PolicyInput(StrictModel):
     upstream_failures: tuple[ReasonCode, ...] = ()
 
 
+class _FrozenDict(dict[str, Any]):
+    """Dict-compatible recursively frozen container for committed policy evidence."""
+
+    @staticmethod
+    def _immutable(*args: Any, **kwargs: Any) -> None:
+        raise TypeError("policy decision evidence is immutable")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable
+    setdefault = _immutable
+    update = _immutable
+
+    def __ior__(self, other: object) -> "_FrozenDict":
+        raise TypeError("policy decision evidence is immutable")
+
+
+def _deep_freeze_policy_evidence(value: Any) -> Any:
+    if isinstance(value, dict):
+        return _FrozenDict(
+            {key: _deep_freeze_policy_evidence(item) for key, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_deep_freeze_policy_evidence(item) for item in value)
+    return value
+
+
 class PolicyDecision(StrictModel):
     decision: Decision
     reason_codes: tuple[ReasonCode, ...]
@@ -192,4 +221,5 @@ class PolicyDecision(StrictModel):
             raise ValueError("REWRITE decisions must set rewrite_required=true")
         if self.decision != Decision.REWRITE and self.rewrite_required:
             raise ValueError("only REWRITE decisions may require a rewrite")
+        object.__setattr__(self, "evidence", _deep_freeze_policy_evidence(self.evidence))
         return self
