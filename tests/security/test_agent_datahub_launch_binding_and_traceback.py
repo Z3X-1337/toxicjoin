@@ -22,9 +22,14 @@ _OLD_PROXY_PASSWORD = "old-proxy-secret-42"
 _NEW_PROXY_PASSWORD = "new-proxy-secret-42"
 
 
-def _configure(monkeypatch: pytest.MonkeyPatch) -> ReadOnlyDataHubMcpSettings:
-    monkeypatch.setenv("DATAHUB_GMS_URL", _ENDPOINT)
-    monkeypatch.setenv("DATAHUB_GMS_READ_TOKEN", _READ_TOKEN)
+def _configure(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    token: str = _READ_TOKEN,
+    endpoint: str = _ENDPOINT,
+) -> ReadOnlyDataHubMcpSettings:
+    monkeypatch.setenv("DATAHUB_GMS_URL", endpoint)
+    monkeypatch.setenv("DATAHUB_GMS_READ_TOKEN", token)
     monkeypatch.setenv("DATAHUB_MCP_COMMAND", "uvx")
     monkeypatch.setenv("DATAHUB_MCP_ARGS", "mcp-server-datahub")
     monkeypatch.setenv("DATAHUB_MCP_TIMEOUT_SECONDS", "30")
@@ -138,15 +143,29 @@ class RotatingProxyTransport(ReflectionTransport):
         return self
 
 
+def _discover_reflection(
+    settings: ReadOnlyDataHubMcpSettings,
+    reflected_value: str,
+) -> None:
+    def factory(runtime_settings: ReadOnlyDataHubMcpSettings) -> ReflectionTransport:
+        return ReflectionTransport(runtime_settings, reflected_value=reflected_value)
+
+    with pytest.raises(AgentDataHubDiscoveryError) as exc_info:
+        asyncio.run(
+            DataHubAgentDiscoverer(
+                settings=settings,
+                asset_map=_asset_map(),
+                transport_factory=factory,
+            ).discover()
+        )
+    assert exc_info.value.code == "AGENT_DATAHUB_SECRET_REFLECTION"
+
+
 def test_role_bound_child_environment_is_frozen_after_first_materialization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    old_proxy = (
-        f"https://proxy-user:{_OLD_PROXY_PASSWORD}@proxy-old.example"
-    )
-    new_proxy = (
-        f"https://proxy-user:{_NEW_PROXY_PASSWORD}@proxy-new.example"
-    )
+    old_proxy = f"https://proxy-user:{_OLD_PROXY_PASSWORD}@proxy-old.example"
+    new_proxy = f"https://proxy-user:{_NEW_PROXY_PASSWORD}@proxy-new.example"
     monkeypatch.setenv("HTTPS_PROXY", old_proxy)
     settings = _configure(monkeypatch)
 
@@ -162,12 +181,8 @@ def test_role_bound_child_environment_is_frozen_after_first_materialization(
 def test_guard_and_transport_use_same_proxy_environment_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    old_proxy = (
-        f"https://proxy-user:{_OLD_PROXY_PASSWORD}@proxy-old.example"
-    )
-    new_proxy = (
-        f"https://proxy-user:{_NEW_PROXY_PASSWORD}@proxy-new.example"
-    )
+    old_proxy = f"https://proxy-user:{_OLD_PROXY_PASSWORD}@proxy-old.example"
+    new_proxy = f"https://proxy-user:{_NEW_PROXY_PASSWORD}@proxy-new.example"
     monkeypatch.setenv("HTTPS_PROXY", old_proxy)
     settings = _configure(monkeypatch)
     captured: list[RotatingProxyTransport] = []
@@ -228,3 +243,41 @@ def test_secret_reflection_error_clears_sensitive_discovery_traceback_locals(
     assert _READ_TOKEN not in rendered_locals
     assert _ENDPOINT not in rendered_locals
     assert "classification:traceback-reflection-secret-token:marker" not in rendered_locals
+
+
+def test_unicode_control_removal_is_renormalized_before_matching(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = "é7"
+    settings = _configure(monkeypatch, token=token)
+    reflected = "prefix-e\u200b\u03017-suffix"
+
+    _discover_reflection(settings, reflected)
+
+
+def test_partial_percent_encoding_is_decoded_before_matching(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = "q7"
+    settings = _configure(monkeypatch, token=token)
+
+    _discover_reflection(settings, "prefix-%717-suffix")
+
+
+def test_mixed_case_hex_reflection_is_matched_case_insensitively(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = "z?"
+    settings = _configure(monkeypatch, token=token)
+
+    _discover_reflection(settings, "prefix-7A3f-suffix")
+
+
+def test_secret_shaped_fragment_value_is_treated_as_strong(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fragment_secret = "q7"
+    endpoint = f"https://datahub-reflection.example/#access_token={fragment_secret}"
+    settings = _configure(monkeypatch, endpoint=endpoint)
+
+    _discover_reflection(settings, f"prefix-{fragment_secret}-suffix")
