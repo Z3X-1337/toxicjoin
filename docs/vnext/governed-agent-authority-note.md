@@ -27,16 +27,20 @@ The agent has no API or constructor dependency for:
 
 The wrapper imports no authorizer, executor, disclosure ledger, DataHub mutation client, or proof verifier.
 
-## Untrusted planner boundary
+## Trusted adapter / untrusted planner-output boundary
 
-`AgentPlanner` is explicitly untrusted. It may return only an `AgentDraft` containing:
+`AgentPlanner` is a **trusted in-process integration adapter**, not an isolation boundary for arbitrary hostile Python. The remote LLM/model/provider and every value returned by it are untrusted. A genuinely untrusted executable planner must run outside the ToxicJoin interpreter and communicate only through a narrow data/RPC boundary implemented by the trusted adapter.
+
+This distinction is security-critical: Python code running inside the ToxicJoin process shares the interpreter, imports, environment, and memory space and is therefore part of the trusted computing base. Leading underscores or module-private objects are not treated as a sandbox.
+
+Only the planner response is admitted into `GovernedAgent`, and it may contain only an `AgentDraft` with:
 
 - `task_purpose`;
 - `sql`.
 
 The strict model rejects extra fields. A planner response containing fields such as `authorize`, `execute`, `mark_evidence_trusted`, or `security_authoritative=true` is rejected as `AGENT_DRAFT_INVALID` before a proposal is created.
 
-Planner exceptions become `AGENT_PLANNER_FAILED`; they never create authority.
+Adapter/provider failures become `AGENT_PLANNER_FAILED`; they never create authority. No credential-bearing DataHub object is an argument to the planner adapter interface.
 
 ## Sanitized discovery context
 
@@ -55,7 +59,7 @@ Every context/dataset/field/lineage model carries `security_authoritative=false`
 
 This is deliberate. A category shown to the planner is information for task planning only. It is **not** an `EvidenceClaim`, `EvidenceResolution`, `EvidenceTrustState`, authorization fact, or proof. The security pipeline must reacquire/revalidate governance/evidence independently after SQL is proposed.
 
-No credential, MCP token, settings object, transport object, callable tool, mutation handle, raw warehouse row, or execution capability belongs in this context.
+No credential, MCP token, settings object, transport object, callable tool, mutation handle, raw warehouse row, or execution capability belongs in this context or in the planner-adapter call signature.
 
 ## Proposal preflight
 
@@ -101,20 +105,24 @@ An unsafe PPMC feedback record requires a counterexample trace commitment. A tra
 
 Feedback is bound to the exact previous proposal. Adaptation also requires the same goal and the same discovery-context commitment. Rebinding feedback to another proposal, goal, or context fails closed.
 
-The agent may use this feedback to propose a different legitimate task expression. It does not own CPCC and cannot certify that its adaptation is safe.
+The remote/model planner may use this feedback to propose a different legitimate task expression. It does not own CPCC and cannot certify that its adaptation is safe.
 
 ## Bounded adaptation
 
-P0 allows at most eight adaptation iterations, with a security-owned configurable limit no larger than eight. This prevents an untrusted planner from creating an unbounded retry loop inside the governed wrapper.
+P0 allows at most eight adaptation iterations, with a security-owned configurable limit no larger than eight. This prevents untrusted planner output from driving an unbounded retry loop inside the governed wrapper.
+
+## Process-isolation rule
+
+The P0 security claim is about untrusted **model/provider data**, not arbitrary code execution inside the ToxicJoin interpreter. Any future local-code planner, plugin, generated Python tool, or third-party planner runtime that is not trusted must be placed in a separate process/container/sandbox before it can satisfy this contract. It must receive only the sanitized planning payload and return only draft-shaped data.
 
 ## Next slice
 
-The following Day-12 slice will add a security-owned DataHub discovery adapter that:
+The following Day-12 slice adds a security-owned DataHub discovery adapter that:
 
 - constructs DataHub MCP settings with mutations disabled;
 - validates only the required read tool contracts;
 - acquires a normalized DataHub snapshot through trusted integration code;
 - converts that snapshot into the sanitized immutable `AgentDataContext`;
-- never gives the planner the MCP client, transport, token, settings, or mutation surface.
+- never passes the MCP client, transport, token, settings, or mutation surface through the planner-adapter interface.
 
-Only after that adapter passes exact-head and Live DataHub gates should any concrete LLM planner be considered.
+Only after that adapter passes exact-head and Live DataHub gates should a concrete LLM provider be connected through trusted adapter code.
