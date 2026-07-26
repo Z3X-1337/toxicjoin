@@ -5,7 +5,12 @@ from toxicjoin.agent.datahub_discovery import (
     DataHubAgentDiscoverer,
     build_agent_data_context_from_snapshot,
 )
-from toxicjoin.agent.governed import AgentPlanner, AgentProposalError, GovernedAgent
+from toxicjoin.agent.governed import (
+    AgentPlanner,
+    AgentProposalError,
+    GovernedAgent,
+    TrustedPlannerAdapter,
+)
 from toxicjoin.agent.models import (
     AgentCapability,
     AgentDataContext,
@@ -36,6 +41,7 @@ __all__ = [
     "AgentProposalError",
     "DataHubAgentDiscoverer",
     "GovernedAgent",
+    "TrustedPlannerAdapter",
     "build_agent_data_context",
     "build_agent_data_context_from_snapshot",
     "build_agent_feedback",
