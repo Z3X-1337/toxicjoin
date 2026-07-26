@@ -294,6 +294,18 @@ def _required_governance_facts(
     add(bundle.source_identity, "datahub.snapshot_sha256", evaluation.source_snapshot_sha256)
     add(bundle.source_identity, "datahub.catalog_version", bundle.catalog_version)
 
+    for logical_name in sorted(set(evaluation.query_plan.source_datasets)):
+        candidate_subjects = {
+            claim.subject
+            for claim in bundle.claims
+            if claim.predicate == "datahub.logical_name" and claim.value == logical_name
+        }
+        if not candidate_subjects:
+            raise GovernanceTrustBindingError("GOVERNANCE_TRUST_REQUIRED_FACT_MISSING")
+        if len(candidate_subjects) != 1:
+            raise GovernanceTrustBindingError("GOVERNANCE_TRUST_DATASET_MAPPING_AMBIGUOUS")
+        add(next(iter(candidate_subjects)), "datahub.logical_name", logical_name)
+
     contexts: dict[str, ColumnContext] = {}
     for context in (
         *evaluation.resolution.projected_context,
