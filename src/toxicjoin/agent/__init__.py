@@ -5,6 +5,13 @@ from toxicjoin.agent.datahub_discovery import (
     DataHubAgentDiscoverer,
     build_agent_data_context_from_snapshot,
 )
+from toxicjoin.agent.governance_trust import (
+    DataHubGovernanceTrustAuthority,
+    GovernanceFactRequirement,
+    GovernanceTrustBinding,
+    GovernanceTrustBindingError,
+    compute_governance_trust_binding_sha256,
+)
 from toxicjoin.agent.governed import (
     AgentPlanner,
     AgentProposalError,
@@ -48,6 +55,10 @@ __all__ = [
     "AgentProposalError",
     "DataHubAgentDiscoverer",
     "DataHubAgentProposalAuthority",
+    "DataHubGovernanceTrustAuthority",
+    "GovernanceFactRequirement",
+    "GovernanceTrustBinding",
+    "GovernanceTrustBindingError",
     "GovernedAgent",
     "TrustedAgentProposalEvaluation",
     "TrustedPlannerAdapter",
@@ -55,5 +66,6 @@ __all__ = [
     "build_agent_data_context_from_snapshot",
     "build_agent_feedback",
     "build_agent_goal",
+    "compute_governance_trust_binding_sha256",
     "compute_trusted_agent_proposal_evaluation_sha256",
 ]
