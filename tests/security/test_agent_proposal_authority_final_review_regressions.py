@@ -148,7 +148,7 @@ def test_authority_rechecks_freshness_after_artifact_construction(monkeypatch) -
 
     with pytest.raises(
         AgentProposalAuthorityError,
-        match="AGENT_AUTHORITY_EVIDENCE_STALE",
+        match="AGENT_AUTHORITY_STALE_AT_ISSUE",
     ):
         _evaluate(authority, goal=goal, context=context, proposal=proposal)
 
