@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -11,7 +12,12 @@ from toxicjoin.agent import (
     build_agent_data_context_from_snapshot,
     build_agent_goal,
 )
-from toxicjoin.agent.models import AgentDataContext, AgentGoal, AgentProposal
+from toxicjoin.agent.models import (
+    AgentDataContext,
+    AgentGoal,
+    AgentProposal,
+    compute_agent_proposal_sha256,
+)
 from toxicjoin.context.datahub import DataHubSnapshot
 from toxicjoin.context.fixture import FixtureCatalog, FixtureDataset, FixtureField
 from toxicjoin.integrations.datahub_authority import (
@@ -168,7 +174,18 @@ def test_sql_parse_failure_crosses_only_sanitized_error_boundary(monkeypatch) ->
     snapshot = _snapshot()
     goal, context, proposal = _request(snapshot)
     malicious_sql = f"SELECT '{RAW_SQL_MARKER}' FROM ("
-    malformed = proposal.model_copy(update={"sql": malicious_sql})
+    provisional = proposal.model_copy(
+        update={
+            "sql": malicious_sql,
+            "sql_sha256": hashlib.sha256(malicious_sql.encode("utf-8")).hexdigest(),
+            "proposal_sha256": "0" * 64,
+        }
+    )
+    malformed = AgentProposal.model_validate(
+        provisional.model_copy(
+            update={"proposal_sha256": compute_agent_proposal_sha256(provisional)}
+        ).model_dump(mode="json")
+    )
     authority = _authority(
         monkeypatch,
         snapshot,
