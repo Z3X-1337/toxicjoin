@@ -7,8 +7,6 @@ import unicodedata
 from collections.abc import Callable
 from urllib.parse import quote, unquote_to_bytes
 
-from pydantic import BaseModel, SecretStr
-
 from toxicjoin.agent.models import (
     AgentDataContext,
     AgentDatasetView,
@@ -25,7 +23,7 @@ from toxicjoin.integrations.datahub_authority import (
     DataHubMcpRole,
     ReadOnlyDataHubMcpSettings,
     RoleBoundDataHubMcpClient,
-    read_only_credential_provenance_valid,
+    clone_read_only_settings_for_child,
 )
 from toxicjoin.integrations.datahub_mcp import (
     DataHubMcpTransport,
@@ -58,9 +56,9 @@ TransportFactory = Callable[[ReadOnlyDataHubMcpSettings], DataHubMcpTransport]
 class DataHubAgentDiscoverer:
     """Acquire one trusted DataHub snapshot and expose only a sanitized planning view.
 
-    Discovery requires a factory-issued dedicated READ_ONLY credential whose concrete type,
-    private factory seal, and bearer-token fingerprint all remain intact. A settings object whose
-    token or authority labels were copied/replaced is rejected before any transport is created.
+    Discovery requires an unchanged registry-issued dedicated READ_ONLY credential. The
+    authority module, not caller-owned settings, owns issuance provenance and produces the
+    detached registered child credential used by this discoverer.
     """
 
     def __init__(
@@ -182,44 +180,22 @@ def _project_trusted_snapshot(snapshot: DataHubSnapshot) -> AgentDataContext:
     )
 
 
-def _require_read_only_provenance(settings: object) -> None:
-    """Validate read credential provenance without exposing malformed bearer internals."""
-
-    try:
-        valid = read_only_credential_provenance_valid(settings)
-    except Exception:
-        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID") from None
-    if not valid:
-        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_READ_ROLE_REQUIRED")
-
-
 def _read_only_settings(settings: ReadOnlyDataHubMcpSettings) -> ReadOnlyDataHubMcpSettings:
-    """Return a detached private copy only when factory-issued read provenance is intact."""
-
-    _require_read_only_provenance(settings)
+    """Obtain a detached child credential from the authority-owned issuance registry."""
 
     try:
-        raw_token = settings.gms_token.get_secret_value()
-        if not isinstance(raw_token, str):
-            raise TypeError("DataHub bearer must be text")
-        token_value = str.__str__(raw_token)
-        if type(token_value) is not str:
-            raise TypeError("DataHub bearer normalization failed")
-        copied = BaseModel.model_copy(
-            settings,
-            update={"gms_token": SecretStr(token_value)},
-            deep=False,
-        )
+        copied = clone_read_only_settings_for_child(settings)
     except Exception:
         raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID") from None
-
-    _require_read_only_provenance(copied)
+    if copied is None:
+        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_READ_ROLE_REQUIRED")
     try:
-        shared_bearer = copied.gms_token is settings.gms_token
+        if copied.gms_token is settings.gms_token:
+            raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID")
+    except AgentDataHubDiscoveryError:
+        raise
     except Exception:
         raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID") from None
-    if shared_bearer:
-        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID")
     return copied
 
 
