@@ -24,7 +24,10 @@ from toxicjoin.evidence.models import (
     build_evidence_claim,
     build_evidence_resolution,
 )
-from toxicjoin.evidence.policy import default_evidence_policy
+from toxicjoin.evidence.policy import (
+    datahub_governance_evidence_policy,
+    default_evidence_policy,
+)
 from toxicjoin.evidence.resolver import (
     EvidenceResolutionError,
     require_trusted,
@@ -49,6 +52,7 @@ __all__ = [
     "build_evidence_resolution",
     "compute_datahub_derivation_validation_sha256",
     "compute_datahub_evidence_root",
+    "datahub_governance_evidence_policy",
     "datahub_source_identity",
     "default_evidence_policy",
     "require_trusted",
