@@ -27,11 +27,11 @@ from toxicjoin.evidence import (
     EvidenceSource,
     EvidenceTrustState,
     compute_datahub_derivation_validation_sha256,
-    datahub_governance_evidence_policy,
     default_evidence_policy,
     resolve_evidence,
 )
 from toxicjoin.evidence.canonical import canonical_json_sha256
+from toxicjoin.evidence.policy import datahub_governance_evidence_policy
 from toxicjoin.integrations.datahub_authority import read_only_settings_from_env
 from toxicjoin.models import ColumnRef, SensitivityCategory
 from toxicjoin.policy import PolicyEngine, load_policy
