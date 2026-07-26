@@ -235,10 +235,15 @@ class DataHubGovernanceTrustAuthority:
             **payload,
             binding_sha256="0" * 64,
         )
-        return GovernanceTrustBinding(
+        result = GovernanceTrustBinding(
             **payload,
             binding_sha256=compute_governance_trust_binding_sha256(provisional),
         )
+
+        returned_at = self._sample_clock()
+        if returned_at < bundle.observed_at or returned_at >= bundle.expires_at:
+            raise GovernanceTrustBindingError("GOVERNANCE_TRUST_STALE_AT_ISSUE")
+        return result
 
     def _sample_clock(self) -> datetime:
         with self._clock_lock:
@@ -311,8 +316,19 @@ def _required_governance_facts(
         add(field_subject, "toxicjoin.lineage_governance_complete", "true")
 
         for source in sorted(context.lineage_sources, key=lambda item: item.ref.key):
-            if source.category == SensitivityCategory.UNCLASSIFIED:
+            if (
+                source.category == SensitivityCategory.UNCLASSIFIED
+                or source.datahub_urn is None
+            ):
                 raise GovernanceTrustBindingError("GOVERNANCE_TRUST_GROUNDING_INCOMPLETE")
+            source_field_subject = f"{source.datahub_urn}#{source.ref.field_path}"
+            add(source.datahub_urn, "datahub.logical_name", source.ref.dataset)
+            add(
+                source_field_subject,
+                "toxicjoin.sensitivity_category",
+                source.category.value,
+            )
+
             edge_subject = _lineage_edge_subject(field_subject, source.ref.key)
             add(edge_subject, "datahub.lineage_source_ref", source.ref.key)
             add(
@@ -320,8 +336,7 @@ def _required_governance_facts(
                 "toxicjoin.lineage_source_category",
                 source.category.value,
             )
-            if source.datahub_urn is not None:
-                add(edge_subject, "datahub.lineage_source_urn", source.datahub_urn)
+            add(edge_subject, "datahub.lineage_source_urn", source.datahub_urn)
 
     return tuple(requirements[key] for key in sorted(requirements))
 
