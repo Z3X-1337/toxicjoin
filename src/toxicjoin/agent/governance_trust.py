@@ -46,8 +46,8 @@ class GovernanceFactRequirement(StrictModel):
     expected_value: str = Field(min_length=1, max_length=4096)
 
     @property
-    def key(self) -> str:
-        return f"{self.subject}\x00{self.predicate}"
+    def key(self) -> tuple[str, str]:
+        return (self.subject, self.predicate)
 
     @model_validator(mode="after")
     def validate_canonical_scope(self) -> "GovernanceFactRequirement":
@@ -108,7 +108,7 @@ class GovernanceTrustBinding(StrictModel):
             raise ValueError("governance trust requirements must be sorted and unique")
 
         resolution_keys = tuple(
-            f"{resolution.subject}\x00{resolution.predicate}"
+            (resolution.subject, resolution.predicate)
             for resolution in self.resolutions
         )
         if resolution_keys != requirement_keys:
@@ -278,7 +278,7 @@ def _required_governance_facts(
     evaluation: TrustedAgentProposalEvaluation,
 ) -> tuple[GovernanceFactRequirement, ...]:
     bundle = evaluation.evidence_bundle
-    requirements: dict[str, GovernanceFactRequirement] = {}
+    requirements: dict[tuple[str, str], GovernanceFactRequirement] = {}
 
     def add(subject: str, predicate: str, expected_value: str) -> None:
         requirement = GovernanceFactRequirement(
