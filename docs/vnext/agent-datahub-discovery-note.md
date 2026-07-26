@@ -88,9 +88,11 @@ An upstream edge with a canonical DataHub dataset URN but category `UNCLASSIFIED
 
 ## Error redaction
 
-The pluggable transport/factory and MCP snapshot acquisition execute inside one untrusted I/O boundary. Any exception escaping that boundary—including a forged `AgentDataHubDiscoveryError`—is replaced with the stable `AGENT_DATAHUB_DISCOVERY_FAILED` error and raised `from None`.
+Credential provenance validation is itself a redacted boundary. An exact read-settings object may be corrupted through unvalidated model-copy internals or bearer mutation; if inspecting that malformed bearer throws, the exception is replaced with `AGENT_DATAHUB_SETTINGS_INVALID` and raised `from None`. A false but well-formed provenance result remains the distinct fail-closed `AGENT_DATAHUB_READ_ROLE_REQUIRED` code.
 
-Snapshot serialization and revalidation form a second redacted boundary. This is necessary because `DataHubSnapshot.lineage_sample` intentionally contains `dict[str, Any]`; a malicious/non-JSON value can make Pydantic serialization itself fail before ordinary validation. Every serialization/revalidation exception is collapsed to `AGENT_DATAHUB_SNAPSHOT_INVALID` with exception chaining suppressed.
+The pluggable transport/factory and MCP snapshot acquisition execute inside a separate untrusted I/O boundary. Any exception escaping that boundary—including a forged `AgentDataHubDiscoveryError`—is replaced with the stable `AGENT_DATAHUB_DISCOVERY_FAILED` error and raised `from None`.
+
+Snapshot serialization and revalidation form another redacted boundary. This is necessary because `DataHubSnapshot.lineage_sample` intentionally contains `dict[str, Any]`; a malicious/non-JSON value can make Pydantic serialization itself fail before ordinary validation. Every serialization/revalidation exception is collapsed to `AGENT_DATAHUB_SNAPSHOT_INVALID` with exception chaining suppressed.
 
 After successful revalidation, security-owned fixed identity failures retain finite stable codes. Any other projection failure, including Pydantic validation caused by raw MCP-derived metadata, is collapsed to `AGENT_DATAHUB_PROJECTION_FAILED` with `from None`. Regression coverage renders complete propagated tracebacks and verifies planted credential/endpoint/metadata/type material is absent.
 
