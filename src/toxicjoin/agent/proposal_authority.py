@@ -15,6 +15,7 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
+from toxicjoin.agent.datahub_discovery import _AgentMetadataSecretGuard
 from toxicjoin.agent.models import AgentDataContext, AgentGoal, AgentProposal
 from toxicjoin.context.datahub import DataHubSnapshot, DataHubSnapshotContextResolver
 from toxicjoin.context.governance import GovernanceContextBinding
@@ -199,17 +200,23 @@ class DataHubAgentProposalAuthority:
         source_identity = None
         evidence_bundle = None
         evidence_validation = None
+        secret_guard = None
         source_invalid = False
         try:
             trusted_snapshot = DataHubSnapshot.model_validate(snapshot.model_dump(mode="json"))
             if not read_only_credential_provenance_valid(read_settings):
                 raise ValueError("read credential is not an unchanged factory issuance")
+            secret_guard = _AgentMetadataSecretGuard.from_runtime_settings(read_settings)
+            if not secret_guard.context_is_safe(trusted_snapshot):  # type: ignore[arg-type]
+                raise ValueError("DataHub snapshot reflects runtime launch material")
             source_identity = datahub_source_identity(read_settings)
             evidence_bundle = build_datahub_evidence_bundle(
                 trusted_snapshot,
                 read_settings,
                 max_age_seconds=datahub_max_age_seconds,
             )
+            if not secret_guard.context_is_safe(evidence_bundle):  # type: ignore[arg-type]
+                raise ValueError("DataHub evidence reflects runtime launch material")
             # Replay validation is content/provenance validation. Using the exact observation time
             # avoids coupling constructor validity to wall-clock scheduling; every evaluate() still
             # enforces current freshness at start and immediately before issuance.
@@ -231,13 +238,15 @@ class DataHubAgentProposalAuthority:
             source_identity = None
             evidence_bundle = None
             evidence_validation = None
+            secret_guard = None
             self = None  # type: ignore[assignment]
             raise AgentProposalAuthorityError("AGENT_AUTHORITY_SOURCE_INVALID") from None
 
-        # The live credential and caller-owned snapshot reference are no longer needed after the
-        # immutable evidence/source artifacts above have been constructed and replay-validated.
+        # The live credential, transient secret guard, and caller-owned snapshot reference are no
+        # longer needed after immutable evidence/source artifacts have been validated.
         read_settings = None  # type: ignore[assignment]
         snapshot = None  # type: ignore[assignment]
+        secret_guard = None
 
         try:
             initial_policy_config = PolicyConfig.model_validate(
