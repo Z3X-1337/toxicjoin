@@ -33,7 +33,11 @@ from toxicjoin.evidence.canonical import canonical_json_sha256
 from toxicjoin.integrations.datahub_authority import read_only_settings_from_env
 from toxicjoin.models import ColumnRef, SensitivityCategory
 from toxicjoin.policy import PolicyEngine, load_policy
-from toxicjoin.prospective.twin import DisclosureState, build_disclosure_state
+from toxicjoin.prospective.twin import (
+    DisclosureState,
+    build_disclosure_state,
+    compute_disclosure_state_sha256,
+)
 
 
 NOW = datetime(2026, 7, 27, 3, 30, tzinfo=timezone.utc)
@@ -151,13 +155,14 @@ def _artifacts(monkeypatch: pytest.MonkeyPatch):
 
 
 def _rebuild_state_for_evaluation(state: DisclosureState, evaluation) -> DisclosureState:
-    payload = state.model_dump(mode="python")
-    payload["governance_commitment_sha256"] = canonical_json_sha256(
-        evaluation.governance_binding.model_dump(mode="json")
+    provisional = state.model_copy(
+        update={
+            "governance_commitment_sha256": canonical_json_sha256(
+                evaluation.governance_binding.model_dump(mode="json")
+            ),
+            "state_sha256": "0" * 64,
+        }
     )
-    provisional = state.model_construct(**{**payload, "state_sha256": "0" * 64})
-    from toxicjoin.prospective.twin import compute_disclosure_state_sha256
-
     return DisclosureState.model_validate(
         provisional.model_copy(
             update={"state_sha256": compute_disclosure_state_sha256(provisional)}
@@ -252,6 +257,7 @@ def test_evaluation_subclass_is_rejected_before_virtual_serialization(
             return super().model_dump(*args, **kwargs)
 
     attacker = _MaliciousEvaluation.model_validate(evaluation.model_dump(mode="json"))
+    calls.clear()
 
     with pytest.raises(F6GovernanceClearanceError, match="F6_GOVERNANCE_INPUT_INVALID"):
         DataHubF6GovernanceAuthority(clock=lambda: NOW + timedelta(seconds=3)).clear(
