@@ -190,6 +190,8 @@ class DataHubAgentProposalAuthority:
         datahub_max_age_seconds: float = 300.0,
         dialect: str = "duckdb",
     ) -> None:
+        normalized_max_age_seconds = 0.0
+        freshness_invalid = False
         try:
             if type(datahub_max_age_seconds) not in (int, float):
                 raise TypeError("freshness lifetime must be numeric")
@@ -200,7 +202,11 @@ class DataHubAgentProposalAuthority:
                 or normalized_max_age_seconds > 3600
             ):
                 raise ValueError("freshness lifetime is outside the allowed range")
-        except Exception:
+        except Exception as error:
+            _detach_exception(error)
+            freshness_invalid = True
+
+        if freshness_invalid:
             read_settings = None  # type: ignore[assignment]
             snapshot = None  # type: ignore[assignment]
             self = None  # type: ignore[assignment]
