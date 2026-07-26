@@ -117,6 +117,8 @@ class TrustedAgentProposalEvaluation(StrictModel):
             raise ValueError("trusted Agent governance commitment mismatch")
         if self.governance_binding.snapshot_sha256 != self.source_snapshot_sha256:
             raise ValueError("trusted Agent governance snapshot mismatch")
+        if self.evidence_bundle.snapshot_sha256 != self.source_snapshot_sha256:
+            raise ValueError("trusted Agent evidence snapshot mismatch")
         _require_evidence_validation_alignment(
             self.evidence_bundle,
             self.evidence_validation,
@@ -176,14 +178,28 @@ class DataHubAgentProposalAuthority:
         dialect: str = "duckdb",
     ) -> None:
         if datahub_max_age_seconds <= 0 or datahub_max_age_seconds > 3600:
+            read_settings = None  # type: ignore[assignment]
+            snapshot = None  # type: ignore[assignment]
+            self = None  # type: ignore[assignment]
             raise AgentProposalAuthorityError("AGENT_AUTHORITY_FRESHNESS_INVALID")
         try:
             normalized_dialect = _normalized_nonempty_text(dialect)
         except Exception:
+            read_settings = None  # type: ignore[assignment]
+            snapshot = None  # type: ignore[assignment]
+            self = None  # type: ignore[assignment]
             raise AgentProposalAuthorityError("AGENT_AUTHORITY_DIALECT_INVALID") from None
         if normalized_dialect != "duckdb":
+            read_settings = None  # type: ignore[assignment]
+            snapshot = None  # type: ignore[assignment]
+            self = None  # type: ignore[assignment]
             raise AgentProposalAuthorityError("AGENT_AUTHORITY_DIALECT_INVALID")
 
+        trusted_snapshot = None
+        source_identity = None
+        evidence_bundle = None
+        evidence_validation = None
+        source_invalid = False
         try:
             trusted_snapshot = DataHubSnapshot.model_validate(snapshot.model_dump(mode="json"))
             if not read_only_credential_provenance_valid(read_settings):
@@ -206,7 +222,22 @@ class DataHubAgentProposalAuthority:
             )
             _require_evidence_validation_alignment(evidence_bundle, evidence_validation)
         except Exception:
+            source_invalid = True
+
+        if source_invalid:
+            read_settings = None  # type: ignore[assignment]
+            snapshot = None  # type: ignore[assignment]
+            trusted_snapshot = None
+            source_identity = None
+            evidence_bundle = None
+            evidence_validation = None
+            self = None  # type: ignore[assignment]
             raise AgentProposalAuthorityError("AGENT_AUTHORITY_SOURCE_INVALID") from None
+
+        # The live credential and caller-owned snapshot reference are no longer needed after the
+        # immutable evidence/source artifacts above have been constructed and replay-validated.
+        read_settings = None  # type: ignore[assignment]
+        snapshot = None  # type: ignore[assignment]
 
         try:
             initial_policy_config = PolicyConfig.model_validate(
