@@ -21,10 +21,10 @@ from toxicjoin.evidence import (
     EvidencePolicy,
     EvidenceResolution,
     EvidenceTrustState,
-    datahub_governance_evidence_policy,
     resolve_evidence,
 )
 from toxicjoin.evidence.canonical import canonical_json_sha256
+from toxicjoin.evidence.policy import datahub_governance_evidence_policy
 from toxicjoin.models import ColumnContext, SensitivityCategory, StrictModel
 
 _HASH_PATTERN = r"^[0-9a-f]{64}$"
@@ -94,6 +94,10 @@ class GovernanceTrustBinding(StrictModel):
     def validate_binding(self) -> "GovernanceTrustBinding":
         if self.issued_at >= self.evidence_expires_at:
             raise ValueError("governance trust binding cannot be issued from expired evidence")
+        if self.evidence_policy != datahub_governance_evidence_policy():
+            raise ValueError(
+                "governance trust binding must use package-owned Evidence Policy"
+            )
         if self.evidence_policy_sha256 != canonical_json_sha256(
             self.evidence_policy.model_dump(mode="json")
         ):
@@ -169,9 +173,13 @@ class DataHubGovernanceTrustAuthority:
             raise GovernanceTrustBindingError("GOVERNANCE_TRUST_EVIDENCE_FROM_FUTURE")
         if current >= bundle.expires_at:
             raise GovernanceTrustBindingError("GOVERNANCE_TRUST_EVIDENCE_STALE")
+        if current < trusted.evidence_validation.validated_at:
+            raise GovernanceTrustBindingError("GOVERNANCE_TRUST_VALIDATION_FROM_FUTURE")
 
         if trusted.resolution.failures:
             raise GovernanceTrustBindingError("GOVERNANCE_TRUST_GROUNDING_INCOMPLETE")
+        if trusted.governance_binding.source != "datahub-mcp":
+            raise GovernanceTrustBindingError("GOVERNANCE_TRUST_SOURCE_MISMATCH")
         if (
             trusted.governance_binding.catalog_version != bundle.catalog_version
             or trusted.governance_binding.observed_at != bundle.observed_at
