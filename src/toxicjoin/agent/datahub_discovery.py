@@ -104,7 +104,7 @@ _SECRET_TEXT_MARKERS = (
 _AUTHORIZATION_TEXT_MARKERS = ("authorization=", "authorization:")
 _RECOGNIZED_AUTHORIZATION_SCHEMES = ("bearer", "basic")
 _SECRET_VALUE_DELIMITERS = frozenset(";&,\t\r\n ")
-_AUTHORIZATION_VALUE_DELIMITERS = frozenset(";&,\t\r\n")
+_AUTHORIZATION_VALUE_DELIMITERS = frozenset(";&\t\r\n")
 _MIN_CONFIGURATION_SUBSTRING_LENGTH = 8
 _MAX_VARIANT_SOURCE_BYTES = 4096
 _STANDARD_BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -711,13 +711,59 @@ def _register_authorization_value(
                 )
             return
 
-    # Unknown/raw Authorization syntax is still launch credential material. Protect the bounded
-    # value itself without inventing a scheme parser that could silently discard material.
+    # Unknown/raw Authorization syntax is still launch credential material. Protect the complete
+    # value and every syntactically extractable auth-param RHS. This covers parameterized schemes
+    # such as Digest without promoting the scheme word itself to a standalone secret.
     _register_strong_guard_views(
         values,
         strong_secret_values,
         value,
     )
+    _register_authorization_parameter_values(
+        values,
+        strong_secret_values,
+        value,
+    )
+
+
+def _register_authorization_parameter_values(
+    values: set[str],
+    strong_secret_values: set[str],
+    authorization_value: str,
+) -> None:
+    """Protect every assignment value in a parameterized Authorization scheme.
+
+    The scan starts after the scheme token and advances past each extracted value. Quoted values
+    remain intact, including commas/semicolons inside the quotes, while unquoted values terminate
+    at the normal secret-token delimiters. This is intentionally conservative: every auth-param RHS
+    is launch authentication material and is protected regardless of the parameter name.
+    """
+
+    value = _exact_guard_text(authorization_value).strip()
+    scheme_end = value.find(" ")
+    if scheme_end < 0:
+        return
+
+    parameters = value[scheme_end + 1 :].strip()
+    search_from = 0
+    while search_from < len(parameters):
+        equals_index = parameters.find("=", search_from)
+        if equals_index < 0:
+            break
+
+        parameter_value, next_index = _extract_marked_value(
+            parameters,
+            equals_index + 1,
+            delimiters=_SECRET_VALUE_DELIMITERS,
+        )
+        if parameter_value:
+            _register_strong_guard_views(
+                values,
+                strong_secret_values,
+                parameter_value,
+            )
+
+        search_from = max(equals_index + 1, next_index)
 
 
 def _extract_authorization_value(text: str, value_start: int) -> tuple[str, int]:
