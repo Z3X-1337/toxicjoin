@@ -4,6 +4,7 @@ import pytest
 
 from toxicjoin.agent.datahub_discovery import (
     _AgentMetadataSecretGuard,
+    _add_authorization_guard_values,
     _add_secret_marked_guard_values,
 )
 from toxicjoin.agent.models import (
@@ -253,6 +254,54 @@ def test_authorization_bearer_protects_credential_not_scheme_or_following_arg(
     assert guard.context_is_safe(_context_with_tag("classification:prefix-abc-suffix")) is False
     assert guard.context_is_safe(_context_with_tag("Bearer")) is True
     assert guard.context_is_safe(_context_with_tag("harmless-next")) is True
+
+
+def test_authorization_scanner_preserves_quoted_bearer_delimiters() -> None:
+    values: set[str] = set()
+    strong_secret_values: set[str] = set()
+    _add_authorization_guard_values(
+        values,
+        strong_secret_values,
+        'Authorization: Bearer "abc; def";mode=prod',
+    )
+
+    assert "abc; def" in strong_secret_values
+    assert "abc" not in strong_secret_values
+    assert "bearer" not in {value.lower() for value in strong_secret_values}
+
+
+def test_authorization_scanner_stops_unquoted_bearer_token_at_whitespace() -> None:
+    values: set[str] = set()
+    strong_secret_values: set[str] = set()
+    _add_authorization_guard_values(
+        values,
+        strong_secret_values,
+        "Authorization: Bearer abc extra",
+    )
+
+    assert "abc" in strong_secret_values
+    assert "abc extra" not in strong_secret_values
+    assert "extra" not in strong_secret_values
+    assert "bearer" not in {value.lower() for value in strong_secret_values}
+
+
+def test_authorization_bearer_quoted_credential_is_integrated_without_prefix_overreach(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(
+        monkeypatch,
+        args=(
+            "mcp-server-datahub --header 'Authorization: Bearer \"abc; def\";mode=prod'"
+        ),
+    )
+    guard = _AgentMetadataSecretGuard.from_runtime_settings(settings)
+
+    assert (
+        guard.context_is_safe(_context_with_tag("classification:prefix-abc; def-suffix"))
+        is False
+    )
+    assert guard.context_is_safe(_context_with_tag("classification:prefix-abc-suffix")) is True
+    assert guard.context_is_safe(_context_with_tag("Bearer")) is True
 
 
 def test_authorization_basic_protects_credential_not_scheme(
