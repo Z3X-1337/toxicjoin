@@ -10,6 +10,7 @@ from toxicjoin.agent import (
     AgentProposalAuthorityError,
     DataHubAgentProposalAuthority,
     GovernedAgent,
+    TrustedAgentProposalEvaluation,
     build_agent_data_context_from_snapshot,
     build_agent_goal,
 )
@@ -308,3 +309,41 @@ def test_authority_rejects_noncanonical_trusted_purpose(
             authorized_task_purpose=trusted_purpose,
             subject_key=ColumnRef(dataset="patients", field_path="customer_id"),
         )
+
+
+def test_issued_policy_decision_evidence_is_deeply_immutable(monkeypatch) -> None:
+    snapshot = _snapshot()
+    goal, context, proposal = _request(snapshot)
+    authority = _authority(
+        monkeypatch,
+        snapshot,
+        clock=_MutableClock(NOW + timedelta(seconds=1)),
+    )
+    evaluation = _evaluate(authority, goal=goal, context=context, proposal=proposal)
+    original_policy_hash = evaluation.policy_decision_sha256
+    original_evaluation_hash = evaluation.evaluation_sha256
+
+    with pytest.raises(TypeError):
+        evaluation.policy_decision.evidence["tampered"] = True
+
+    categories = evaluation.policy_decision.evidence["projected_categories"]
+    with pytest.raises(TypeError):
+        categories[0] = "tampered"
+
+    exposures = evaluation.policy_decision.evidence["projected_exposures"]
+    assert exposures
+    with pytest.raises(TypeError):
+        exposures[0]["kind"] = "tampered"
+
+    assert evaluation.policy_decision_sha256 == original_policy_hash
+    assert evaluation.evaluation_sha256 == original_evaluation_hash
+
+    round_tripped = TrustedAgentProposalEvaluation.model_validate(
+        evaluation.model_dump(mode="json")
+    )
+    with pytest.raises(TypeError):
+        round_tripped.policy_decision.evidence["tampered"] = True
+    with pytest.raises(TypeError):
+        round_tripped.policy_decision.evidence["projected_categories"][0] = "tampered"
+    with pytest.raises(TypeError):
+        round_tripped.policy_decision.evidence["projected_exposures"][0]["kind"] = "tampered"
