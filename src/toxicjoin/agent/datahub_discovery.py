@@ -65,6 +65,7 @@ _PROXY_ENV_NAMES = frozenset(
         "https_proxy",
     }
 )
+_NO_PROXY_ENV_NAMES = frozenset({"NO_PROXY", "no_proxy"})
 _SECRET_CLI_HINTS = (
     "token",
     "secret",
@@ -103,6 +104,8 @@ _SECRET_TEXT_MARKERS = (
 )
 _MIN_CONFIGURATION_SUBSTRING_LENGTH = 8
 _MAX_VARIANT_SOURCE_BYTES = 4096
+_STANDARD_BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+_URLSAFE_BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 
 
 class AgentDataHubDiscoveryError(RuntimeError):
@@ -216,6 +219,12 @@ class _AgentMetadataSecretGuard:
                     strong=True,
                 )
                 _add_url_guard_values(
+                    sensitive_values,
+                    value,
+                    strong_secret_values=strong_secret_values,
+                )
+            elif name in _NO_PROXY_ENV_NAMES:
+                _add_no_proxy_guard_values(
                     sensitive_values,
                     value,
                     strong_secret_values=strong_secret_values,
@@ -579,30 +588,66 @@ def _add_cli_guard_values(
         if not handled_assignment and _cli_name_is_sensitive(argument.rstrip("=")):
             pending_secret_value = True
 
-        lowered = argument.lower()
-        for marker in _SECRET_TEXT_MARKERS:
-            index = lowered.find(marker)
-            if index < 0:
-                continue
-            value = argument[index + len(marker) :].strip()
-            if value:
-                _add_guard_value(
-                    values,
-                    value,
-                    strong_secret_values=strong_secret_values,
-                    strong=True,
-                )
-                _add_url_guard_values(
-                    values,
-                    value,
-                    strong_secret_values=strong_secret_values,
-                )
-            break
+        _add_secret_marked_guard_values(
+            values,
+            strong_secret_values,
+            argument,
+        )
 
 
 def _cli_name_is_sensitive(value: str) -> bool:
     lowered = value.lower()
     return any(hint in lowered for hint in _SECRET_CLI_HINTS)
+
+
+def _add_secret_marked_guard_values(
+    values: set[str],
+    strong_secret_values: set[str],
+    value: str,
+) -> None:
+    text = _exact_guard_text(value)
+    lowered = text.lower()
+    for marker in _SECRET_TEXT_MARKERS:
+        index = lowered.find(marker)
+        if index < 0:
+            continue
+        secret_value = text[index + len(marker) :].strip()
+        if secret_value:
+            _add_guard_value(
+                values,
+                secret_value,
+                strong_secret_values=strong_secret_values,
+                strong=True,
+            )
+            _add_url_guard_values(
+                values,
+                secret_value,
+                strong_secret_values=strong_secret_values,
+            )
+        return
+
+
+def _add_no_proxy_guard_values(
+    values: set[str],
+    value: str,
+    *,
+    strong_secret_values: set[str],
+) -> None:
+    text = _exact_guard_text(value).strip()
+    if not text:
+        return
+
+    _add_guard_value(values, text)
+    for raw_entry in text.split(","):
+        entry = raw_entry.strip()
+        if not entry:
+            continue
+        _add_guard_value(values, entry)
+        _add_url_guard_values(
+            values,
+            entry,
+            strong_secret_values=strong_secret_values,
+        )
 
 
 def _add_url_guard_values(
@@ -646,8 +691,14 @@ def _add_url_guard_values(
             )
 
     for segment in decoded_path.split("/"):
-        if segment:
-            _add_guard_value(values, segment)
+        if not segment:
+            continue
+        _add_guard_value(values, segment)
+        _add_secret_marked_guard_values(
+            values,
+            strong_secret_values,
+            segment,
+        )
 
     _add_url_parameter_guard_values(
         values,
@@ -730,19 +781,52 @@ def _secret_text_variants(value: str) -> frozenset[str]:
             }
         )
 
-        standard_b64 = base64.b64encode(encoded).decode("ascii")
-        urlsafe_b64 = base64.urlsafe_b64encode(encoded).decode("ascii")
+        variants.update(_base64_equivalent_variants(encoded, urlsafe=False))
+        variants.update(_base64_equivalent_variants(encoded, urlsafe=True))
         variants.update(
             {
-                standard_b64,
-                standard_b64.rstrip("="),
-                urlsafe_b64,
-                urlsafe_b64.rstrip("="),
                 encoded.hex(),
                 encoded.hex().upper(),
             }
         )
     return frozenset(item for item in variants if item)
+
+
+def _base64_equivalent_variants(encoded: bytes, *, urlsafe: bool) -> frozenset[str]:
+    """Return Base64 spellings that decode to ``encoded``, including unused pad-bit variants."""
+
+    if not encoded:
+        return frozenset()
+
+    alphabet = _URLSAFE_BASE64_ALPHABET if urlsafe else _STANDARD_BASE64_ALPHABET
+    canonical = (
+        base64.urlsafe_b64encode(encoded) if urlsafe else base64.b64encode(encoded)
+    ).decode("ascii")
+    variants = {canonical, canonical.rstrip("=")}
+
+    remainder = len(encoded) % 3
+    if remainder == 0:
+        return frozenset(variants)
+
+    if remainder == 1:
+        data_index = len(canonical) - 3
+        meaningful_mask = 0b110000
+        unused_range = range(16)
+    else:
+        data_index = len(canonical) - 2
+        meaningful_mask = 0b111100
+        unused_range = range(4)
+
+    canonical_index = alphabet.index(canonical[data_index])
+    meaningful_bits = canonical_index & meaningful_mask
+    prefix = canonical[:data_index]
+    suffix = canonical[data_index + 1 :]
+    for unused_bits in unused_range:
+        variant = prefix + alphabet[meaningful_bits | unused_bits] + suffix
+        variants.add(variant)
+        variants.add(variant.rstrip("="))
+
+    return frozenset(variants)
 
 
 def _lower_percent_escapes(value: str) -> str:
