@@ -9,6 +9,7 @@ from toxicjoin.agent import (
     GovernedAgent,
     build_agent_data_context_from_snapshot,
     build_agent_goal,
+    compute_trusted_agent_proposal_evaluation_sha256,
 )
 from toxicjoin.agent.governance_trust import (
     DataHubGovernanceTrustAuthority,
@@ -17,7 +18,15 @@ from toxicjoin.agent.governance_trust import (
 )
 from toxicjoin.context.datahub import DataHubSnapshot
 from toxicjoin.context.fixture import FixtureCatalog, FixtureDataset, FixtureField
-from toxicjoin.evidence import EvidenceTrustState
+from toxicjoin.evidence import (
+    DataHubDerivationValidation,
+    DataHubEvidenceBundle,
+    DerivationKind,
+    EvidenceTrustState,
+    build_evidence_claim,
+    compute_datahub_derivation_validation_sha256,
+    compute_datahub_evidence_root,
+)
 from toxicjoin.integrations.datahub_authority import (
     ReadOnlyDataHubMcpSettings,
     read_only_settings_from_env,
@@ -55,17 +64,7 @@ class _MutableClock:
         return self.current
 
 
-def _snapshot(*, incomplete: bool = False) -> DataHubSnapshot:
-    diagnosis_category = (
-        SensitivityCategory.UNCLASSIFIED
-        if incomplete
-        else SensitivityCategory.SENSITIVE_ATTRIBUTE
-    )
-    diagnosis_lineage_category = (
-        SensitivityCategory.UNCLASSIFIED
-        if incomplete
-        else SensitivityCategory.STABLE_PSEUDONYM
-    )
+def _snapshot() -> DataHubSnapshot:
     return DataHubSnapshot(
         catalog=FixtureCatalog(
             version="datahub-mcp:day13-governance-trust-v1",
@@ -89,7 +88,7 @@ def _snapshot(*, incomplete: bool = False) -> DataHubSnapshot:
                             tags=("stable-customer-identifier",),
                         ),
                         "diagnosis": FixtureField(
-                            category=diagnosis_category,
+                            category=SensitivityCategory.SENSITIVE_ATTRIBUTE,
                             tags=("toxicjoin-sensitive-attribute",),
                             lineage_sources=(
                                 LineageSource(
@@ -97,7 +96,7 @@ def _snapshot(*, incomplete: bool = False) -> DataHubSnapshot:
                                         dataset="customers",
                                         field_path="customer_id",
                                     ),
-                                    category=diagnosis_lineage_category,
+                                    category=SensitivityCategory.STABLE_PSEUDONYM,
                                     datahub_urn=CUSTOMERS_URN,
                                 ),
                             ),
@@ -123,8 +122,8 @@ def _read_settings(monkeypatch: pytest.MonkeyPatch) -> ReadOnlyDataHubMcpSetting
     return read_only_settings_from_env()
 
 
-def _evaluation(monkeypatch: pytest.MonkeyPatch, *, incomplete: bool = False):
-    snapshot = _snapshot(incomplete=incomplete)
+def _evaluation(monkeypatch: pytest.MonkeyPatch):
+    snapshot = _snapshot()
     context = build_agent_data_context_from_snapshot(snapshot)
     goal = build_agent_goal(GOAL_TEXT)
     proposal = GovernedAgent(_Planner()).propose(goal=goal, context=context)
@@ -141,6 +140,90 @@ def _evaluation(monkeypatch: pytest.MonkeyPatch, *, incomplete: bool = False):
         planning_context=context,
         authorized_task_purpose=PURPOSE,
         subject_key=ColumnRef(dataset="patients", field_path="customer_id"),
+    )
+
+
+def _with_incomplete_diagnosis_classification(evaluation):
+    bundle = evaluation.evidence_bundle
+    subject = f"{PATIENTS_URN}#diagnosis"
+    original = next(
+        claim
+        for claim in bundle.claims
+        if claim.subject == subject
+        and claim.predicate == "toxicjoin.sensitivity_category"
+    )
+    incomplete = build_evidence_claim(
+        subject=original.subject,
+        predicate=original.predicate,
+        value=original.value,
+        source=original.source,
+        derivation=original.derivation,
+        source_identity=original.source_identity,
+        observed_at=original.observed_at,
+        expires_at=original.expires_at,
+        effective_from=original.effective_from,
+        effective_until=original.effective_until,
+        complete=False,
+        supporting_claim_ids=original.supporting_claim_ids,
+    )
+    claims = tuple(
+        sorted(
+            (incomplete if claim.claim_id == original.claim_id else claim for claim in bundle.claims),
+            key=lambda claim: claim.claim_id,
+        )
+    )
+    provisional_bundle = bundle.model_copy(
+        update={"claims": claims, "evidence_root_sha256": "0" * 64}
+    )
+    rebuilt_bundle = DataHubEvidenceBundle.model_validate(
+        provisional_bundle.model_copy(
+            update={"evidence_root_sha256": compute_datahub_evidence_root(provisional_bundle)}
+        ).model_dump(mode="json")
+    )
+
+    validation = evaluation.evidence_validation
+    validation_payload = validation.model_dump(mode="python")
+    validation_payload.update(
+        {
+            "evidence_root_sha256": rebuilt_bundle.evidence_root_sha256,
+            "observed_claim_ids": tuple(
+                sorted(
+                    claim.claim_id
+                    for claim in rebuilt_bundle.claims
+                    if claim.derivation == DerivationKind.RUNTIME_OBSERVED
+                )
+            ),
+            "mapped_claim_ids": tuple(
+                sorted(
+                    claim.claim_id
+                    for claim in rebuilt_bundle.claims
+                    if claim.derivation == DerivationKind.EXPLICIT_MAPPING
+                )
+            ),
+            "validation_sha256": "0" * 64,
+        }
+    )
+    provisional_validation = DataHubDerivationValidation.model_construct(**validation_payload)
+    validation_payload["validation_sha256"] = compute_datahub_derivation_validation_sha256(
+        provisional_validation
+    )
+    rebuilt_validation = DataHubDerivationValidation.model_validate(validation_payload)
+
+    provisional_evaluation = evaluation.model_copy(
+        update={
+            "evidence_bundle": rebuilt_bundle,
+            "evidence_validation": rebuilt_validation,
+            "evaluation_sha256": "0" * 64,
+        }
+    )
+    return type(evaluation).model_validate(
+        provisional_evaluation.model_copy(
+            update={
+                "evaluation_sha256": compute_trusted_agent_proposal_evaluation_sha256(
+                    provisional_evaluation
+                )
+            }
+        ).model_dump(mode="json")
     )
 
 
@@ -203,7 +286,7 @@ def test_stale_bundle_cannot_create_governance_trust(monkeypatch) -> None:
         authority.bind(evaluation)
 
 
-def test_expiry_during_binding_fails_closed(monkeypatch) -> None:
+def test_expiry_before_artifact_construction_fails_closed(monkeypatch) -> None:
     evaluation = _evaluation(monkeypatch)
     samples = iter(
         (
@@ -220,8 +303,26 @@ def test_expiry_during_binding_fails_closed(monkeypatch) -> None:
         authority.bind(evaluation)
 
 
+def test_expiry_after_artifact_construction_fails_closed(monkeypatch) -> None:
+    evaluation = _evaluation(monkeypatch)
+    samples = iter(
+        (
+            NOW + timedelta(seconds=299),
+            NOW + timedelta(seconds=299, milliseconds=500),
+            NOW + timedelta(seconds=301),
+        )
+    )
+    authority = DataHubGovernanceTrustAuthority(clock=lambda: next(samples))
+
+    with pytest.raises(
+        GovernanceTrustBindingError,
+        match="GOVERNANCE_TRUST_STALE_AT_ISSUE",
+    ):
+        authority.bind(evaluation)
+
+
 def test_incomplete_classification_cannot_create_governance_trust(monkeypatch) -> None:
-    evaluation = _evaluation(monkeypatch, incomplete=True)
+    evaluation = _with_incomplete_diagnosis_classification(_evaluation(monkeypatch))
     authority = DataHubGovernanceTrustAuthority(
         clock=lambda: NOW + timedelta(seconds=2)
     )
