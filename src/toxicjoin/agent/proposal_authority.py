@@ -9,6 +9,7 @@ proof-bound execution chain.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -54,6 +55,15 @@ class AgentProposalAuthorityError(RuntimeError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+def _detach_exception(error: BaseException) -> None:
+    """Remove internal exception chains/tracebacks before crossing the public authority boundary."""
+
+    error.__traceback__ = None
+    error.__context__ = None
+    error.__cause__ = None
+    error.__suppress_context__ = True
 
 
 class TrustedAgentProposalEvaluation(StrictModel):
@@ -159,9 +169,9 @@ class DataHubAgentProposalAuthority:
     authority. The Agent's planner-authored ``task_purpose`` is never accepted as an authorization
     fact and must exactly match that trusted scope before PolicyEngine evaluation can occur.
 
-    Freshness time is sampled at evaluation start and again immediately before artifact issuance.
-    Retaining an authority object therefore cannot extend DataHub evidence life or issue an artifact
-    that crossed the governance/evidence expiry boundary while work was in progress.
+    Freshness time is sampled at evaluation start and again after the complete artifact has been
+    constructed. Clock samples are monotonic across the lifetime of the authority, so a rollback
+    between evaluations fails closed instead of extending the effective evidence lifetime.
 
     Evidence replay validation proves derivation/snapshot/source/freshness alignment only. It does
     not resolve authorization-facing EvidenceTrustState. This intake therefore cannot authorize
@@ -267,10 +277,46 @@ class DataHubAgentProposalAuthority:
         self._policy_config_sha256 = policy_config_sha256
         self._policy_version = policy_version
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._clock_lock = threading.Lock()
+        self._last_clock_sample: datetime | None = None
         self._datahub_max_age_seconds = float(datahub_max_age_seconds)
         self._dialect = normalized_dialect
 
     def evaluate(
+        self,
+        *,
+        proposal: AgentProposal,
+        goal: AgentGoal,
+        planning_context: AgentDataContext,
+        authorized_task_purpose: str,
+        subject_key: ColumnRef,
+    ) -> TrustedAgentProposalEvaluation:
+        """Evaluate one proposal and expose only a stable, sanitized error boundary."""
+
+        stable_code = "AGENT_AUTHORITY_INTERNAL_FAILED"
+        try:
+            return self._evaluate_impl(
+                proposal=proposal,
+                goal=goal,
+                planning_context=planning_context,
+                authorized_task_purpose=authorized_task_purpose,
+                subject_key=subject_key,
+            )
+        except AgentProposalAuthorityError as error:
+            stable_code = error.code
+            _detach_exception(error)
+        except Exception as error:
+            _detach_exception(error)
+
+        proposal = None  # type: ignore[assignment]
+        goal = None  # type: ignore[assignment]
+        planning_context = None  # type: ignore[assignment]
+        authorized_task_purpose = None  # type: ignore[assignment]
+        subject_key = None  # type: ignore[assignment]
+        self = None  # type: ignore[assignment]
+        raise AgentProposalAuthorityError(stable_code) from None
+
+    def _evaluate_impl(
         self,
         *,
         proposal: AgentProposal,
@@ -370,19 +416,6 @@ class DataHubAgentProposalAuthority:
         except Exception:
             raise AgentProposalAuthorityError("AGENT_AUTHORITY_POLICY_FAILED") from None
 
-        # The evaluation may have crossed a short freshness boundary. Re-sample immediately before
-        # issuance and fail closed rather than returning an already-stale security-owned artifact.
-        issued_at = self._sample_clock()
-        if issued_at < current:
-            raise AgentProposalAuthorityError("AGENT_AUTHORITY_TIME_ROLLBACK")
-        try:
-            governance_binding.assert_fresh(issued_at)
-            self._require_fresh_at(issued_at)
-        except AgentProposalAuthorityError:
-            raise
-        except Exception:
-            raise AgentProposalAuthorityError("AGENT_AUTHORITY_STALE_AT_ISSUE") from None
-
         payload = {
             "proposal_sha256": trusted_proposal.proposal_sha256,
             "goal_sha256": trusted_goal.goal_sha256,
@@ -418,19 +451,37 @@ class DataHubAgentProposalAuthority:
             **payload,
             evaluation_sha256="0" * 64,
         )
-        return TrustedAgentProposalEvaluation(
+        result = TrustedAgentProposalEvaluation(
             **payload,
             evaluation_sha256=compute_trusted_agent_proposal_evaluation_sha256(provisional),
         )
 
-    def _sample_clock(self) -> datetime:
+        # The expensive full-model validation/hash above may itself cross the evidence expiry
+        # boundary. Re-sample after construction and fail closed immediately before returning.
+        returned_at = self._sample_clock()
         try:
-            current = self._clock()
-            if current.tzinfo is None:
-                raise ValueError("authority clock must be timezone-aware")
-            return current.astimezone(timezone.utc)
+            governance_binding.assert_fresh(returned_at)
+            self._require_fresh_at(returned_at)
+        except AgentProposalAuthorityError:
+            raise
         except Exception:
-            raise AgentProposalAuthorityError("AGENT_AUTHORITY_TIME_INVALID") from None
+            raise AgentProposalAuthorityError("AGENT_AUTHORITY_STALE_AT_ISSUE") from None
+        return result
+
+    def _sample_clock(self) -> datetime:
+        with self._clock_lock:
+            try:
+                current = self._clock()
+                if current.tzinfo is None:
+                    raise ValueError("authority clock must be timezone-aware")
+                normalized = current.astimezone(timezone.utc)
+            except Exception:
+                raise AgentProposalAuthorityError("AGENT_AUTHORITY_TIME_INVALID") from None
+
+            if self._last_clock_sample is not None and normalized < self._last_clock_sample:
+                raise AgentProposalAuthorityError("AGENT_AUTHORITY_TIME_ROLLBACK")
+            self._last_clock_sample = normalized
+            return normalized
 
     def _require_fresh_at(self, current: datetime) -> None:
         bundle = self._evidence_bundle
