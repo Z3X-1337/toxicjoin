@@ -101,7 +101,7 @@ _SECRET_TEXT_MARKERS = (
     "authorization=",
     "authorization:",
 )
-_MIN_SECRET_FRAGMENT_LENGTH = 8
+_MIN_CONFIGURATION_SUBSTRING_LENGTH = 8
 _MAX_VARIANT_SOURCE_BYTES = 4096
 
 
@@ -126,18 +126,35 @@ class _AgentMetadataSecretGuard:
     credentials or secret-bearing configuration must not be reflected directly, embedded in a
     larger planner-visible string, or returned through common reversible encodings.
 
+    Strong credential values are substring-protected regardless of length. Protected configuration
+    values are always exact-match protected and become substring-protected once long enough to
+    avoid turning ordinary short endpoint components into broad false-positive patterns.
+
     The guard exists only for one ``discover()`` call and is never attached to Agent artifacts.
     """
 
     __slots__ = ("_exact_variants", "_substring_variants")
 
-    def __init__(self, sensitive_values: set[str]) -> None:
+    def __init__(
+        self,
+        sensitive_values: set[str],
+        *,
+        strong_secret_values: set[str],
+    ) -> None:
         exact_variants: set[str] = set()
         substring_variants: set[str] = set()
+        strong_variants: set[str] = set()
+
+        for value in strong_secret_values:
+            strong_variants.update(_secret_text_variants(value))
+
         for value in sensitive_values:
             for variant in _secret_text_variants(value):
                 exact_variants.add(variant)
-                if len(variant) >= _MIN_SECRET_FRAGMENT_LENGTH:
+                if (
+                    variant in strong_variants
+                    or len(variant) >= _MIN_CONFIGURATION_SUBSTRING_LENGTH
+                ):
                     substring_variants.add(variant)
 
         self._exact_variants = frozenset(exact_variants)
@@ -151,27 +168,54 @@ class _AgentMetadataSecretGuard:
         settings: ReadOnlyDataHubMcpSettings,
     ) -> "_AgentMetadataSecretGuard":
         sensitive_values: set[str] = set()
+        strong_secret_values: set[str] = set()
 
         token = settings.gms_token
         if type(token) is not SecretStr:
             raise TypeError("DataHub bearer wrapper is malformed")
-        _add_guard_value(sensitive_values, token.get_secret_value())
-        _add_url_guard_values(sensitive_values, settings.gms_url)
+        _add_guard_value(
+            sensitive_values,
+            token.get_secret_value(),
+            strong_secret_values=strong_secret_values,
+            strong=True,
+        )
+        _add_url_guard_values(
+            sensitive_values,
+            settings.gms_url,
+            strong_secret_values=strong_secret_values,
+        )
 
         child_environment = settings.child_environment()
         for name, value in child_environment.items():
             if _environment_value_is_sensitive(name):
-                _add_guard_value(sensitive_values, value)
-                _add_url_guard_values(sensitive_values, value)
+                _add_guard_value(
+                    sensitive_values,
+                    value,
+                    strong_secret_values=strong_secret_values,
+                    strong=True,
+                )
+                _add_url_guard_values(
+                    sensitive_values,
+                    value,
+                    strong_secret_values=strong_secret_values,
+                )
             elif name in _PROXY_ENV_NAMES:
                 _add_guard_value(sensitive_values, value)
-                _add_url_guard_values(sensitive_values, value)
+                _add_url_guard_values(
+                    sensitive_values,
+                    value,
+                    strong_secret_values=strong_secret_values,
+                )
 
         _add_cli_guard_values(
             sensitive_values,
+            strong_secret_values,
             (settings.command, *settings.args),
         )
-        return cls(sensitive_values)
+        return cls(
+            sensitive_values,
+            strong_secret_values=strong_secret_values,
+        )
 
     def assert_context_safe(self, context: AgentDataContext) -> None:
         try:
@@ -356,13 +400,26 @@ def _environment_value_is_sensitive(name: str) -> bool:
     return any(hint in normalized for hint in _SECRET_ENV_HINTS)
 
 
-def _add_cli_guard_values(values: set[str], args: tuple[str, ...]) -> None:
+def _add_cli_guard_values(
+    values: set[str],
+    strong_secret_values: set[str],
+    args: tuple[str, ...],
+) -> None:
     pending_secret_value = False
     for raw_argument in args:
         argument = _exact_guard_text(raw_argument)
         if pending_secret_value:
-            _add_guard_value(values, argument)
-            _add_url_guard_values(values, argument)
+            _add_guard_value(
+                values,
+                argument,
+                strong_secret_values=strong_secret_values,
+                strong=True,
+            )
+            _add_url_guard_values(
+                values,
+                argument,
+                strong_secret_values=strong_secret_values,
+            )
             pending_secret_value = False
             continue
 
@@ -370,12 +427,20 @@ def _add_cli_guard_values(values: set[str], args: tuple[str, ...]) -> None:
         if "=" in argument:
             name, value = argument.split("=", 1)
             if _cli_name_is_sensitive(name):
-                _add_guard_value(values, value)
-                _add_url_guard_values(values, value)
+                _add_guard_value(
+                    values,
+                    value,
+                    strong_secret_values=strong_secret_values,
+                    strong=True,
+                )
+                _add_url_guard_values(
+                    values,
+                    value,
+                    strong_secret_values=strong_secret_values,
+                )
                 handled_assignment = True
 
         if not handled_assignment and _cli_name_is_sensitive(argument.rstrip("=")):
-            _add_guard_value(values, argument)
             pending_secret_value = True
 
         lowered = argument.lower()
@@ -385,8 +450,17 @@ def _add_cli_guard_values(values: set[str], args: tuple[str, ...]) -> None:
                 continue
             value = argument[index + len(marker) :].strip()
             if value:
-                _add_guard_value(values, value)
-                _add_url_guard_values(values, value)
+                _add_guard_value(
+                    values,
+                    value,
+                    strong_secret_values=strong_secret_values,
+                    strong=True,
+                )
+                _add_url_guard_values(
+                    values,
+                    value,
+                    strong_secret_values=strong_secret_values,
+                )
             break
 
 
@@ -395,7 +469,12 @@ def _cli_name_is_sensitive(value: str) -> bool:
     return any(hint in lowered for hint in _SECRET_CLI_HINTS)
 
 
-def _add_url_guard_values(values: set[str], value: str) -> None:
+def _add_url_guard_values(
+    values: set[str],
+    value: str,
+    *,
+    strong_secret_values: set[str],
+) -> None:
     text = _exact_guard_text(value).strip()
     if not text:
         return
@@ -412,13 +491,23 @@ def _add_url_guard_values(values: set[str], value: str) -> None:
         text,
         parsed.netloc,
         parsed.hostname,
-        unquote(parsed.username) if parsed.username else None,
-        unquote(parsed.password) if parsed.password else None,
         decoded_path or None,
         decoded_fragment or None,
     ):
         if candidate:
             _add_guard_value(values, candidate)
+
+    for candidate in (
+        unquote(parsed.username) if parsed.username else None,
+        unquote(parsed.password) if parsed.password else None,
+    ):
+        if candidate:
+            _add_guard_value(
+                values,
+                candidate,
+                strong_secret_values=strong_secret_values,
+                strong=True,
+            )
 
     for segment in decoded_path.split("/"):
         if segment:
@@ -435,14 +524,34 @@ def _add_url_guard_values(values: set[str], value: str) -> None:
     for query_name, query_value in query_pairs:
         if query_name:
             _add_guard_value(values, query_name)
-        if query_value:
+        if not query_value:
+            continue
+        if _cli_name_is_sensitive(query_name):
+            _add_guard_value(
+                values,
+                query_value,
+                strong_secret_values=strong_secret_values,
+                strong=True,
+            )
+        else:
             _add_guard_value(values, query_value)
 
 
-def _add_guard_value(values: set[str], value: object) -> None:
+def _add_guard_value(
+    values: set[str],
+    value: object,
+    *,
+    strong_secret_values: set[str] | None = None,
+    strong: bool = False,
+) -> None:
     text = _exact_guard_text(value).strip()
-    if text:
-        values.add(text)
+    if not text:
+        return
+    values.add(text)
+    if strong:
+        if strong_secret_values is None:
+            raise TypeError("strong secret registry is required")
+        strong_secret_values.add(text)
 
 
 def _secret_text_variants(value: str) -> frozenset[str]:
