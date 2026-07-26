@@ -134,7 +134,11 @@ class _AgentMetadataSecretGuard:
     The guard exists only for one ``discover()`` call and is never attached to Agent artifacts.
     """
 
-    __slots__ = ("_exact_variants", "_substring_variants")
+    __slots__ = (
+        "_exact_variants",
+        "_substring_variants",
+        "_hex_substring_variants",
+    )
 
     def __init__(
         self,
@@ -144,12 +148,14 @@ class _AgentMetadataSecretGuard:
     ) -> None:
         exact_variants: set[str] = set()
         substring_variants: set[str] = set()
+        hex_substring_variants: set[str] = set()
         strong_variants: set[str] = set()
 
         for value in strong_secret_values:
             strong_variants.update(_secret_text_variants(value))
 
         for value in sensitive_values:
+            is_strong = value in strong_secret_values
             for variant in _secret_text_variants(value):
                 exact_variants.add(variant)
                 if (
@@ -158,9 +164,23 @@ class _AgentMetadataSecretGuard:
                 ):
                     substring_variants.add(variant)
 
+            for text in _unicode_detection_views(value):
+                encoded = text.encode("utf-8")
+                if len(encoded) > _MAX_VARIANT_SOURCE_BYTES:
+                    continue
+                hex_variant = encoded.hex()
+                if (
+                    is_strong
+                    or len(hex_variant) >= _MIN_CONFIGURATION_SUBSTRING_LENGTH
+                ):
+                    hex_substring_variants.add(hex_variant)
+
         self._exact_variants = frozenset(exact_variants)
         self._substring_variants = tuple(
             sorted(substring_variants, key=lambda item: (-len(item), item))
+        )
+        self._hex_substring_variants = tuple(
+            sorted(hex_substring_variants, key=lambda item: (-len(item), item))
         )
 
     @classmethod
@@ -228,11 +248,17 @@ class _AgentMetadataSecretGuard:
         try:
             payload = context.model_dump(mode="python")
             for text in _iter_planner_visible_text(payload):
-                for normalized in _text_detection_views(text):
+                for normalized in _planner_text_detection_views(text):
                     if normalized in self._exact_variants:
                         return False
                     if any(
                         variant in normalized for variant in self._substring_variants
+                    ):
+                        return False
+                    lowered = normalized.lower()
+                    if any(
+                        hex_variant in lowered
+                        for hex_variant in self._hex_substring_variants
                     ):
                         return False
             return True
@@ -555,28 +581,48 @@ def _add_url_guard_values(
         if segment:
             _add_guard_value(values, segment)
 
+    _add_url_parameter_guard_values(
+        values,
+        parsed.query,
+        strong_secret_values=strong_secret_values,
+    )
+    _add_url_parameter_guard_values(
+        values,
+        parsed.fragment,
+        strong_secret_values=strong_secret_values,
+    )
+
+
+def _add_url_parameter_guard_values(
+    values: set[str],
+    serialized_parameters: str,
+    *,
+    strong_secret_values: set[str],
+) -> None:
+    if not serialized_parameters:
+        return
     try:
-        query_pairs = parse_qsl(
-            parsed.query,
+        pairs = parse_qsl(
+            serialized_parameters,
             keep_blank_values=True,
             strict_parsing=False,
         )
     except ValueError:
-        query_pairs = []
-    for query_name, query_value in query_pairs:
-        if query_name:
-            _add_guard_value(values, query_name)
-        if not query_value:
+        return
+    for parameter_name, parameter_value in pairs:
+        if parameter_name:
+            _add_guard_value(values, parameter_name)
+        if not parameter_value:
             continue
-        if _cli_name_is_sensitive(query_name):
+        if _cli_name_is_sensitive(parameter_name):
             _add_guard_value(
                 values,
-                query_value,
+                parameter_value,
                 strong_secret_values=strong_secret_values,
                 strong=True,
             )
         else:
-            _add_guard_value(values, query_value)
+            _add_guard_value(values, parameter_value)
 
 
 def _add_guard_value(
@@ -598,7 +644,7 @@ def _add_guard_value(
 
 def _secret_text_variants(value: str) -> frozenset[str]:
     variants: set[str] = set()
-    for text in _text_detection_views(value):
+    for text in _unicode_detection_views(value):
         if not text:
             continue
         variants.add(text)
@@ -639,7 +685,7 @@ def _lower_percent_escapes(value: str) -> str:
     )
 
 
-def _text_detection_views(value: object) -> frozenset[str]:
+def _unicode_detection_views(value: object) -> frozenset[str]:
     text = _exact_guard_text(value)
     normalized = unicodedata.normalize("NFKC", text)
     without_controls = "".join(
@@ -647,7 +693,31 @@ def _text_detection_views(value: object) -> frozenset[str]:
         for character in normalized
         if not unicodedata.category(character).startswith("C")
     )
-    return frozenset({text, normalized, without_controls})
+    renormalized_without_controls = unicodedata.normalize("NFKC", without_controls)
+    return frozenset(
+        {
+            text,
+            normalized,
+            without_controls,
+            renormalized_without_controls,
+        }
+    )
+
+
+def _planner_text_detection_views(value: object) -> frozenset[str]:
+    """Return declared one-layer normalization views for planner-visible text."""
+
+    base_views = set(_unicode_detection_views(value))
+    decoded_views: set[str] = set()
+    for candidate in tuple(base_views):
+        try:
+            decoded = unquote(candidate, encoding="utf-8", errors="strict")
+        except (UnicodeDecodeError, ValueError):
+            continue
+        if decoded != candidate:
+            decoded_views.update(_unicode_detection_views(decoded))
+    base_views.update(decoded_views)
+    return frozenset(base_views)
 
 
 def _iter_planner_visible_text(value: object) -> Iterator[str]:
