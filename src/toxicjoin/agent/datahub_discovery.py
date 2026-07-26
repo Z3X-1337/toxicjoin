@@ -670,10 +670,9 @@ def _add_authorization_guard_values(
             if index < 0:
                 break
 
-            authorization_value, next_index = _extract_marked_value(
+            authorization_value, next_index = _extract_authorization_value(
                 text,
                 index + len(marker),
-                delimiters=_AUTHORIZATION_VALUE_DELIMITERS,
             )
             if authorization_value:
                 _register_authorization_value(
@@ -702,7 +701,7 @@ def _register_authorization_value(
             credential, _ = _extract_marked_value(
                 value,
                 len(scheme),
-                delimiters=_AUTHORIZATION_VALUE_DELIMITERS,
+                delimiters=_SECRET_VALUE_DELIMITERS,
             )
             if credential:
                 _register_strong_guard_views(
@@ -719,6 +718,39 @@ def _register_authorization_value(
         strong_secret_values,
         value,
     )
+
+
+def _extract_authorization_value(text: str, value_start: int) -> tuple[str, int]:
+    """Extract one Authorization value while ignoring outer delimiters inside quoted regions."""
+
+    while value_start < len(text) and text[value_start].isspace():
+        value_start += 1
+    if value_start >= len(text):
+        return "", len(text)
+
+    cursor = value_start
+    active_quote: str | None = None
+    escaped = False
+    while cursor < len(text):
+        character = text[cursor]
+        if active_quote is not None:
+            if character == active_quote and not escaped:
+                active_quote = None
+            if character == "\\" and not escaped:
+                escaped = True
+            else:
+                escaped = False
+        else:
+            if character in {'"', "'"}:
+                active_quote = character
+                escaped = False
+            elif character in _AUTHORIZATION_VALUE_DELIMITERS:
+                break
+        cursor += 1
+
+    # An unmatched quote is malformed launch material. Returning the complete remaining bounded
+    # authorization text fails closed; the scheme-specific parser below then protects its payload.
+    return text[value_start:cursor].strip(), cursor
 
 
 def _extract_marked_value(
