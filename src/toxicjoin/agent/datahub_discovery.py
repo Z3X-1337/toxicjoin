@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import re
 import unicodedata
 from collections.abc import Callable, Iterator, Mapping
@@ -566,16 +567,10 @@ def _add_cli_guard_values(
         )
 
         if pending_secret_value:
-            _add_guard_value(
+            _register_strong_guard_views(
                 values,
+                strong_secret_values,
                 argument,
-                strong_secret_values=strong_secret_values,
-                strong=True,
-            )
-            _add_url_guard_values(
-                values,
-                argument,
-                strong_secret_values=strong_secret_values,
             )
             pending_secret_value = False
             continue
@@ -589,11 +584,10 @@ def _add_cli_guard_values(
                 strong_secret_values=strong_secret_values,
             )
             if _cli_name_is_sensitive(name):
-                _add_guard_value(
+                _register_strong_guard_views(
                     values,
+                    strong_secret_values,
                     value,
-                    strong_secret_values=strong_secret_values,
-                    strong=True,
                 )
                 handled_assignment = True
 
@@ -767,22 +761,81 @@ def _register_strong_guard_views(
     strong_secret_values: set[str],
     secret_value: str,
 ) -> None:
-    # Register both the literal marker value and its declared one-layer normalized/decoded forms as
-    # strong secrets. This keeps percent-encoded marker values from becoming a bypass.
-    for candidate in _planner_text_detection_views(secret_value):
-        if not candidate:
-            continue
-        _add_guard_value(
-            values,
-            candidate,
-            strong_secret_values=strong_secret_values,
-            strong=True,
+    secret_candidates = {_exact_guard_text(secret_value).strip()}
+    secret_candidates.update(_single_layer_reversible_secret_decodings(secret_value))
+
+    # Register the literal secret and one supported reverse-decoding layer, then derive the same
+    # forward/normalization variants for each. Decoding is restricted to values already classified
+    # as strong launch credentials; arbitrary planner metadata is never decoded into new secrets.
+    for source in sorted(candidate for candidate in secret_candidates if candidate):
+        for candidate in _planner_text_detection_views(source):
+            if not candidate:
+                continue
+            _add_guard_value(
+                values,
+                candidate,
+                strong_secret_values=strong_secret_values,
+                strong=True,
+            )
+            _add_url_guard_values(
+                values,
+                candidate,
+                strong_secret_values=strong_secret_values,
+            )
+
+
+def _single_layer_reversible_secret_decodings(value: str) -> frozenset[str]:
+    text = _exact_guard_text(value).strip()
+    if not text or len(text.encode("utf-8")) > _MAX_VARIANT_SOURCE_BYTES:
+        return frozenset()
+
+    decoded_values: set[str] = set()
+
+    if len(text) % 2 == 0 and re.fullmatch(r"[0-9A-Fa-f]+", text):
+        try:
+            decoded_bytes = bytes.fromhex(text)
+            decoded_text = decoded_bytes.decode("utf-8", errors="strict")
+        except (ValueError, UnicodeDecodeError):
+            pass
+        else:
+            if decoded_text and decoded_bytes.hex() == text.lower():
+                decoded_values.add(decoded_text)
+
+    for urlsafe in (False, True):
+        decoded = _decode_base64_secret_candidate(text, urlsafe=urlsafe)
+        if decoded:
+            decoded_values.add(decoded)
+
+    decoded_values.discard(text)
+    return frozenset(decoded_values)
+
+
+def _decode_base64_secret_candidate(value: str, *, urlsafe: bool) -> str | None:
+    if not value or len(value) % 4 == 1:
+        return None
+
+    padded = value + ("=" * ((4 - (len(value) % 4)) % 4))
+    try:
+        decoded_bytes = base64.b64decode(
+            padded,
+            altchars=b"-_" if urlsafe else None,
+            validate=True,
         )
-        _add_url_guard_values(
-            values,
-            candidate,
-            strong_secret_values=strong_secret_values,
-        )
+    except (binascii.Error, ValueError):
+        return None
+    if not decoded_bytes:
+        return None
+
+    # Round-trip through the security-owned equivalence generator so permissive decoder behavior
+    # cannot make unrelated malformed text a supported Base64 credential representation.
+    if value not in _base64_equivalent_variants(decoded_bytes, urlsafe=urlsafe):
+        return None
+
+    try:
+        decoded_text = decoded_bytes.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return None
+    return decoded_text or None
 
 
 def _add_no_proxy_guard_values(
@@ -897,11 +950,26 @@ def _add_url_parameter_guard_values(
         if not parameter_value:
             continue
         if _cli_name_is_sensitive(parameter_name):
-            _add_guard_value(
+            _register_strong_guard_views(
                 values,
+                strong_secret_values,
                 parameter_value,
-                strong_secret_values=strong_secret_values,
-                strong=True,
+            )
+            bounded_value, _ = _extract_marked_value(
+                parameter_value,
+                0,
+                delimiters=_SECRET_VALUE_DELIMITERS,
+            )
+            if bounded_value and bounded_value != parameter_value:
+                _register_strong_guard_views(
+                    values,
+                    strong_secret_values,
+                    bounded_value,
+                )
+            _add_secret_marked_guard_values(
+                values,
+                strong_secret_values,
+                f"{parameter_name}={parameter_value}",
             )
         else:
             _add_guard_value(values, parameter_value)
