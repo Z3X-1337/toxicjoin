@@ -151,6 +151,10 @@ class DataHubF6GovernanceAuthority:
             raise F6GovernanceClearanceError("F6_GOVERNANCE_INPUT_INVALID") from None
 
         bundle = trusted_evaluation.evidence_bundle
+        if trusted_evaluation.resolution.failures:
+            raise F6GovernanceClearanceError("F6_GOVERNANCE_GROUNDING_INCOMPLETE")
+        if trusted_evaluation.governance_binding.source != "datahub-mcp":
+            raise F6GovernanceClearanceError("F6_GOVERNANCE_SOURCE_MISMATCH")
         if (
             trusted_evaluation.governance_binding.catalog_version != bundle.catalog_version
             or trusted_evaluation.governance_binding.observed_at != bundle.observed_at
