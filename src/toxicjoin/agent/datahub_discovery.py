@@ -6,7 +6,7 @@ import base64
 import re
 import unicodedata
 from collections.abc import Callable, Iterator, Mapping
-from urllib.parse import parse_qsl, quote, unquote_to_bytes, urlsplit
+from urllib.parse import parse_qsl, quote, unquote, unquote_to_bytes, urlsplit
 
 from pydantic import SecretStr
 
@@ -51,6 +51,8 @@ _SECRET_ENV_HINTS = (
     "PASSWD",
     "API_KEY",
     "APIKEY",
+    "ACCESS_KEY",
+    "PRIVATE_KEY",
     "AUTH",
     "CREDENTIAL",
     "BEARER",
@@ -77,6 +79,9 @@ _SECRET_CLI_HINTS = (
 )
 _SECRET_TEXT_MARKERS = (
     "bearer ",
+    "basic ",
+    "access_token=",
+    "access_token:",
     "token=",
     "token:",
     "secret=",
@@ -93,6 +98,8 @@ _SECRET_TEXT_MARKERS = (
     "apikey:",
     "credential=",
     "credential:",
+    "authorization=",
+    "authorization:",
 )
 _MIN_SECRET_FRAGMENT_LENGTH = 8
 _MAX_VARIANT_SOURCE_BYTES = 4096
@@ -160,24 +167,27 @@ class _AgentMetadataSecretGuard:
                 _add_guard_value(sensitive_values, value)
                 _add_url_guard_values(sensitive_values, value)
 
-        _add_cli_guard_values(sensitive_values, settings.args)
+        _add_cli_guard_values(
+            sensitive_values,
+            (settings.command, *settings.args),
+        )
         return cls(sensitive_values)
 
     def assert_context_safe(self, context: AgentDataContext) -> None:
         try:
             payload = context.model_dump(mode="python")
             for text in _iter_planner_visible_text(payload):
-                normalized = _exact_guard_text(text)
-                if normalized in self._exact_variants:
-                    raise AgentDataHubDiscoveryError(
-                        "AGENT_DATAHUB_SECRET_REFLECTION"
-                    )
-                if any(
-                    variant in normalized for variant in self._substring_variants
-                ):
-                    raise AgentDataHubDiscoveryError(
-                        "AGENT_DATAHUB_SECRET_REFLECTION"
-                    )
+                for normalized in _text_detection_views(text):
+                    if normalized in self._exact_variants:
+                        raise AgentDataHubDiscoveryError(
+                            "AGENT_DATAHUB_SECRET_REFLECTION"
+                        )
+                    if any(
+                        variant in normalized for variant in self._substring_variants
+                    ):
+                        raise AgentDataHubDiscoveryError(
+                            "AGENT_DATAHUB_SECRET_REFLECTION"
+                        )
         except AgentDataHubDiscoveryError:
             raise
         except Exception:
@@ -364,11 +374,8 @@ def _add_cli_guard_values(values: set[str], args: tuple[str, ...]) -> None:
                 _add_url_guard_values(values, value)
                 handled_assignment = True
 
-        if (
-            not handled_assignment
-            and argument.startswith("-")
-            and _cli_name_is_sensitive(argument.rstrip("="))
-        ):
+        if not handled_assignment and _cli_name_is_sensitive(argument.rstrip("=")):
+            _add_guard_value(values, argument)
             pending_secret_value = True
 
         lowered = argument.lower()
@@ -399,16 +406,23 @@ def _add_url_guard_values(values: set[str], value: str) -> None:
     if not parsed.scheme or not parsed.netloc:
         return
 
+    decoded_path = unquote(parsed.path) if parsed.path else ""
+    decoded_fragment = unquote(parsed.fragment) if parsed.fragment else ""
     for candidate in (
         text,
         parsed.netloc,
         parsed.hostname,
-        parsed.username,
-        parsed.password,
-        parsed.fragment or None,
+        unquote(parsed.username) if parsed.username else None,
+        unquote(parsed.password) if parsed.password else None,
+        decoded_path or None,
+        decoded_fragment or None,
     ):
         if candidate:
             _add_guard_value(values, candidate)
+
+    for segment in decoded_path.split("/"):
+        if segment:
+            _add_guard_value(values, segment)
 
     try:
         query_pairs = parse_qsl(
@@ -418,7 +432,9 @@ def _add_url_guard_values(values: set[str], value: str) -> None:
         )
     except ValueError:
         query_pairs = []
-    for _, query_value in query_pairs:
+    for query_name, query_value in query_pairs:
+        if query_name:
+            _add_guard_value(values, query_name)
         if query_value:
             _add_guard_value(values, query_value)
 
@@ -430,15 +446,24 @@ def _add_guard_value(values: set[str], value: object) -> None:
 
 
 def _secret_text_variants(value: str) -> frozenset[str]:
-    text = _exact_guard_text(value)
-    if not text:
-        return frozenset()
+    variants: set[str] = set()
+    for text in _text_detection_views(value):
+        if not text:
+            continue
+        variants.add(text)
+        encoded = text.encode("utf-8")
+        if len(encoded) > _MAX_VARIANT_SOURCE_BYTES:
+            continue
 
-    variants = {text}
-    encoded = text.encode("utf-8")
-    if len(encoded) <= _MAX_VARIANT_SOURCE_BYTES:
         percent_encoded = quote(text, safe="", encoding="utf-8", errors="strict")
-        variants.add(percent_encoded)
+        variants.update(
+            {
+                percent_encoded,
+                _lower_percent_escapes(percent_encoded),
+                "".join(f"%{byte:02X}" for byte in encoded),
+                "".join(f"%{byte:02x}" for byte in encoded),
+            }
+        )
 
         standard_b64 = base64.b64encode(encoded).decode("ascii")
         urlsafe_b64 = base64.urlsafe_b64encode(encoded).decode("ascii")
@@ -453,6 +478,25 @@ def _secret_text_variants(value: str) -> frozenset[str]:
             }
         )
     return frozenset(item for item in variants if item)
+
+
+def _lower_percent_escapes(value: str) -> str:
+    return re.sub(
+        r"%[0-9A-F]{2}",
+        lambda match: match.group(0).lower(),
+        value,
+    )
+
+
+def _text_detection_views(value: object) -> frozenset[str]:
+    text = _exact_guard_text(value)
+    normalized = unicodedata.normalize("NFKC", text)
+    without_controls = "".join(
+        character
+        for character in normalized
+        if not unicodedata.category(character).startswith("C")
+    )
+    return frozenset({text, normalized, without_controls})
 
 
 def _iter_planner_visible_text(value: object) -> Iterator[str]:
