@@ -57,8 +57,8 @@ class DataHubAgentDiscoverer:
     """Acquire one trusted DataHub snapshot and expose only a sanitized planning view.
 
     Discovery requires an unchanged registry-issued dedicated READ_ONLY credential. The
-    authority module, not caller-owned settings, owns issuance provenance and produces the
-    detached registered child credential used by this discoverer.
+    authority module, not caller-owned settings, owns issuance provenance and produces detached
+    registered credentials both at construction and immediately before each transport launch.
     """
 
     def __init__(
@@ -76,7 +76,10 @@ class DataHubAgentDiscoverer:
         """Return one immutable, explicitly non-authoritative planning context."""
 
         try:
-            transport = self._transport_factory(self._settings)
+            runtime_settings = clone_read_only_settings_for_child(self._settings)
+            if runtime_settings is None:
+                raise RuntimeError("registered read credential changed before discovery")
+            transport = self._transport_factory(runtime_settings)
             async with transport:
                 client = RoleBoundDataHubMcpClient(
                     transport,
