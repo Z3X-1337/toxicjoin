@@ -1,4 +1,4 @@
-"""Security-owned wrapper around an untrusted SQL-planning agent."""
+"""Security-owned wrapper around untrusted planner output from a trusted in-process adapter."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ _MAX_AGENT_ADAPTATIONS = 8
 
 
 class AgentProposalError(RuntimeError):
-    """Stable fail-closed rejection at the untrusted planner boundary."""
+    """Stable fail-closed rejection at the planner-output boundary."""
 
     def __init__(self, code: str) -> None:
         self.code = code
@@ -32,7 +32,13 @@ class AgentProposalError(RuntimeError):
 
 
 class AgentPlanner(Protocol):
-    """Untrusted planner contract. It can return only draft content, never authority."""
+    """Trusted in-process adapter contract around an untrusted remote/model planner.
+
+    Implementations of this Python protocol execute inside ToxicJoin's process and are therefore
+    part of the trusted computing base. Arbitrary hostile Python must not be installed here. The
+    remote model/provider and every value it returns remain untrusted; only draft-shaped data may
+    cross this adapter into the security-owned wrapper.
+    """
 
     def propose(
         self,
@@ -52,12 +58,14 @@ class AgentPlanner(Protocol):
 
 
 class GovernedAgent:
-    """Convert untrusted planner drafts into canonical planning-only proposals.
+    """Convert untrusted planner outputs into canonical planning-only proposals.
 
-    This object deliberately has no PolicyEngine, execution authorizer, executor, EvidencePolicy,
-    disclosure ledger, DataHub mutation client, or proof-verification dependency. Its authority is
-    restricted to PROPOSE and ADAPT over a sanitized DISCOVER context supplied by a separate
-    security-owned component.
+    The ``AgentPlanner`` adapter itself is trusted in-process integration code. Any genuinely
+    untrusted planner implementation must execute outside this interpreter and communicate only
+    through the adapter's data boundary. This object deliberately has no PolicyEngine, execution
+    authorizer, executor, EvidencePolicy, disclosure ledger, DataHub mutation client, or
+    proof-verification dependency. Its authority is restricted to PROPOSE and ADAPT over a
+    sanitized DISCOVER context supplied by a separate security-owned component.
     """
 
     def __init__(
