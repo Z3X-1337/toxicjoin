@@ -102,6 +102,7 @@ _SECRET_TEXT_MARKERS = (
     "authorization=",
     "authorization:",
 )
+_SECRET_VALUE_DELIMITERS = frozenset(";&,\t\r\n ")
 _MIN_CONFIGURATION_SUBSTRING_LENGTH = 8
 _MAX_VARIANT_SOURCE_BYTES = 4096
 _STANDARD_BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -553,6 +554,16 @@ def _add_cli_guard_values(
     pending_secret_value = False
     for raw_argument in args:
         argument = _exact_guard_text(raw_argument)
+
+        # Every URL-shaped launcher value belongs to the launch-material boundary even when the
+        # option name itself is not secret-shaped. This captures ordinary --server-url style
+        # arguments whose URL userinfo may contain credentials.
+        _add_url_guard_values(
+            values,
+            argument,
+            strong_secret_values=strong_secret_values,
+        )
+
         if pending_secret_value:
             _add_guard_value(
                 values,
@@ -571,17 +582,17 @@ def _add_cli_guard_values(
         handled_assignment = False
         if "=" in argument:
             name, value = argument.split("=", 1)
+            _add_url_guard_values(
+                values,
+                value,
+                strong_secret_values=strong_secret_values,
+            )
             if _cli_name_is_sensitive(name):
                 _add_guard_value(
                     values,
                     value,
                     strong_secret_values=strong_secret_values,
                     strong=True,
-                )
-                _add_url_guard_values(
-                    values,
-                    value,
-                    strong_secret_values=strong_secret_values,
                 )
                 handled_assignment = True
 
@@ -607,24 +618,58 @@ def _add_secret_marked_guard_values(
 ) -> None:
     text = _exact_guard_text(value)
     lowered = text.lower()
+
+    # Scan every marker independently so compound launch material such as
+    # ``token=q7;password=p8`` protects each credential rather than stopping after the first.
+    extracted: set[str] = set()
     for marker in _SECRET_TEXT_MARKERS:
-        index = lowered.find(marker)
-        if index < 0:
-            continue
-        secret_value = text[index + len(marker) :].strip()
-        if secret_value:
+        search_from = 0
+        while True:
+            index = lowered.find(marker, search_from)
+            if index < 0:
+                break
+
+            value_start = index + len(marker)
+            while value_start < len(text) and text[value_start].isspace():
+                value_start += 1
+
+            value_end = value_start
+            while (
+                value_end < len(text)
+                and text[value_end] not in _SECRET_VALUE_DELIMITERS
+            ):
+                value_end += 1
+
+            secret_value = text[value_start:value_end].strip()
+            if (
+                len(secret_value) >= 2
+                and secret_value[0] in {'"', "'"}
+                and secret_value[-1] == secret_value[0]
+            ):
+                secret_value = secret_value[1:-1].strip()
+
+            if secret_value:
+                extracted.add(secret_value)
+
+            search_from = max(index + len(marker), value_end + 1)
+
+    for secret_value in sorted(extracted):
+        # Register both the literal marker value and its declared one-layer normalized/decoded
+        # forms as strong secrets. This keeps percent-encoded marker values from becoming a bypass.
+        for candidate in _planner_text_detection_views(secret_value):
+            if not candidate:
+                continue
             _add_guard_value(
                 values,
-                secret_value,
+                candidate,
                 strong_secret_values=strong_secret_values,
                 strong=True,
             )
             _add_url_guard_values(
                 values,
-                secret_value,
+                candidate,
                 strong_secret_values=strong_secret_values,
             )
-        return
 
 
 def _add_no_proxy_guard_values(
@@ -633,10 +678,15 @@ def _add_no_proxy_guard_values(
     *,
     strong_secret_values: set[str],
 ) -> None:
-    text = _exact_guard_text(value).strip()
-    if not text:
+    raw_text = _exact_guard_text(value)
+    if not raw_text.strip():
         return
 
+    # Preserve the exact child-visible value first. Entry normalization is additional protection,
+    # not a replacement for the complete forwarded environment string.
+    _add_exact_guard_value(values, raw_text)
+
+    text = raw_text.strip()
     _add_guard_value(values, text)
     for raw_entry in text.split(","):
         entry = raw_entry.strip()
@@ -742,6 +792,12 @@ def _add_url_parameter_guard_values(
             )
         else:
             _add_guard_value(values, parameter_value)
+
+
+def _add_exact_guard_value(values: set[str], value: object) -> None:
+    text = _exact_guard_text(value)
+    if text and text.strip():
+        values.add(text)
 
 
 def _add_guard_value(
