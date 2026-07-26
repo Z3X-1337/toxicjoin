@@ -918,6 +918,14 @@ def _add_url_guard_values(
         strong_secret_values,
         raw_text,
     )
+    for marker_view in _planner_text_detection_views(raw_text):
+        if marker_view == raw_text:
+            continue
+        _add_secret_marked_guard_values(
+            values,
+            strong_secret_values,
+            marker_view,
+        )
 
     try:
         parsed = urlsplit(text)
