@@ -282,21 +282,34 @@ class DataHubAgentDiscoverer:
         transport_factory: TransportFactory = StdioDataHubMcpTransport,
     ) -> None:
         copied_settings = None
-        settings_error_code: str | None = None
-        try:
-            copied_settings = _read_only_settings(settings)
-        except AgentDataHubDiscoveryError as error:
-            settings_error_code = error.code
-        except Exception:
-            settings_error_code = "AGENT_DATAHUB_SETTINGS_INVALID"
+        validated_asset_map = None
+        constructor_error_code: str | None = None
 
-        if settings_error_code is not None:
+        try:
+            validated_asset_map = DataHubAssetMap.model_validate(
+                asset_map.model_dump(mode="json")
+            )
+        except Exception:
+            constructor_error_code = "AGENT_DATAHUB_ASSET_MAP_INVALID"
+
+        if constructor_error_code is None:
+            try:
+                copied_settings = _read_only_settings(settings)
+            except AgentDataHubDiscoveryError as error:
+                constructor_error_code = error.code
+            except Exception:
+                constructor_error_code = "AGENT_DATAHUB_SETTINGS_INVALID"
+
+        if constructor_error_code is not None:
             settings = None  # type: ignore[assignment]
+            asset_map = None  # type: ignore[assignment]
             copied_settings = None
-            raise AgentDataHubDiscoveryError(settings_error_code) from None
+            validated_asset_map = None
+            self = None  # type: ignore[assignment]
+            raise AgentDataHubDiscoveryError(constructor_error_code) from None
 
         self._settings = copied_settings
-        self._asset_map = DataHubAssetMap.model_validate(asset_map.model_dump(mode="json"))
+        self._asset_map = validated_asset_map
         self._transport_factory = transport_factory
 
     async def discover(self) -> AgentDataContext:
@@ -335,6 +348,7 @@ class DataHubAgentDiscoverer:
             client = None
             snapshot = None
             context = None
+            self = None  # type: ignore[assignment]
             raise AgentDataHubDiscoveryError("AGENT_DATAHUB_DISCOVERY_FAILED") from None
 
         projection_error_code: str | None = None
@@ -352,6 +366,7 @@ class DataHubAgentDiscoverer:
             client = None
             snapshot = None
             context = None
+            self = None  # type: ignore[assignment]
             raise AgentDataHubDiscoveryError(projection_error_code) from None
 
         context_safe = secret_guard.context_is_safe(context)
@@ -362,6 +377,7 @@ class DataHubAgentDiscoverer:
             client = None
             snapshot = None
             context = None
+            self = None  # type: ignore[assignment]
             raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SECRET_REFLECTION") from None
 
         return context
