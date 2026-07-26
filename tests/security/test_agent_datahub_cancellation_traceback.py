@@ -16,6 +16,7 @@ from toxicjoin.integrations.datahub_authority import (
 PATIENTS_URN = "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients,PROD)"
 _READ_TOKEN = "cancellation-traceback-secret-token"
 _ENDPOINT = "https://cancellation-traceback.example"
+_PLANTED_CONTEXT_SECRET = "sensitive-cancellation-context-secret"
 
 
 class _CancellingTransport:
@@ -37,7 +38,10 @@ class _CancellingSnapshotLoader:
         assert require_mutations is False
         client = self.client
         assert client is not None
-        raise asyncio.CancelledError()
+        try:
+            raise RuntimeError(_PLANTED_CONTEXT_SECRET)
+        except RuntimeError:
+            raise asyncio.CancelledError()
 
 
 def _settings(monkeypatch: pytest.MonkeyPatch) -> ReadOnlyDataHubMcpSettings:
@@ -59,6 +63,9 @@ def _asset_map() -> DataHubAssetMap:
 
 
 def _assert_cancellation_traceback_is_credential_free(error: BaseException) -> None:
+    assert error.__context__ is None
+    assert error.__cause__ is None
+
     cursor = error.__traceback__
     observed_discovery_frame = False
     while cursor is not None:
@@ -87,6 +94,7 @@ def _assert_cancellation_traceback_is_credential_free(error: BaseException) -> N
             assert not isinstance(value, _CancellingSnapshotLoader), (
                 f"traceback local {name!r} retained credential-bearing loader"
             )
+            assert _PLANTED_CONTEXT_SECRET not in repr(value)
         cursor = cursor.tb_next
     assert observed_discovery_frame is True
 
