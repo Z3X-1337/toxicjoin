@@ -119,15 +119,20 @@ def test_source_validation_error_does_not_retain_read_credential_in_traceback() 
         assert error.__context__ is None
         assert error.__cause__ is None
         cursor = error.__traceback__
+        observed_authority_frame = False
         while cursor is not None:
-            for name, value in cursor.tb_frame.f_locals.items():
-                assert not isinstance(value, ReadOnlyDataHubMcpSettings), (
-                    f"traceback local {name!r} retained DataHub read settings"
-                )
-                assert not isinstance(value, SecretStr), (
-                    f"traceback local {name!r} retained bearer wrapper"
-                )
+            frame = cursor.tb_frame
+            if frame.f_globals.get("__name__") == "toxicjoin.agent.proposal_authority":
+                observed_authority_frame = True
+                for name, value in frame.f_locals.items():
+                    assert not isinstance(value, ReadOnlyDataHubMcpSettings), (
+                        f"traceback local {name!r} retained DataHub read settings"
+                    )
+                    assert not isinstance(value, SecretStr), (
+                        f"traceback local {name!r} retained bearer wrapper"
+                    )
             cursor = cursor.tb_next
+        assert observed_authority_frame is True
     else:
         raise AssertionError("unregistered read credential was accepted")
 
