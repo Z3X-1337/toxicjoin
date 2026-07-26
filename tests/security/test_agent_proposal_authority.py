@@ -237,6 +237,7 @@ def test_authority_resamples_time_and_rejects_snapshot_after_expiry(monkeypatch)
         (
             NOW + timedelta(seconds=1),
             NOW + timedelta(seconds=1),
+            NOW + timedelta(seconds=1),
             NOW + timedelta(seconds=301),
         )
     )
