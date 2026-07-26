@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from toxicjoin.agent import AgentDataHubDiscoveryError, DataHubAgentDiscoverer
@@ -13,10 +15,11 @@ PATIENTS_URN = "urn:li:dataset:(urn:li:dataPlatform:duckdb,patients,PROD)"
 _READ_SECRET = "agent-read-token"
 _WRITE_SECRET = "agent-write-token"
 _ENDPOINT = "https://datahub-token-normalization.example"
+_FINGERPRINT_DOMAIN = b"toxicjoin:datahub-credential:v2\x00"
 
 
 class FingerprintSpoofingWriteToken(str):
-    """Hold write-token text while spoofing the bytes used by the old fingerprint path."""
+    """Hold write-token text while spoofing bytes used by naive fingerprint code."""
 
     def __new__(cls, value: str, *, spoof_value: str):
         instance = super().__new__(cls, value)
@@ -36,7 +39,7 @@ def _asset_map() -> DataHubAssetMap:
     )
 
 
-def test_str_subclass_cannot_spoof_read_token_provenance_after_normalization(
+def test_str_subclass_cannot_spoof_registry_token_provenance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("DATAHUB_GMS_URL", _ENDPOINT)
@@ -52,12 +55,17 @@ def test_str_subclass_cannot_spoof_read_token_provenance_after_normalization(
     )
     reader.gms_token._secret_value = spoofed
 
-    # Demonstrate the exact adversarial precondition: the legacy fingerprint operation is fooled
-    # because it invokes the subclass override of encode().
-    assert reader.gms_token.get_secret_value() is spoofed
+    # Demonstrate the attack precondition against naive code that invokes the subclass encode().
+    naive_spoofed = hashlib.sha256(_FINGERPRINT_DOMAIN + spoofed.encode("utf-8")).hexdigest()
+    naive_read = hashlib.sha256(
+        _FINGERPRINT_DOMAIN + _READ_SECRET.encode("utf-8")
+    ).hexdigest()
+    assert naive_spoofed == naive_read
     assert str.__str__(spoofed) == _WRITE_SECRET
     assert type(str.__str__(spoofed)) is str
-    assert read_only_credential_provenance_valid(reader) is True
+
+    # The authority registry normalizes through the base str descriptor before fingerprinting.
+    assert read_only_credential_provenance_valid(reader) is False
 
     transport_created = False
 
