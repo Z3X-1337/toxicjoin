@@ -49,9 +49,15 @@ planning-only `AgentProposal` evaluation then:
 8. regrounds all referenced fields through `DataHubSnapshotContextResolver`;
 9. runs a local `PolicyEngine` built from the immutable policy snapshot over a typed, committed
    `PolicyInput`;
-10. samples the trusted clock again immediately before issuance and rechecks governance/evidence
-    freshness;
-11. emits a canonical `TrustedAgentProposalEvaluation` for the next security-owned stage.
+10. samples the trusted clock again immediately before artifact construction and rechecks
+    governance/evidence freshness;
+11. constructs and self-validates the complete committed artifact, then samples the trusted clock a
+    third time and rechecks governance/evidence freshness immediately before return;
+12. emits the canonical `TrustedAgentProposalEvaluation` for the next security-owned stage.
+
+The embedded `PolicyDecision.evidence` is recursively frozen during model validation while retaining
+its existing JSON representation. Nested dictionaries cannot be updated and nested lists are stored
+as tuples; JSON round-trip validation re-applies the same invariant before an artifact is accepted.
 
 ## Credential/source retention boundary
 
@@ -127,7 +133,7 @@ The intake fails closed for:
 - QueryPlan commitment mismatch;
 - incomplete/stale governance resolution;
 - future/stale evidence at evaluation start;
-- expiry crossed while the evaluation is running;
+- expiry crossed while the evaluation is running, including after full artifact construction;
 - evidence-bundle/derivation-validation rebinding;
 - PolicyConfig drift from the configuration bound at authority construction;
 - PolicyEngine evaluation failure;
