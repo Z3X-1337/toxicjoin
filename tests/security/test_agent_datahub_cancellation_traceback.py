@@ -30,11 +30,13 @@ class _CancellingTransport:
 
 
 class _CancellingSnapshotLoader:
-    def __init__(self, _client, _asset_map) -> None:
-        pass
+    def __init__(self, client, _asset_map) -> None:
+        self.client = client
 
     async def load(self, *, require_mutations: bool):
         assert require_mutations is False
+        client = self.client
+        assert client is not None
         raise asyncio.CancelledError()
 
 
@@ -56,26 +58,35 @@ def _asset_map() -> DataHubAssetMap:
     )
 
 
-def _assert_discovery_frames_are_credential_free(error: BaseException) -> None:
+def _assert_cancellation_traceback_is_credential_free(error: BaseException) -> None:
     cursor = error.__traceback__
     observed_discovery_frame = False
     while cursor is not None:
         frame = cursor.tb_frame
-        if frame.f_globals.get("__name__") == "toxicjoin.agent.datahub_discovery":
+        module_name = frame.f_globals.get("__name__")
+        if module_name == "toxicjoin.agent.datahub_discovery":
             observed_discovery_frame = True
-            for name, value in frame.f_locals.items():
-                assert not isinstance(value, DataHubAgentDiscoverer), (
-                    f"traceback local {name!r} retained credential-bearing discoverer"
-                )
-                assert not isinstance(value, ReadOnlyDataHubMcpSettings), (
-                    f"traceback local {name!r} retained runtime DataHub settings"
-                )
-                assert not isinstance(value, SecretStr), (
-                    f"traceback local {name!r} retained bearer wrapper"
-                )
-                assert not isinstance(value, _CancellingTransport), (
-                    f"traceback local {name!r} retained credential-bearing transport"
-                )
+
+        assert not (
+            module_name == __name__ and frame.f_code.co_name == "load"
+        ), "downstream cancelling loader frame survived cancellation sanitization"
+
+        for name, value in frame.f_locals.items():
+            assert not isinstance(value, DataHubAgentDiscoverer), (
+                f"traceback local {name!r} retained credential-bearing discoverer"
+            )
+            assert not isinstance(value, ReadOnlyDataHubMcpSettings), (
+                f"traceback local {name!r} retained runtime DataHub settings"
+            )
+            assert not isinstance(value, SecretStr), (
+                f"traceback local {name!r} retained bearer wrapper"
+            )
+            assert not isinstance(value, _CancellingTransport), (
+                f"traceback local {name!r} retained credential-bearing transport"
+            )
+            assert not isinstance(value, _CancellingSnapshotLoader), (
+                f"traceback local {name!r} retained credential-bearing loader"
+            )
         cursor = cursor.tb_next
     assert observed_discovery_frame is True
 
@@ -98,6 +109,6 @@ def test_discovery_cancellation_preserves_cancelled_error_and_cleans_traceback_l
             ).discover()
         )
     except asyncio.CancelledError as error:
-        _assert_discovery_frames_are_credential_free(error)
+        _assert_cancellation_traceback_is_credential_free(error)
     else:
         raise AssertionError("discovery cancellation was swallowed or converted")
