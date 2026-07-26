@@ -904,9 +904,21 @@ def _add_url_guard_values(
     *,
     strong_secret_values: set[str],
 ) -> None:
-    text = _exact_guard_text(value).strip()
-    if not text:
+    raw_text = _exact_guard_text(value)
+    text = raw_text.strip()
+    if not text or "://" not in text:
         return
+
+    # Preserve the exact child-visible URL-shaped value before structural parsing. Malformed URL
+    # text can still be forwarded to the child, so parse failure must not erase its protection.
+    _add_exact_guard_value(values, raw_text)
+    _add_guard_value(values, text)
+    _add_secret_marked_guard_values(
+        values,
+        strong_secret_values,
+        raw_text,
+    )
+
     try:
         parsed = urlsplit(text)
     except ValueError:
@@ -1005,6 +1017,13 @@ def _add_url_parameter_guard_values(
             )
         else:
             _add_guard_value(values, parameter_value)
+            # A non-sensitive parameter can still carry a compound explicitly marked credential,
+            # e.g. ``mode=prod;access_token=q7``. Promote only the marked value, not ordinary text.
+            _add_secret_marked_guard_values(
+                values,
+                strong_secret_values,
+                parameter_value,
+            )
 
 
 def _add_exact_guard_value(values: set[str], value: object) -> None:
