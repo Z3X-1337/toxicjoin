@@ -169,9 +169,10 @@ class DataHubAgentProposalAuthority:
     authority. The Agent's planner-authored ``task_purpose`` is never accepted as an authorization
     fact and must exactly match that trusted scope before PolicyEngine evaluation can occur.
 
-    Freshness time is sampled at evaluation start and again after the complete artifact has been
-    constructed. Clock samples are monotonic across the lifetime of the authority, so a rollback
-    between evaluations fails closed instead of extending the effective evidence lifetime.
+    Freshness time is sampled at evaluation start, immediately before artifact construction, and
+    once more after the complete artifact has been constructed. Clock samples are monotonic across
+    the lifetime of the authority, so rollback between evaluations fails closed instead of extending
+    the effective evidence lifetime.
 
     Evidence replay validation proves derivation/snapshot/source/freshness alignment only. It does
     not resolve authorization-facing EvidenceTrustState. This intake therefore cannot authorize
@@ -227,9 +228,6 @@ class DataHubAgentProposalAuthority:
             )
             if not secret_guard.context_is_safe(evidence_bundle):  # type: ignore[arg-type]
                 raise ValueError("DataHub evidence reflects runtime launch material")
-            # Replay validation is content/provenance validation. Using the exact observation time
-            # avoids coupling constructor validity to wall-clock scheduling; every evaluate() still
-            # enforces current freshness at start and immediately before issuance.
             evidence_validation = validate_datahub_evidence_derivations(
                 evidence_bundle,
                 trusted_snapshot,
@@ -252,8 +250,6 @@ class DataHubAgentProposalAuthority:
             self = None  # type: ignore[assignment]
             raise AgentProposalAuthorityError("AGENT_AUTHORITY_SOURCE_INVALID") from None
 
-        # The live credential, transient secret guard, and caller-owned snapshot reference are no
-        # longer needed after immutable evidence/source artifacts have been validated.
         read_settings = None  # type: ignore[assignment]
         snapshot = None  # type: ignore[assignment]
         secret_guard = None
@@ -325,13 +321,9 @@ class DataHubAgentProposalAuthority:
         authorized_task_purpose: str,
         subject_key: ColumnRef,
     ) -> TrustedAgentProposalEvaluation:
-        """Independently bind request scope, reground, and evaluate one proposal."""
-
         current = self._sample_clock()
         self._require_fresh_at(current)
 
-        # Take one immutable local policy snapshot for this evaluation. This closes the gap between
-        # checking a shared PolicyEngine.config and calling evaluate() on that same mutable holder.
         try:
             current_policy_config = PolicyConfig.model_validate(
                 self._policy_engine_source.config.model_dump(mode="json")
@@ -416,6 +408,15 @@ class DataHubAgentProposalAuthority:
         except Exception:
             raise AgentProposalAuthorityError("AGENT_AUTHORITY_POLICY_FAILED") from None
 
+        pre_issue_at = self._sample_clock()
+        try:
+            governance_binding.assert_fresh(pre_issue_at)
+            self._require_fresh_at(pre_issue_at)
+        except AgentProposalAuthorityError:
+            raise
+        except Exception:
+            raise AgentProposalAuthorityError("AGENT_AUTHORITY_STALE_AT_ISSUE") from None
+
         payload = {
             "proposal_sha256": trusted_proposal.proposal_sha256,
             "goal_sha256": trusted_goal.goal_sha256,
@@ -456,8 +457,6 @@ class DataHubAgentProposalAuthority:
             evaluation_sha256=compute_trusted_agent_proposal_evaluation_sha256(provisional),
         )
 
-        # The expensive full-model validation/hash above may itself cross the evidence expiry
-        # boundary. Re-sample after construction and fail closed immediately before returning.
         returned_at = self._sample_clock()
         try:
             governance_binding.assert_fresh(returned_at)
