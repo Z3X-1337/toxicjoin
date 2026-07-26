@@ -31,7 +31,7 @@ class AgentProposalError(RuntimeError):
         super().__init__(code)
 
 
-class AgentPlanner(Protocol):
+class TrustedPlannerAdapter(Protocol):
     """Trusted in-process adapter contract around an untrusted remote/model planner.
 
     Implementations of this Python protocol execute inside ToxicJoin's process and are therefore
@@ -57,20 +57,25 @@ class AgentPlanner(Protocol):
     ) -> AgentDraft | Mapping[str, Any]: ...
 
 
+# Compatibility alias for the Day-12 API introduced before the execution-trust distinction was
+# named explicitly. The alias has the same trusted in-process semantics; it is not a sandbox API.
+AgentPlanner = TrustedPlannerAdapter
+
+
 class GovernedAgent:
     """Convert untrusted planner outputs into canonical planning-only proposals.
 
-    The ``AgentPlanner`` adapter itself is trusted in-process integration code. Any genuinely
-    untrusted planner implementation must execute outside this interpreter and communicate only
-    through the adapter's data boundary. This object deliberately has no PolicyEngine, execution
-    authorizer, executor, EvidencePolicy, disclosure ledger, DataHub mutation client, or
-    proof-verification dependency. Its authority is restricted to PROPOSE and ADAPT over a
-    sanitized DISCOVER context supplied by a separate security-owned component.
+    The ``TrustedPlannerAdapter`` object itself is trusted in-process integration code. Any
+    genuinely untrusted planner implementation must execute outside this interpreter and
+    communicate only through the adapter's data boundary. This object deliberately has no
+    PolicyEngine, execution authorizer, executor, EvidencePolicy, disclosure ledger, DataHub
+    mutation client, or proof-verification dependency. Its authority is restricted to PROPOSE and
+    ADAPT over a sanitized DISCOVER context supplied by a separate security-owned component.
     """
 
     def __init__(
         self,
-        planner: AgentPlanner,
+        planner: TrustedPlannerAdapter,
         *,
         max_adaptations: int = _MAX_AGENT_ADAPTATIONS,
     ) -> None:
