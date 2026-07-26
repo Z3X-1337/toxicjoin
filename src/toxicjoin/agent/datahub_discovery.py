@@ -281,7 +281,21 @@ class DataHubAgentDiscoverer:
         asset_map: DataHubAssetMap,
         transport_factory: TransportFactory = StdioDataHubMcpTransport,
     ) -> None:
-        self._settings = _read_only_settings(settings)
+        copied_settings = None
+        settings_error_code: str | None = None
+        try:
+            copied_settings = _read_only_settings(settings)
+        except AgentDataHubDiscoveryError as error:
+            settings_error_code = error.code
+        except Exception:
+            settings_error_code = "AGENT_DATAHUB_SETTINGS_INVALID"
+
+        if settings_error_code is not None:
+            settings = None  # type: ignore[assignment]
+            copied_settings = None
+            raise AgentDataHubDiscoveryError(settings_error_code) from None
+
+        self._settings = copied_settings
         self._asset_map = DataHubAssetMap.model_validate(asset_map.model_dump(mode="json"))
         self._transport_factory = transport_factory
 
@@ -364,18 +378,39 @@ def build_agent_data_context_from_snapshot(snapshot: DataHubSnapshot) -> AgentDa
     because an offline snapshot does not carry the live child credential/configuration material.
     """
 
+    serialized = None
+    trusted = None
+    projected = None
+    serialization_failed = False
     try:
         serialized = snapshot.model_dump(mode="json")
         trusted = DataHubSnapshot.model_validate(serialized)
     except Exception:
+        serialization_failed = True
+
+    if serialization_failed:
+        snapshot = None  # type: ignore[assignment]
+        serialized = None
+        trusted = None
+        projected = None
         raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SNAPSHOT_INVALID") from None
 
+    projection_error_code: str | None = None
     try:
-        return _project_trusted_snapshot(trusted)
-    except AgentDataHubDiscoveryError:
-        raise
+        projected = _project_trusted_snapshot(trusted)
+    except AgentDataHubDiscoveryError as error:
+        projection_error_code = error.code
     except Exception:
-        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_PROJECTION_FAILED") from None
+        projection_error_code = "AGENT_DATAHUB_PROJECTION_FAILED"
+
+    if projection_error_code is not None:
+        snapshot = None  # type: ignore[assignment]
+        serialized = None
+        trusted = None
+        projected = None
+        raise AgentDataHubDiscoveryError(projection_error_code) from None
+
+    return projected
 
 
 def _project_trusted_snapshot(snapshot: DataHubSnapshot) -> AgentDataContext:
@@ -447,19 +482,36 @@ def _project_trusted_snapshot(snapshot: DataHubSnapshot) -> AgentDataContext:
 def _read_only_settings(settings: ReadOnlyDataHubMcpSettings) -> ReadOnlyDataHubMcpSettings:
     """Obtain a detached child credential from the authority-owned issuance registry."""
 
+    copied = None
+    error_code: str | None = None
     try:
         copied = clone_read_only_settings_for_child(settings)
     except Exception:
-        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID") from None
+        error_code = "AGENT_DATAHUB_SETTINGS_INVALID"
+
+    if error_code is not None:
+        settings = None  # type: ignore[assignment]
+        copied = None
+        raise AgentDataHubDiscoveryError(error_code) from None
+
     if copied is None:
-        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_READ_ROLE_REQUIRED")
+        settings = None  # type: ignore[assignment]
+        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_READ_ROLE_REQUIRED") from None
+
+    identity_invalid = False
     try:
-        if copied.gms_token is settings.gms_token:
-            raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID")
-    except AgentDataHubDiscoveryError:
-        raise
+        identity_invalid = copied.gms_token is settings.gms_token
     except Exception:
-        raise AgentDataHubDiscoveryError("AGENT_DATAHUB_SETTINGS_INVALID") from None
+        error_code = "AGENT_DATAHUB_SETTINGS_INVALID"
+
+    if identity_invalid:
+        error_code = "AGENT_DATAHUB_SETTINGS_INVALID"
+
+    if error_code is not None:
+        settings = None  # type: ignore[assignment]
+        copied = None
+        raise AgentDataHubDiscoveryError(error_code) from None
+
     return copied
 
 
