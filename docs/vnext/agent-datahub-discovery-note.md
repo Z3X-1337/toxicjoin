@@ -13,7 +13,8 @@ DATAHUB_GMS_READ_TOKEN
   -> authority-owned identity registry (not stored on settings)
   -> commit role/source/endpoint/launcher/timeout/token fingerprint
   -> reject direct construction, copies, relabeling, endpoint mutation, or token mutation
-  -> authority-owned detached registered child clone
+  -> authority-owned detached registered constructor clone
+  -> revalidate + issue a fresh registered runtime clone immediately before transport launch
   -> mutation_enabled=false
   -> TOOLS_IS_MUTATION_ENABLED=false
   -> SAVE_DOCUMENT_TOOL_ENABLED=false
@@ -44,9 +45,11 @@ Factory provenance is **not stored on the settings object**. There is no `_facto
 
 A newly constructed or `BaseModel.model_copy(...)` object has a different identity and is therefore unregistered. Mutating an issued object's bearer, endpoint, launcher configuration, timeout, role/source, or mutation flag changes the captured security snapshot and invalidates the registration. The registry entry also verifies that its weak reference still points to the same object, preventing stale identity reuse.
 
-The Agent never rebinds provenance. It asks `clone_read_only_settings_for_child()` for a detached child credential. That authority-owned function captures the supplied object once, compares that exact capture against the registry, and only then creates and registers a new read credential from the same validated snapshot. Invalid but well-formed objects return no clone; malformed internals are caught by the Agent's settings-redaction boundary.
+The Agent never rebinds provenance. It asks `clone_read_only_settings_for_child()` for a detached constructor credential. That authority-owned function captures the supplied object once, compares that exact capture against the registry, and only then creates and registers a new read credential from the same validated snapshot. Invalid but well-formed objects return no clone; malformed internals are caught by the Agent's settings-redaction boundary.
 
-Bearer capture requires an exact `SecretStr` wrapper and normalizes its secret through the base `str.__str__` descriptor to an exact built-in `str` before hashing or cloning. This defeats `str` subclasses with overridden `encode()`/`__str__()` behavior. The child clone receives a distinct `SecretStr`, so later mutation of a caller-retained bearer object cannot alter the child credential.
+The stored constructor clone is **not trusted indefinitely**. Every call to `discover()` asks the authority registry for another detached runtime clone immediately before transport creation. If code has modified `discoverer._settings` after construction—including its `SecretStr`, endpoint, role, or launcher settings—the registry comparison fails and discovery collapses to `AGENT_DATAHUB_DISCOVERY_FAILED` before the transport factory runs.
+
+Bearer capture requires an exact `SecretStr` wrapper and normalizes its secret through the base `str.__str__` descriptor to an exact built-in `str` before hashing or cloning. This defeats `str` subclasses with overridden `encode()`/`__str__()` behavior. Each issued clone receives a distinct `SecretStr`, so later mutation of a caller-retained bearer object cannot alter a subsequently used child credential.
 
 Ordinary `model_copy(update=...)` also blocks authority/token fields as defense in depth, but registry identity and snapshot matching—not Pydantic copy ergonomics—are the authority boundary.
 
@@ -72,9 +75,9 @@ Incomplete lineage represented by `datahub_urn=None` is not silently dropped or 
 
 ## Error redaction
 
-Credential clone/provenance acquisition is a redacted boundary. Malformed credential internals become `AGENT_DATAHUB_SETTINGS_INVALID` with `from None`; a well-formed but unregistered/mutated/non-read credential becomes `AGENT_DATAHUB_READ_ROLE_REQUIRED`.
+Constructor credential clone/provenance acquisition is a redacted settings boundary. Malformed credential internals become `AGENT_DATAHUB_SETTINGS_INVALID` with `from None`; a well-formed but unregistered/mutated/non-read credential becomes `AGENT_DATAHUB_READ_ROLE_REQUIRED`.
 
-Transport/factory/MCP failures become `AGENT_DATAHUB_DISCOVERY_FAILED`. Snapshot serialization/revalidation failures become `AGENT_DATAHUB_SNAPSHOT_INVALID`. Other projection failures become `AGENT_DATAHUB_PROJECTION_FAILED`. External/raw exception chains are suppressed at these boundaries.
+Runtime revalidation occurs inside the discovery I/O boundary. Any changed internal registered credential, transport/factory error, or MCP failure becomes `AGENT_DATAHUB_DISCOVERY_FAILED` with the external chain suppressed. Snapshot serialization/revalidation failures become `AGENT_DATAHUB_SNAPSHOT_INVALID`. Other projection failures become `AGENT_DATAHUB_PROJECTION_FAILED`.
 
 ## Live least-privilege coupling
 
