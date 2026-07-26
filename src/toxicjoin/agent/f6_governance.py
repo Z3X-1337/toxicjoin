@@ -151,6 +151,12 @@ class DataHubF6GovernanceAuthority:
             raise F6GovernanceClearanceError("F6_GOVERNANCE_INPUT_INVALID") from None
 
         bundle = trusted_evaluation.evidence_bundle
+        if (
+            trusted_evaluation.governance_binding.catalog_version != bundle.catalog_version
+            or trusted_evaluation.governance_binding.observed_at != bundle.observed_at
+            or trusted_evaluation.governance_binding.expires_at != bundle.expires_at
+        ):
+            raise F6GovernanceClearanceError("F6_GOVERNANCE_EVIDENCE_BINDING_MISMATCH")
         if trusted_binding.evaluation_sha256 != trusted_evaluation.evaluation_sha256:
             raise F6GovernanceClearanceError("F6_GOVERNANCE_EVALUATION_MISMATCH")
         if trusted_binding.source_snapshot_sha256 != trusted_evaluation.source_snapshot_sha256:
@@ -194,6 +200,14 @@ class DataHubF6GovernanceAuthority:
             or current >= trusted_binding.evidence_expires_at
         ):
             raise F6GovernanceClearanceError("F6_GOVERNANCE_STALE")
+
+        claim_ids = {claim.claim_id for claim in bundle.claims}
+        if any(
+            supporting_claim_id not in claim_ids
+            for claim in bundle.claims
+            for supporting_claim_id in claim.supporting_claim_ids
+        ):
+            raise F6GovernanceClearanceError("F6_GOVERNANCE_EVIDENCE_SUPPORT_MISSING")
 
         expected_requirements = _required_governance_facts(trusted_evaluation)
         if trusted_binding.requirements != expected_requirements:
