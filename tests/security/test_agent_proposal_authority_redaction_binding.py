@@ -43,7 +43,8 @@ class _Planner:
         return self.propose(goal=goal, context=context)
 
 
-def _snapshot() -> DataHubSnapshot:
+def _snapshot(*, reflected_tag: str | None = None) -> DataHubSnapshot:
+    tags = (reflected_tag,) if reflected_tag is not None else ()
     return DataHubSnapshot(
         catalog=FixtureCatalog(
             version="datahub-mcp:day13-binding-v1",
@@ -53,6 +54,7 @@ def _snapshot() -> DataHubSnapshot:
                     fields={
                         "customer_id": FixtureField(
                             category=SensitivityCategory.STABLE_PSEUDONYM,
+                            tags=tags,
                         ),
                         "diagnosis": FixtureField(
                             category=SensitivityCategory.SENSITIVE_ATTRIBUTE,
@@ -135,6 +137,21 @@ def test_source_validation_error_does_not_retain_read_credential_in_traceback() 
         assert observed_authority_frame is True
     else:
         raise AssertionError("unregistered read credential was accepted")
+
+
+def test_authority_rejects_runtime_bearer_reflected_through_datahub_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _registered_settings(monkeypatch)
+    snapshot = _snapshot(reflected_tag=f"classification:prefix-{READ_TOKEN}-suffix")
+
+    with pytest.raises(AgentProposalAuthorityError, match="AGENT_AUTHORITY_SOURCE_INVALID"):
+        DataHubAgentProposalAuthority(
+            snapshot=snapshot,
+            read_settings=settings,
+            policy_engine=PolicyEngine(load_policy()),
+            clock=lambda: NOW + timedelta(seconds=1),
+        )
 
 
 def test_trusted_evaluation_cross_binds_evidence_snapshot_to_source_snapshot(
