@@ -46,6 +46,53 @@ class RepairProofBinding(StrictModel):
         return self
 
 
+class AgentPpmcProofBinding(StrictModel):
+    """Security-owned provenance commitment from Governed-Agent PPMC into one proof.
+
+    The binding deliberately contains commitments rather than the full Agent artifacts.  The
+    security-owned Agent proof authority revalidates the full typed artifacts before minting this
+    binding; the proof HMAC then authenticates the resulting provenance commitment.  Execution
+    independently checks that every security-relevant duplicate commitment still matches the
+    enclosing proof.
+    """
+
+    schema_version: Literal["1.0"] = "1.0"
+    agent_proposal_sha256: Sha256
+    agent_evaluation_sha256: Sha256
+    agent_ppmc_evaluation_sha256: Sha256
+    f6_clearance_sha256: Sha256
+    sql_sha256: Sha256
+    query_plan_sha256: Sha256
+    task_purpose_sha256: Sha256
+    purpose_commitment_sha256: Sha256
+    subject_key_sha256: Sha256
+    governance_context_sha256: Sha256
+    governance_binding_sha256: Sha256
+    evidence_root_sha256: Sha256
+    evidence_validation_sha256: Sha256
+    policy_sha256: Sha256
+    policy_decision_sha256: Sha256
+    disclosure_state_sha256: Sha256
+    grammar_sha256: Sha256
+    ppmc_governance_binding_sha256: Sha256
+    ppmc_result_sha256: Sha256
+    evidence_expires_at: datetime
+    binding_sha256: Sha256
+
+    @field_validator("evidence_expires_at")
+    @classmethod
+    def expiry_must_be_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("Agent proof provenance expiry must be timezone-aware")
+        return value.astimezone(timezone.utc)
+
+    @model_validator(mode="after")
+    def validate_binding(self) -> "AgentPpmcProofBinding":
+        if self.binding_sha256 != compute_agent_ppmc_proof_binding_sha256(self):
+            raise ValueError("Agent PPMC proof provenance hash mismatch")
+        return self
+
+
 class PreExecutionPrivacyProof(StrictModel):
     """HMAC-authenticated commitment to one prospectively accepted execution candidate.
 
@@ -86,6 +133,7 @@ class PreExecutionPrivacyProof(StrictModel):
     )
     ppmc_bound: int = Field(ge=0, le=5)
     ppmc_max_states: int = Field(ge=1, le=50_000)
+    agent_ppmc_provenance: AgentPpmcProofBinding | None = None
     repair: RepairProofBinding | None = None
 
     privacy_proof_sha256: Sha256
@@ -133,6 +181,12 @@ class ProofVerificationResult(StrictModel):
 
 
 def compute_repair_proof_binding_sha256(binding: RepairProofBinding) -> str:
+    return canonical_json_sha256(
+        binding.model_dump(mode="json", exclude={"binding_sha256"})
+    )
+
+
+def compute_agent_ppmc_proof_binding_sha256(binding: AgentPpmcProofBinding) -> str:
     return canonical_json_sha256(
         binding.model_dump(mode="json", exclude={"binding_sha256"})
     )
