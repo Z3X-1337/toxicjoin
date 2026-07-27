@@ -1,0 +1,263 @@
+name: Phase 0 Current Main Security Validation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/validation-current-main-blackbox.yml"
+      - "validation/current_main_blackbox.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-0-current-main-blackbox-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exact-main-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    env:
+      EXPECTED_MAIN_SHA: "25a18b872d21ed91abdec3ad1893c07b5f424621"
+      CANDIDATE_DIR: /tmp/toxicjoin-phase0-current-main
+      CONTAINER_NAME: toxicjoin-phase0-current-main
+      RUNTIME_VOLUME: toxicjoin-phase0-current-main-runtime
+      IMAGE_NAME: toxicjoin:phase0-current-main
+      BASE_URL: http://127.0.0.1:18000
+      EVIDENCE_DIR: validation-artifacts/current-main-security
+      AUTH_ENV_FILE: /tmp/toxicjoin-phase0-container.env
+      CLIENT_SECRETS_FILE: /tmp/toxicjoin-phase0-client.json
+
+    steps:
+      - name: Check out independent validation harness
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+
+      - name: Resolve and pin exact current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          MAIN_SHA="$(git ls-remote origin refs/heads/main | awk 'NR==1 {print $1}')"
+          if [[ ! "$MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Could not resolve refs/heads/main" >&2
+            exit 1
+          fi
+          if [[ "$MAIN_SHA" != "$EXPECTED_MAIN_SHA" ]]; then
+            echo "main moved; validation target is stale" >&2
+            exit 1
+          fi
+          printf '%s\n' "$MAIN_SHA" > "$EVIDENCE_DIR/source-sha.txt"
+          git fetch --no-tags --depth=1 origin "$MAIN_SHA"
+          git worktree add --detach "$CANDIDATE_DIR" "$MAIN_SHA"
+          test "$(git -C "$CANDIDATE_DIR" rev-parse HEAD)" = "$MAIN_SHA"
+
+      - name: Set up Python 3.12 for validation
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+
+      - name: Compile independent harness
+        run: python -m py_compile validation/current_main_blackbox.py
+
+      - name: Generate ephemeral authentication material
+        shell: bash
+        run: |
+          set -euo pipefail
+          python validation/current_main_blackbox.py \
+            --write-auth-files \
+            --container-env "$AUTH_ENV_FILE" \
+            --client-secrets "$CLIENT_SECRETS_FILE"
+          test "$(stat -c '%a' "$AUTH_ENV_FILE")" = "600"
+          test "$(stat -c '%a' "$CLIENT_SECRETS_FILE")" = "600"
+
+      - name: Build exact main production image
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C "$CANDIDATE_DIR" rev-parse HEAD)" = "$EXPECTED_MAIN_SHA"
+          docker build --pull --progress=plain --tag "$IMAGE_NAME" "$CANDIDATE_DIR"
+          docker image inspect "$IMAGE_NAME" --format '{{.Id}}' > "$EVIDENCE_DIR/image-id.txt"
+
+      - name: Start hardened exact-main container
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker volume create "$RUNTIME_VOLUME" >/dev/null
+          docker run --detach \
+            --name "$CONTAINER_NAME" \
+            --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --pids-limit=128 \
+            --memory=768m \
+            --cpus=1 \
+            --mount type=volume,src="$RUNTIME_VOLUME",dst=/var/lib/toxicjoin \
+            --publish 127.0.0.1:18000:8000 \
+            --env-file "$AUTH_ENV_FILE" \
+            --env TOXICJOIN_ALLOWED_HOSTS=127.0.0.1,localhost \
+            --env TOXICJOIN_MAX_REQUEST_BYTES=4096 \
+            --env TOXICJOIN_RATE_LIMIT_REQUESTS=8 \
+            --env TOXICJOIN_RATE_LIMIT_WINDOW_SECONDS=60 \
+            --env TOXICJOIN_MAX_CONCURRENT_PER_PRINCIPAL=1 \
+            "$IMAGE_NAME" >/dev/null
+
+      - name: Wait for exact-main liveness
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent --show-error "$BASE_URL/api/health" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "exact-main candidate did not become healthy" >&2
+          exit 1
+
+      - name: Run external HTTP and container black-box probes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python validation/current_main_blackbox.py \
+            --base-url "$BASE_URL" \
+            --container-name "$CONTAINER_NAME" \
+            --source-sha "$EXPECTED_MAIN_SHA" \
+            --auth-file "$CLIENT_SECRETS_FILE" \
+            --output "$EVIDENCE_DIR/external-blackbox.json"
+
+      - name: Assert external black-box report invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["EVIDENCE_DIR"]) / "external-blackbox.json"
+          report = json.loads(path.read_text(encoding="utf-8"))
+          assert report["source_sha"] == os.environ["EXPECTED_MAIN_SHA"]
+          assert report["experiment"] == "phase-0-current-main-external-blackbox"
+          assert report["test_count"] == 24
+          assert report["passed_count"] == 24
+          assert report["failed_count"] == 0
+          assert report["passed"] is True
+          assert len(report["report_sha256"]) == 64
+          PY
+
+      - name: Run candidate-internal vNext proof-bound regression probes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check uv==0.8.4
+          cd "$CANDIDATE_DIR"
+          uv sync --frozen --extra dev >/dev/null
+          set +e
+          uv run --frozen pytest -q \
+            tests/integration/test_proof_bound_execution.py \
+            tests/security/test_agent_preexecution_proof_authority.py \
+            tests/security/test_agent_proof_ppmc_metadata_binding.py \
+            tests/security/test_agent_proof_provenance.py \
+            tests/security/test_agent_proof_provenance_virtual_serialization.py \
+            tests/security/test_agent_proof_request_identity_authority.py \
+            tests/unit/test_execution_privacy_proof_binding.py \
+            tests/unit/test_execution_privacy_proof_key_separation.py \
+            > /tmp/toxicjoin-vnext-probe.log 2>&1
+          STATUS=$?
+          set -e
+          python - "$STATUS" <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          status = int(sys.argv[1])
+          text = Path("/tmp/toxicjoin-vnext-probe.log").read_text(encoding="utf-8", errors="replace")
+          matches = re.findall(r"(\d+) passed", text)
+          passed_count = int(matches[-1]) if matches else 0
+          report = {
+              "schema_version": "1.0",
+              "experiment": "phase-0-current-main-vnext-internal-regression",
+              "source_sha": os.environ["EXPECTED_MAIN_SHA"],
+              "suite_file_count": 8,
+              "passed_count": passed_count,
+              "exit_code": status,
+              "passed": status == 0 and passed_count > 0,
+              "boundary": "candidate-internal; not an HTTP black-box claim",
+          }
+          out = Path(os.environ["GITHUB_WORKSPACE"]) / os.environ["EVIDENCE_DIR"] / "vnext-internal.json"
+          out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          if not report["passed"]:
+              raise SystemExit("vNext candidate-internal regression failed")
+          print(json.dumps({"passed_count": passed_count, "suite_file_count": 8, "passed": True}))
+          PY
+          rm -f /tmp/toxicjoin-vnext-probe.log
+
+      - name: Verify container logs contain no credentials or traceback
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker logs "$CONTAINER_NAME" > /tmp/toxicjoin-container.log 2>&1
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          tokens = json.loads(Path(os.environ["CLIENT_SECRETS_FILE"]).read_text(encoding="utf-8"))
+          logs = Path("/tmp/toxicjoin-container.log").read_text(encoding="utf-8", errors="replace")
+          credential_hits = sum(1 for value in tokens.values() if str(value) in logs)
+          traceback_hits = logs.count("Traceback (most recent call last)")
+          source_path_hits = logs.count("/app/src/toxicjoin/")
+          report = {
+              "credential_hits": credential_hits,
+              "traceback_hits": traceback_hits,
+              "source_path_hits": source_path_hits,
+              "passed": credential_hits == 0 and traceback_hits == 0 and source_path_hits == 0,
+          }
+          out = Path(os.environ["EVIDENCE_DIR"]) / "container-log-scan.json"
+          out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          if not report["passed"]:
+              raise SystemExit("container log leakage scan failed")
+          PY
+          rm -f /tmp/toxicjoin-container.log
+
+      - name: Capture sanitized container security metadata
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$EVIDENCE_DIR"
+          if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+            docker inspect "$CONTAINER_NAME" \
+              --format 'user={{.Config.User}} readonly={{.HostConfig.ReadonlyRootfs}} pids={{.HostConfig.PidsLimit}} memory={{.HostConfig.Memory}} nanocpus={{.HostConfig.NanoCpus}} capdrop={{json .HostConfig.CapDrop}} securityopt={{json .HostConfig.SecurityOpt}} ports={{json .HostConfig.PortBindings}}' \
+              > "$EVIDENCE_DIR/container-security.txt"
+          fi
+
+      - name: Remove ephemeral credentials and runtime
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$AUTH_ENV_FILE" "$CLIENT_SECRETS_FILE" /tmp/toxicjoin-container.log /tmp/toxicjoin-vnext-probe.log
+          docker rm --force "$CONTAINER_NAME" >/dev/null 2>&1 || true
+          docker volume rm "$RUNTIME_VOLUME" >/dev/null 2>&1 || true
+
+      - name: Upload sanitized Phase 0 security evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: toxicjoin-phase0-current-main-security
+          path: |
+            validation-artifacts/current-main-security/source-sha.txt
+            validation-artifacts/current-main-security/image-id.txt
+            validation-artifacts/current-main-security/external-blackbox.json
+            validation-artifacts/current-main-security/vnext-internal.json
+            validation-artifacts/current-main-security/container-log-scan.json
+            validation-artifacts/current-main-security/container-security.txt
+          if-no-files-found: warn
+          retention-days: 30
