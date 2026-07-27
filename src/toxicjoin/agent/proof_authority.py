@@ -1,9 +1,10 @@
 """Security-owned bridge from Governed-Agent PPMC evaluation into pre-execution proof.
 
-The generic proof builder remains available as a rollback-safe primitive, but it does not mint
-Governed-Agent provenance.  This authority consumes the security-owned proposal evaluation and
-Agent PPMC capability, independently rebinds the execution-relevant artifacts, and only then adds
-an authenticated provenance binding to the resulting pre-execution privacy proof.
+The generic proof builder remains available as a rollback-safe primitive, but it cannot mint
+trusted Governed-Agent provenance. This authority consumes the exact Agent proposal as a
+non-authoritative preimage witness plus the security-owned proposal/PPMC capabilities, rebinds the
+execution-relevant artifacts, authenticates provenance under an independent authority key, and only
+then seals the enclosing pre-execution privacy proof.
 
 Nothing in this module executes SQL or mutates DisclosureState/DataHub state.
 """
@@ -11,6 +12,7 @@ Nothing in this module executes SQL or mutates DisclosureState/DataHub state.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import threading
 from datetime import datetime, timezone
 
@@ -22,6 +24,7 @@ from toxicjoin.agent.proposal_authority import TrustedAgentProposalEvaluation
 from toxicjoin.auth import RequestIdentity
 from toxicjoin.evidence.canonical import canonical_json_sha256
 from toxicjoin.policy import PolicyEngine, load_policy
+from toxicjoin.proofs.agent_provenance import compute_agent_ppmc_provenance_hmac
 from toxicjoin.proofs.models import (
     AgentPpmcProofBinding,
     PreExecutionPrivacyProof,
@@ -38,6 +41,8 @@ from toxicjoin.prospective.ppmc import PpmcStatus
 from toxicjoin.prospective.twin import DisclosureState
 from toxicjoin.sql import analyze_sql
 
+_MIN_KEY_BYTES = 32
+
 
 class AgentPreExecutionProofAuthorityError(RuntimeError):
     """Stable fail-closed error for the Governed-Agent proof authority boundary."""
@@ -50,17 +55,25 @@ class AgentPreExecutionProofAuthorityError(RuntimeError):
 class DataHubAgentPreExecutionProofAuthority:
     """Mint Agent-provenance-bound pre-execution proofs from trusted upstream capabilities."""
 
-    def __init__(self, *, integrity_key: bytes, clock=None) -> None:
+    def __init__(
+        self,
+        *,
+        integrity_key: bytes,
+        provenance_integrity_key: bytes,
+        clock=None,
+    ) -> None:
         try:
-            if type(integrity_key) is not bytes or len(integrity_key) < 32:
-                raise ValueError("invalid proof integrity key")
-            trusted_key = bytes(integrity_key)
+            proof_key = _strict_key(integrity_key)
+            provenance_key = _strict_key(provenance_integrity_key)
+            if hmac.compare_digest(proof_key, provenance_key):
+                raise ValueError("proof/provenance keys must differ")
         except Exception:
             raise AgentPreExecutionProofAuthorityError(
                 "AGENT_PROOF_INTEGRITY_KEY_INVALID"
             ) from None
 
-        self._integrity_key = trusted_key
+        self._integrity_key = proof_key
+        self._provenance_integrity_key = provenance_key
         self._clock = (lambda: datetime.now(timezone.utc)) if clock is None else clock
         self._clock_lock = threading.Lock()
         self._last_clock_sample: datetime | None = None
@@ -76,7 +89,7 @@ class DataHubAgentPreExecutionProofAuthority:
         state: DisclosureState,
         grammar: FutureActionGrammar,
     ) -> PreExecutionPrivacyProof:
-        """Return one proof carrying authenticated Governed-Agent PPMC provenance."""
+        """Return one proof carrying independently authenticated Governed-Agent PPMC provenance."""
 
         stable_code = "AGENT_PROOF_INTERNAL_FAILED"
         try:
@@ -255,10 +268,21 @@ class DataHubAgentPreExecutionProofAuthority:
         provisional_binding = AgentPpmcProofBinding.model_construct(
             **binding_payload,
             binding_sha256="0" * 64,
+            authority_hmac_sha256="0" * 64,
+        )
+        binding_sha256 = compute_agent_ppmc_proof_binding_sha256(provisional_binding)
+        unsigned_provenance = AgentPpmcProofBinding.model_construct(
+            **binding_payload,
+            binding_sha256=binding_sha256,
+            authority_hmac_sha256="0" * 64,
         )
         provenance = AgentPpmcProofBinding(
             **binding_payload,
-            binding_sha256=compute_agent_ppmc_proof_binding_sha256(provisional_binding),
+            binding_sha256=binding_sha256,
+            authority_hmac_sha256=compute_agent_ppmc_provenance_hmac(
+                unsigned_provenance,
+                integrity_key=self._provenance_integrity_key,
+            ),
         )
 
         unsigned = base_proof.model_copy(
@@ -299,6 +323,12 @@ class DataHubAgentPreExecutionProofAuthority:
                 raise AgentPreExecutionProofAuthorityError("AGENT_PROOF_TIME_ROLLBACK")
             self._last_clock_sample = normalized
             return normalized
+
+
+def _strict_key(value: bytes) -> bytes:
+    if type(value) is not bytes or len(value) < _MIN_KEY_BYTES:
+        raise ValueError("integrity key must be at least 32 bytes")
+    return bytes(value)
 
 
 def _detach_exception(error: BaseException) -> None:
