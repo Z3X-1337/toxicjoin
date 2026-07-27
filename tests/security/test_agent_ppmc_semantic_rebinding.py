@@ -239,6 +239,5 @@ def test_historical_base_semantic_cannot_replace_current_agent_evaluation(
             forbidden_policy=build_forbidden_predicate_policy(
                 minimum_group_size=policy.minimum_group_size
             ),
-            local_oracle=lambda state, action: False,
             config=build_ppmc_search_config(bound=0, max_states=32),
         )
