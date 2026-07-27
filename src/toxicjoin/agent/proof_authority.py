@@ -10,11 +10,13 @@ Nothing in this module executes SQL or mutates DisclosureState/DataHub state.
 
 from __future__ import annotations
 
+import hashlib
 import threading
 from datetime import datetime, timezone
 
 from pydantic import ValidationError
 
+from toxicjoin.agent.models import AgentProposal
 from toxicjoin.agent.ppmc_authority import TrustedAgentPpmcEvaluation
 from toxicjoin.agent.proposal_authority import TrustedAgentProposalEvaluation
 from toxicjoin.auth import RequestIdentity
@@ -66,6 +68,7 @@ class DataHubAgentPreExecutionProofAuthority:
     def build(
         self,
         *,
+        proposal: AgentProposal,
         evaluation: TrustedAgentProposalEvaluation,
         ppmc_evaluation: TrustedAgentPpmcEvaluation,
         identity: RequestIdentity,
@@ -78,6 +81,7 @@ class DataHubAgentPreExecutionProofAuthority:
         stable_code = "AGENT_PROOF_INTERNAL_FAILED"
         try:
             return self._build_impl(
+                proposal=proposal,
                 evaluation=evaluation,
                 ppmc_evaluation=ppmc_evaluation,
                 identity=identity,
@@ -91,6 +95,7 @@ class DataHubAgentPreExecutionProofAuthority:
         except Exception as error:
             _detach_exception(error)
 
+        proposal = None  # type: ignore[assignment]
         evaluation = None  # type: ignore[assignment]
         ppmc_evaluation = None  # type: ignore[assignment]
         identity = None  # type: ignore[assignment]
@@ -103,6 +108,7 @@ class DataHubAgentPreExecutionProofAuthority:
     def _build_impl(
         self,
         *,
+        proposal: AgentProposal,
         evaluation: TrustedAgentProposalEvaluation,
         ppmc_evaluation: TrustedAgentPpmcEvaluation,
         identity: RequestIdentity,
@@ -111,7 +117,8 @@ class DataHubAgentPreExecutionProofAuthority:
         grammar: FutureActionGrammar,
     ) -> PreExecutionPrivacyProof:
         if (
-            type(evaluation) is not TrustedAgentProposalEvaluation
+            type(proposal) is not AgentProposal
+            or type(evaluation) is not TrustedAgentProposalEvaluation
             or type(ppmc_evaluation) is not TrustedAgentPpmcEvaluation
             or type(identity) is not RequestIdentity
             or type(sql) is not str
@@ -123,6 +130,7 @@ class DataHubAgentPreExecutionProofAuthority:
             raise AgentPreExecutionProofAuthorityError("AGENT_PROOF_INPUT_INVALID")
 
         try:
+            trusted_proposal = AgentProposal.model_validate(proposal.model_dump(mode="json"))
             trusted_evaluation = TrustedAgentProposalEvaluation.model_validate(
                 evaluation.model_dump(mode="json")
             )
@@ -134,6 +142,14 @@ class DataHubAgentPreExecutionProofAuthority:
             trusted_grammar = FutureActionGrammar.model_validate(grammar.model_dump(mode="json"))
         except (ValidationError, ValueError):
             raise AgentPreExecutionProofAuthorityError("AGENT_PROOF_INPUT_INVALID") from None
+
+        if trusted_proposal.proposal_sha256 != trusted_evaluation.proposal_sha256:
+            raise AgentPreExecutionProofAuthorityError("AGENT_PROOF_PROPOSAL_MISMATCH")
+        if trusted_proposal.query_plan_sha256 != trusted_evaluation.query_plan_sha256:
+            raise AgentPreExecutionProofAuthorityError("AGENT_PROOF_PROPOSAL_PLAN_MISMATCH")
+        exact_sql_sha256 = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+        if exact_sql_sha256 != trusted_proposal.sql_sha256:
+            raise AgentPreExecutionProofAuthorityError("AGENT_PROOF_SQL_BINDING_MISMATCH")
 
         if trusted_ppmc.agent_evaluation_sha256 != trusted_evaluation.evaluation_sha256:
             raise AgentPreExecutionProofAuthorityError("AGENT_PROOF_EVALUATION_MISMATCH")
