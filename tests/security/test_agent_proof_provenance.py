@@ -20,6 +20,7 @@ from toxicjoin.proofs import (
     compute_preexecution_privacy_proof_hmac,
     compute_preexecution_privacy_proof_sha256,
 )
+from toxicjoin.proofs.agent_provenance import compute_agent_bound_proof_core_sha256
 from toxicjoin.prospective.ppmc import build_ppmc_search_config
 from toxicjoin.sql import analyze_sql
 
@@ -142,6 +143,7 @@ def _binding_payload(proof: PreExecutionPrivacyProof, *, ppmc_result_sha256: str
         "agent_evaluation_sha256": "2" * 64,
         "agent_ppmc_evaluation_sha256": "3" * 64,
         "f6_clearance_sha256": "4" * 64,
+        "proof_core_sha256": compute_agent_bound_proof_core_sha256(proof),
         "request_identity_sha256": proof.request_identity_sha256,
         "sql_sha256": proof.sql_sha256,
         "query_plan_sha256": proof.query_plan_sha256,
