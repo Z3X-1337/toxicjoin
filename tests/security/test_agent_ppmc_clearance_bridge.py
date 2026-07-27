@@ -245,6 +245,34 @@ def test_internal_f6_clearance_drives_agent_ppmc(monkeypatch: pytest.MonkeyPatch
     assert result.execution_authorized is False
 
 
+def test_forbidden_policy_threshold_must_match_package_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (
+        evaluation,
+        governance_trust,
+        state,
+        grammar,
+        _,
+        config,
+        _,
+        _,
+    ) = _artifacts(monkeypatch)
+    package_policy = load_policy()
+    downgraded = build_forbidden_predicate_policy(minimum_group_size=2)
+    assert downgraded.minimum_group_size < package_policy.minimum_group_size
+
+    with pytest.raises(AgentPpmcAuthorityError, match="AGENT_PPMC_FORBIDDEN_POLICY_MISMATCH"):
+        DataHubAgentPpmcAuthority(clock=lambda: NOW + timedelta(seconds=4)).check(
+            evaluation=evaluation,
+            governance_trust=governance_trust,
+            initial_state=state,
+            grammar=grammar,
+            forbidden_policy=downgraded,
+            config=config,
+        )
+
+
 @pytest.mark.parametrize(
     ("field", "error_code"),
     (
