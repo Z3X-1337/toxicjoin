@@ -61,16 +61,22 @@ def seal_agent_preexecution_proof_capsule(
     key = _validated_key(integrity_key)
     if type(proof) is not PreExecutionPrivacyProof:
         raise AgentPreExecutionProofCapsuleError("AGENT_PROOF_CAPSULE_INVALID")
+
+    # Authenticate the exact, non-polymorphic Agent provenance before any canonical serialization
+    # of the enclosing proof. This preserves the PR #95 virtual-serialization boundary.
     try:
-        if compute_preexecution_privacy_proof_sha256(proof) != proof.privacy_proof_sha256:
-            raise AgentPreExecutionProofCapsuleError("AGENT_PROOF_CAPSULE_INVALID")
         provenance = require_agent_ppmc_provenance(proof, integrity_key=key)
-    except AgentPreExecutionProofCapsuleError:
-        raise
-    except (AgentProofProvenanceError, TypeError, ValueError):
+    except AgentProofProvenanceError:
         raise AgentPreExecutionProofCapsuleError(
             "AGENT_PROOF_CAPSULE_PROVENANCE_INVALID"
         ) from None
+
+    try:
+        expected_proof_sha256 = compute_preexecution_privacy_proof_sha256(proof)
+    except (TypeError, ValueError):
+        raise AgentPreExecutionProofCapsuleError("AGENT_PROOF_CAPSULE_INVALID") from None
+    if expected_proof_sha256 != proof.privacy_proof_sha256:
+        raise AgentPreExecutionProofCapsuleError("AGENT_PROOF_CAPSULE_INVALID")
 
     provisional = AgentPreExecutionProofCapsule(
         proof=proof,
@@ -143,6 +149,16 @@ def require_agent_preexecution_proof_capsule(
     if type(proof) is not PreExecutionPrivacyProof:
         raise AgentPreExecutionProofCapsuleError("AGENT_PROOF_CAPSULE_INVALID")
 
+    # Establish exact-type/authentic Agent provenance before serializing the nested proof through
+    # capsule hashing/HMAC helpers. A malicious provenance subclass therefore cannot gain virtual
+    # dispatch merely by being placed inside an otherwise exact proof/capsule object.
+    try:
+        provenance = require_agent_ppmc_provenance(proof, integrity_key=key)
+    except AgentProofProvenanceError:
+        raise AgentPreExecutionProofCapsuleError(
+            "AGENT_PROOF_CAPSULE_PROVENANCE_INVALID"
+        ) from None
+
     try:
         expected_proof_sha256 = compute_preexecution_privacy_proof_sha256(proof)
         expected_content = compute_agent_preexecution_proof_capsule_sha256(capsule)
@@ -159,14 +175,6 @@ def require_agent_preexecution_proof_capsule(
         raise AgentPreExecutionProofCapsuleError("AGENT_PROOF_CAPSULE_INVALID")
     if not hmac.compare_digest(expected_hmac, capsule.authority_hmac_sha256):
         raise AgentPreExecutionProofCapsuleError("AGENT_PROOF_CAPSULE_UNTRUSTED")
-
-    try:
-        provenance = require_agent_ppmc_provenance(proof, integrity_key=key)
-    except AgentProofProvenanceError:
-        raise AgentPreExecutionProofCapsuleError(
-            "AGENT_PROOF_CAPSULE_PROVENANCE_INVALID"
-        ) from None
-
     if capsule.proof_sha256 != proof.privacy_proof_sha256:
         raise AgentPreExecutionProofCapsuleError("AGENT_PROOF_CAPSULE_INVALID")
     if capsule.agent_provenance_binding_sha256 != provenance.binding_sha256:
