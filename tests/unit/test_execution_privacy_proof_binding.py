@@ -18,15 +18,20 @@ from toxicjoin.execute import (
 from toxicjoin.models import ColumnRef, SensitivityCategory
 from toxicjoin.policy import PolicyEngine, load_policy
 from toxicjoin.proofs import (
+    AgentPpmcProofBinding,
     PreExecutionPrivacyProof,
+    compute_agent_ppmc_proof_binding_sha256,
+    compute_agent_ppmc_provenance_hmac,
     compute_preexecution_privacy_proof_hmac,
     compute_preexecution_privacy_proof_sha256,
 )
+from toxicjoin.proofs.agent_provenance import compute_agent_bound_proof_core_sha256
 from toxicjoin.prospective.ppmc import build_ppmc_search_config
 from toxicjoin.sql import analyze_sql
 
 AUTH_KEY = b"proof-bound-execution-auth-key-32-bytes!!"
 PROOF_KEY = b"proof-bound-proof-integrity-key-32-bytes!!"
+PROVENANCE_KEY = b"proof-bound-agent-provenance-key-32-bytes!!"
 NOW = 1_800_000_000.0
 NOW_DT = datetime.fromtimestamp(NOW, tz=timezone.utc)
 URN = "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.proof_auth,PROD)"
@@ -92,6 +97,60 @@ def _runtime():
     return resolver, engine, plan, resolution, binding, decision
 
 
+def _with_agent_provenance(proof: PreExecutionPrivacyProof) -> PreExecutionPrivacyProof:
+    payload = {
+        "agent_proposal_sha256": "1" * 64,
+        "agent_evaluation_sha256": "2" * 64,
+        "agent_ppmc_evaluation_sha256": "3" * 64,
+        "f6_clearance_sha256": "4" * 64,
+        "proof_core_sha256": compute_agent_bound_proof_core_sha256(proof),
+        "request_identity_sha256": proof.request_identity_sha256,
+        "sql_sha256": proof.sql_sha256,
+        "query_plan_sha256": proof.query_plan_sha256,
+        "task_purpose_sha256": proof.task_purpose_sha256,
+        "purpose_commitment_sha256": proof.purpose_commitment_sha256,
+        "subject_key_sha256": proof.subject_key_sha256,
+        "governance_context_sha256": proof.governance_context_sha256,
+        "governance_binding_sha256": proof.governance_binding_sha256,
+        "evidence_root_sha256": proof.evidence_root_sha256,
+        "evidence_validation_sha256": proof.evidence_validation_sha256,
+        "policy_sha256": proof.policy_sha256,
+        "policy_decision_sha256": proof.policy_decision_sha256,
+        "disclosure_state_sha256": proof.disclosure_state_sha256,
+        "grammar_sha256": proof.grammar_sha256,
+        "ppmc_execution_profile": proof.ppmc_execution_profile,
+        "ppmc_config_sha256": proof.ppmc_config_sha256,
+        "ppmc_forbidden_policy_sha256": proof.ppmc_forbidden_policy_sha256,
+        "ppmc_governance_binding_sha256": proof.ppmc_governance_binding_sha256,
+        "ppmc_search_transcript_sha256": proof.ppmc_search_transcript_sha256,
+        "ppmc_result_sha256": proof.ppmc_result_sha256,
+        "ppmc_status": proof.ppmc_status,
+        "ppmc_bound": proof.ppmc_bound,
+        "ppmc_max_states": proof.ppmc_max_states,
+        "evidence_expires_at": proof.expires_at,
+    }
+    provisional = AgentPpmcProofBinding.model_construct(
+        **payload,
+        binding_sha256="0" * 64,
+        authority_hmac_sha256="0" * 64,
+    )
+    binding_sha256 = compute_agent_ppmc_proof_binding_sha256(provisional)
+    unsigned = AgentPpmcProofBinding.model_construct(
+        **payload,
+        binding_sha256=binding_sha256,
+        authority_hmac_sha256="0" * 64,
+    )
+    provenance = AgentPpmcProofBinding(
+        **payload,
+        binding_sha256=binding_sha256,
+        authority_hmac_sha256=compute_agent_ppmc_provenance_hmac(
+            unsigned,
+            integrity_key=PROVENANCE_KEY,
+        ),
+    )
+    return proof.model_copy(update={"agent_ppmc_provenance": provenance})
+
+
 def _sealed_proof(*, transcript_sha256: str = DUMMY) -> PreExecutionPrivacyProof:
     _, engine, plan, resolution, binding, decision = _runtime()
     proof = PreExecutionPrivacyProof(
@@ -133,6 +192,7 @@ def _sealed_proof(*, transcript_sha256: str = DUMMY) -> PreExecutionPrivacyProof
         privacy_proof_sha256="0" * 64,
         integrity_hmac_sha256="0" * 64,
     )
+    proof = _with_agent_provenance(proof)
     content_sha256 = compute_preexecution_privacy_proof_sha256(proof)
     proof = proof.model_copy(update={"privacy_proof_sha256": content_sha256})
     return proof.model_copy(
@@ -151,6 +211,7 @@ def _authorizer() -> ProofBoundExecutionAuthorizer:
         context_resolver=resolver,
         policy_engine=engine,
         privacy_proof_integrity_key=PROOF_KEY,
+        agent_provenance_integrity_key=PROVENANCE_KEY,
         secret_key=AUTH_KEY,
         ttl_seconds=5,
         clock=lambda: NOW,
@@ -341,6 +402,20 @@ def test_proof_bound_authorizer_rejects_short_proof_key() -> None:
             context_resolver=resolver,
             policy_engine=engine,
             privacy_proof_integrity_key=b"too-short",
+            agent_provenance_integrity_key=PROVENANCE_KEY,
+            secret_key=AUTH_KEY,
+            clock=lambda: NOW,
+        )
+
+
+def test_proof_bound_authorizer_rejects_reused_agent_provenance_key() -> None:
+    resolver, engine, *_ = _runtime()
+    with pytest.raises(ValueError, match="must differ from privacy proof integrity key"):
+        ProofBoundExecutionAuthorizer(
+            context_resolver=resolver,
+            policy_engine=engine,
+            privacy_proof_integrity_key=PROOF_KEY,
+            agent_provenance_integrity_key=PROOF_KEY,
             secret_key=AUTH_KEY,
             clock=lambda: NOW,
         )

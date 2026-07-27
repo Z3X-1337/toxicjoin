@@ -38,6 +38,10 @@ from toxicjoin.agent.ppmc_authority import (
     TrustedAgentPpmcEvaluation,
     compute_trusted_agent_ppmc_evaluation_sha256,
 )
+from toxicjoin.agent.proof_authority import (
+    AgentPreExecutionProofAuthorityError,
+    DataHubAgentPreExecutionProofAuthority,
+)
 from toxicjoin.agent.proposal_authority import (
     AgentProposalAuthorityError,
     DataHubAgentProposalAuthority,
@@ -57,11 +61,13 @@ __all__ = [
     "AgentLineageView",
     "AgentPlanner",
     "AgentPpmcAuthorityError",
+    "AgentPreExecutionProofAuthorityError",
     "AgentProposal",
     "AgentProposalAuthorityError",
     "AgentProposalError",
     "DataHubAgentDiscoverer",
     "DataHubAgentPpmcAuthority",
+    "DataHubAgentPreExecutionProofAuthority",
     "DataHubAgentProposalAuthority",
     "DataHubGovernanceTrustAuthority",
     "GovernanceFactRequirement",

@@ -31,11 +31,15 @@ from toxicjoin.integrations.datahub_mcp import DataHubMcpSettings
 from toxicjoin.models import ColumnRef, SensitivityCategory
 from toxicjoin.policy import PolicyEngine, load_policy
 from toxicjoin.proofs import (
+    AgentPpmcProofBinding,
     PreExecutionPrivacyProof,
     build_preexecution_privacy_proof,
+    compute_agent_ppmc_proof_binding_sha256,
+    compute_agent_ppmc_provenance_hmac,
     compute_preexecution_privacy_proof_hmac,
     compute_preexecution_privacy_proof_sha256,
 )
+from toxicjoin.proofs.agent_provenance import compute_agent_bound_proof_core_sha256
 from toxicjoin.prospective.forbidden import (
     build_forbidden_predicate_policy,
     build_governance_trust_binding,
@@ -61,6 +65,7 @@ OBSERVED_AT = datetime(2026, 7, 25, 14, 0, tzinfo=timezone.utc)
 ISSUED_AT = OBSERVED_AT + timedelta(seconds=30)
 VERIFY_AT = ISSUED_AT + timedelta(seconds=1)
 PROOF_KEY = b"integration-proof-integrity-key-32-bytes!!"
+PROVENANCE_KEY = b"integration-agent-provenance-key-32-bytes!!"
 AUTH_KEY = b"integration-execution-auth-key-32-bytes!!!"
 URN = "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.proof_execution,PROD)"
 SQL = "SELECT country FROM patients WHERE customer_id IS NOT NULL"
@@ -122,6 +127,79 @@ def _snapshot() -> DataHubSnapshot:
         lineage_sample={"relationships": []},
         discovered_tools=("get_entities", "get_lineage", "list_schema_fields"),
         observed_at=OBSERVED_AT,
+    )
+
+
+def _with_agent_provenance(proof: PreExecutionPrivacyProof) -> PreExecutionPrivacyProof:
+    payload = {
+        "agent_proposal_sha256": "1" * 64,
+        "agent_evaluation_sha256": "2" * 64,
+        "agent_ppmc_evaluation_sha256": "3" * 64,
+        "f6_clearance_sha256": "4" * 64,
+        "proof_core_sha256": compute_agent_bound_proof_core_sha256(proof),
+        "request_identity_sha256": proof.request_identity_sha256,
+        "sql_sha256": proof.sql_sha256,
+        "query_plan_sha256": proof.query_plan_sha256,
+        "task_purpose_sha256": proof.task_purpose_sha256,
+        "purpose_commitment_sha256": proof.purpose_commitment_sha256,
+        "subject_key_sha256": proof.subject_key_sha256,
+        "governance_context_sha256": proof.governance_context_sha256,
+        "governance_binding_sha256": proof.governance_binding_sha256,
+        "evidence_root_sha256": proof.evidence_root_sha256,
+        "evidence_validation_sha256": proof.evidence_validation_sha256,
+        "policy_sha256": proof.policy_sha256,
+        "policy_decision_sha256": proof.policy_decision_sha256,
+        "disclosure_state_sha256": proof.disclosure_state_sha256,
+        "grammar_sha256": proof.grammar_sha256,
+        "ppmc_execution_profile": proof.ppmc_execution_profile,
+        "ppmc_config_sha256": proof.ppmc_config_sha256,
+        "ppmc_forbidden_policy_sha256": proof.ppmc_forbidden_policy_sha256,
+        "ppmc_governance_binding_sha256": proof.ppmc_governance_binding_sha256,
+        "ppmc_search_transcript_sha256": proof.ppmc_search_transcript_sha256,
+        "ppmc_result_sha256": proof.ppmc_result_sha256,
+        "ppmc_status": proof.ppmc_status,
+        "ppmc_bound": proof.ppmc_bound,
+        "ppmc_max_states": proof.ppmc_max_states,
+        "evidence_expires_at": proof.expires_at,
+    }
+    provisional = AgentPpmcProofBinding.model_construct(
+        **payload,
+        binding_sha256="0" * 64,
+        authority_hmac_sha256="0" * 64,
+    )
+    binding_sha256 = compute_agent_ppmc_proof_binding_sha256(provisional)
+    unsigned_provenance = AgentPpmcProofBinding.model_construct(
+        **payload,
+        binding_sha256=binding_sha256,
+        authority_hmac_sha256="0" * 64,
+    )
+    provenance = AgentPpmcProofBinding(
+        **payload,
+        binding_sha256=binding_sha256,
+        authority_hmac_sha256=compute_agent_ppmc_provenance_hmac(
+            unsigned_provenance,
+            integrity_key=PROVENANCE_KEY,
+        ),
+    )
+    unsigned = proof.model_copy(
+        update={
+            "agent_ppmc_provenance": provenance,
+            "privacy_proof_sha256": "0" * 64,
+            "integrity_hmac_sha256": "0" * 64,
+        }
+    )
+    with_content = unsigned.model_copy(
+        update={
+            "privacy_proof_sha256": compute_preexecution_privacy_proof_sha256(unsigned)
+        }
+    )
+    return with_content.model_copy(
+        update={
+            "integrity_hmac_sha256": compute_preexecution_privacy_proof_hmac(
+                with_content,
+                integrity_key=PROOF_KEY,
+            )
+        }
     )
 
 
@@ -240,6 +318,7 @@ def _build_runtime(tmp_path):
         integrity_key=PROOF_KEY,
         issued_at=ISSUED_AT,
     )
+    proof = _with_agent_provenance(proof)
 
     executor = SpyDuckDBExecutor(database, max_preview_rows=10)
     executor.bind_authorizer(
@@ -247,6 +326,7 @@ def _build_runtime(tmp_path):
             context_resolver=resolver,
             policy_engine=policy_engine,
             privacy_proof_integrity_key=PROOF_KEY,
+            agent_provenance_integrity_key=PROVENANCE_KEY,
             secret_key=AUTH_KEY,
             ttl_seconds=5,
             clock=lambda: VERIFY_AT.timestamp(),
@@ -274,14 +354,15 @@ def _reseal_with_transcript(
     proof: PreExecutionPrivacyProof,
     transcript_sha256: str,
 ) -> PreExecutionPrivacyProof:
-    payload = proof.model_dump(mode="json")
-    payload["ppmc_search_transcript_sha256"] = transcript_sha256
-    payload["privacy_proof_sha256"] = compute_preexecution_privacy_proof_sha256(payload)
-    payload["integrity_hmac_sha256"] = compute_preexecution_privacy_proof_hmac(
-        payload,
-        integrity_key=PROOF_KEY,
+    base = proof.model_copy(
+        update={
+            "agent_ppmc_provenance": None,
+            "ppmc_search_transcript_sha256": transcript_sha256,
+            "privacy_proof_sha256": "0" * 64,
+            "integrity_hmac_sha256": "0" * 64,
+        }
     )
-    return PreExecutionPrivacyProof.model_validate(payload)
+    return _with_agent_provenance(base)
 
 
 def test_public_verifier_executes_only_with_matching_real_privacy_proof(tmp_path) -> None:

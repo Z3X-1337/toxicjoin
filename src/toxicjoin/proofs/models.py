@@ -46,6 +46,69 @@ class RepairProofBinding(StrictModel):
         return self
 
 
+class AgentPpmcProofBinding(StrictModel):
+    """Cryptographically separated Governed-Agent provenance commitment for one proof.
+
+    ``proof_core_sha256`` commits every base-proof field before Agent provenance and the enclosing
+    proof hashes are attached. ``binding_sha256`` commits the provenance payload itself, while
+    ``authority_hmac_sha256`` authenticates that payload with a key distinct from both the generic
+    proof HMAC key and the execution-authorization key. Explicit PPMC fields remain duplicated for
+    diagnosability, while the proof-core commitment prevents a generic proof issuer from rewriting
+    lifetime, snapshot, repair, profile, or any future base-proof field and retaining genuine Agent
+    provenance.
+    """
+
+    schema_version: Literal["1.0"] = "1.0"
+    agent_proposal_sha256: Sha256
+    agent_evaluation_sha256: Sha256
+    agent_ppmc_evaluation_sha256: Sha256
+    f6_clearance_sha256: Sha256
+    proof_core_sha256: Sha256
+    request_identity_sha256: Sha256
+    sql_sha256: Sha256
+    query_plan_sha256: Sha256
+    task_purpose_sha256: Sha256
+    purpose_commitment_sha256: Sha256
+    subject_key_sha256: Sha256
+    governance_context_sha256: Sha256
+    governance_binding_sha256: Sha256
+    evidence_root_sha256: Sha256
+    evidence_validation_sha256: Sha256
+    policy_sha256: Sha256
+    policy_decision_sha256: Sha256
+    disclosure_state_sha256: Sha256
+    grammar_sha256: Sha256
+    ppmc_execution_profile: Literal["p0-preexec-v1"] = PREEXECUTION_PPMC_PROFILE
+    ppmc_config_sha256: Sha256
+    ppmc_forbidden_policy_sha256: Sha256
+    ppmc_governance_binding_sha256: Sha256
+    ppmc_search_transcript_sha256: Sha256
+    ppmc_result_sha256: Sha256
+    ppmc_status: Literal["NO_COUNTEREXAMPLE_WITHIN_BOUND"] = (
+        "NO_COUNTEREXAMPLE_WITHIN_BOUND"
+    )
+    ppmc_bound: int = Field(ge=0, le=5)
+    ppmc_max_states: int = Field(ge=1, le=50_000)
+    evidence_expires_at: datetime
+    binding_sha256: Sha256
+    authority_hmac_sha256: Sha256
+
+    @field_validator("evidence_expires_at")
+    @classmethod
+    def expiry_must_be_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("Agent proof provenance expiry must be timezone-aware")
+        return value.astimezone(timezone.utc)
+
+    @model_validator(mode="after")
+    def validate_binding(self) -> "AgentPpmcProofBinding":
+        if type(self) is not AgentPpmcProofBinding:
+            raise ValueError("Agent PPMC proof provenance must use the exact model type")
+        if self.binding_sha256 != compute_agent_ppmc_proof_binding_sha256(self):
+            raise ValueError("Agent PPMC proof provenance hash mismatch")
+        return self
+
+
 class PreExecutionPrivacyProof(StrictModel):
     """HMAC-authenticated commitment to one prospectively accepted execution candidate.
 
@@ -86,6 +149,7 @@ class PreExecutionPrivacyProof(StrictModel):
     )
     ppmc_bound: int = Field(ge=0, le=5)
     ppmc_max_states: int = Field(ge=1, le=50_000)
+    agent_ppmc_provenance: AgentPpmcProofBinding | None = None
     repair: RepairProofBinding | None = None
 
     privacy_proof_sha256: Sha256
@@ -135,4 +199,15 @@ class ProofVerificationResult(StrictModel):
 def compute_repair_proof_binding_sha256(binding: RepairProofBinding) -> str:
     return canonical_json_sha256(
         binding.model_dump(mode="json", exclude={"binding_sha256"})
+    )
+
+
+def compute_agent_ppmc_proof_binding_sha256(binding: AgentPpmcProofBinding) -> str:
+    if type(binding) is not AgentPpmcProofBinding:
+        raise TypeError("Agent PPMC proof provenance must use the exact model type")
+    return canonical_json_sha256(
+        binding.model_dump(
+            mode="json",
+            exclude={"binding_sha256", "authority_hmac_sha256"},
+        )
     )
