@@ -102,8 +102,6 @@ jobs:
             --write-out '%{http_code}' "${REPLAY_URL}provenance.json")
           test "$document_status" = "200"
           test "$provenance_status" = "200"
-          printf '%s\n' "$document_status" > "$EVIDENCE_DIR/document-status.txt"
-          printf '%s\n' "$provenance_status" > "$EVIDENCE_DIR/provenance-status.txt"
 
       - name: Compare live provenance and immutable assets with repository replay
         shell: bash
@@ -123,8 +121,13 @@ jobs:
           live_html = evidence.joinpath("live-index.html").read_text(encoding="utf-8")
           live_provenance = json.loads(evidence.joinpath("live-provenance.json").read_text(encoding="utf-8"))
           repo_provenance = json.loads(candidate.joinpath("public/replay/provenance.json").read_text(encoding="utf-8"))
-          if live_provenance != repo_provenance:
-              raise SystemExit("live provenance differs from exact-main public/replay provenance")
+
+          for key, expected in repo_provenance.items():
+              if live_provenance.get(key) != expected:
+                  raise SystemExit(f"live provenance core field differs: {key}")
+          extra_keys = sorted(set(live_provenance) - set(repo_provenance))
+          if any(key != "materialized_commit" for key in extra_keys):
+              raise SystemExit(f"unexpected live provenance extensions: {extra_keys}")
 
           pattern = re.compile(
               r"https://cdn\.jsdelivr\.net/gh/Z3X-1337/toxicjoin@([0-9a-f]{40})/public/replay/assets/([^\"']+)"
@@ -135,6 +138,12 @@ jobs:
           asset_commits = sorted({commit for commit, _ in refs})
           if len(asset_commits) != 1:
               raise SystemExit("live replay assets are not bound to one immutable commit")
+          asset_commit = asset_commits[0]
+          materialized_commit = str(live_provenance.get("materialized_commit", ""))
+          if not re.fullmatch(r"[0-9a-f]{40}", materialized_commit):
+              raise SystemExit("live materialized_commit is missing or malformed")
+          if materialized_commit != asset_commit:
+              raise SystemExit("live materialized_commit does not bind the immutable asset commit")
 
           asset_results = []
           for commit, filename in refs:
@@ -162,27 +171,27 @@ jobs:
           source_commit = str(live_provenance.get("source_commit", ""))
           if not re.fullmatch(r"[0-9a-f]{40}", source_commit):
               raise SystemExit("provenance source_commit is malformed")
-          asset_commit = asset_commits[0]
           evidence.joinpath("source-commit.txt").write_text(source_commit + "\n", encoding="utf-8")
           evidence.joinpath("asset-commit.txt").write_text(asset_commit + "\n", encoding="utf-8")
-          preliminary = {
-              "schema_version": "1.0",
-              "validation_main_sha": current_main,
-              "live_url": os.environ["REPLAY_URL"],
-              "live_document_status": 200,
-              "live_provenance_status": 200,
-              "live_provenance_matches_repository": True,
-              "live_assets_match_repository_replay": True,
-              "provenance_source_commit": source_commit,
-              "immutable_asset_commit": asset_commit,
-              "source_artifact_id": live_provenance.get("source_artifact_id"),
-              "source_artifact_digest": live_provenance.get("source_artifact_digest"),
-              "source_workflow_run": live_provenance.get("source_workflow_run"),
-              "source_pr": live_provenance.get("source_pr"),
-              "assets": sorted(asset_results, key=lambda item: item["filename"]),
-          }
           evidence.joinpath("preliminary.json").write_text(
-              json.dumps(preliminary, indent=2, sort_keys=True) + "\n",
+              json.dumps({
+                  "schema_version": "1.1",
+                  "validation_main_sha": current_main,
+                  "live_url": os.environ["REPLAY_URL"],
+                  "live_document_status": 200,
+                  "live_provenance_status": 200,
+                  "live_provenance_core_matches_repository": True,
+                  "live_provenance_extension_keys": extra_keys,
+                  "live_assets_match_repository_replay": True,
+                  "provenance_source_commit": source_commit,
+                  "materialized_commit": materialized_commit,
+                  "immutable_asset_commit": asset_commit,
+                  "source_artifact_id": live_provenance.get("source_artifact_id"),
+                  "source_artifact_digest": live_provenance.get("source_artifact_digest"),
+                  "source_workflow_run": live_provenance.get("source_workflow_run"),
+                  "source_pr": live_provenance.get("source_pr"),
+                  "assets": sorted(asset_results, key=lambda item: item["filename"]),
+              }, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
           )
           PY
@@ -198,10 +207,8 @@ jobs:
           git cat-file -e "${ASSET_COMMIT}^{commit}"
           git merge-base --is-ancestor "$SOURCE_COMMIT" "$EXPECTED_MAIN_SHA"
           git merge-base --is-ancestor "$ASSET_COMMIT" "$EXPECTED_MAIN_SHA"
-          SOURCE_DISTANCE="$(git rev-list --count "${SOURCE_COMMIT}..${EXPECTED_MAIN_SHA}")"
-          ASSET_DISTANCE="$(git rev-list --count "${ASSET_COMMIT}..${EXPECTED_MAIN_SHA}")"
-          printf '%s\n' "$SOURCE_DISTANCE" > "$EVIDENCE_DIR/source-distance.txt"
-          printf '%s\n' "$ASSET_DISTANCE" > "$EVIDENCE_DIR/asset-distance.txt"
+          git rev-list --count "${SOURCE_COMMIT}..${EXPECTED_MAIN_SHA}" > "$EVIDENCE_DIR/source-distance.txt"
+          git rev-list --count "${ASSET_COMMIT}..${EXPECTED_MAIN_SHA}" > "$EVIDENCE_DIR/asset-distance.txt"
 
       - name: Verify desktop and mobile live replay in Chromium
         working-directory: ${{ env.CANDIDATE_DIR }}
@@ -248,7 +255,7 @@ jobs:
               "disclosure": browser.get("disclosure"),
               "interpretation": (
                   "The public replay is live and byte-consistent with public/replay in exact current main, "
-                  "but its provenance and immutable assets identify historical ancestor revisions rather than the current main build."
+                  "while its explicit provenance and immutable assets identify verified historical ancestor revisions."
               ),
           })
           canonical = json.dumps(report, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
