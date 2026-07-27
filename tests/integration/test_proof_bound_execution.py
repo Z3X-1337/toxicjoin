@@ -135,6 +135,7 @@ def _with_agent_provenance(proof: PreExecutionPrivacyProof) -> PreExecutionPriva
         "agent_evaluation_sha256": "2" * 64,
         "agent_ppmc_evaluation_sha256": "3" * 64,
         "f6_clearance_sha256": "4" * 64,
+        "request_identity_sha256": proof.request_identity_sha256,
         "sql_sha256": proof.sql_sha256,
         "query_plan_sha256": proof.query_plan_sha256,
         "task_purpose_sha256": proof.task_purpose_sha256,
