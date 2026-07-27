@@ -41,22 +41,32 @@ class DataHubAgentProofHandoffAuthority:
         provenance_integrity_key: bytes,
         clock=None,
     ) -> None:
+        stable_code = "AGENT_PROOF_HANDOFF_INTEGRITY_KEY_INVALID"
+        proof_authority = None
+        provenance_key = None
         try:
-            self._proof_authority = DataHubAgentPreExecutionProofAuthority(
+            proof_authority = DataHubAgentPreExecutionProofAuthority(
                 integrity_key=integrity_key,
                 provenance_integrity_key=provenance_integrity_key,
                 clock=clock,
             )
-            self._provenance_integrity_key = bytes(provenance_integrity_key)
+            provenance_key = bytes(provenance_integrity_key)
+            self._proof_authority = proof_authority
+            self._provenance_integrity_key = provenance_key
+            return
         except AgentPreExecutionProofAuthorityError as error:
-            code = error.code
+            stable_code = error.code
             _detach_exception(error)
-            raise AgentProofHandoffAuthorityError(code) from None
         except Exception as error:
             _detach_exception(error)
-            raise AgentProofHandoffAuthorityError(
-                "AGENT_PROOF_HANDOFF_INTEGRITY_KEY_INVALID"
-            ) from None
+
+        integrity_key = None  # type: ignore[assignment]
+        provenance_integrity_key = None  # type: ignore[assignment]
+        clock = None
+        proof_authority = None
+        provenance_key = None
+        self = None  # type: ignore[assignment]
+        raise AgentProofHandoffAuthorityError(stable_code) from None
 
     def issue(
         self,
