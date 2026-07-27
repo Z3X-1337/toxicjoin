@@ -41,12 +41,16 @@ class ProofBoundExecutionAuthorizer(_ProofBoundExecutionAuthorizerBase):
             agent_provenance_integrity_key,
             name="Agent provenance integrity key",
         )
+        execution_key = (
+            None
+            if secret_key is None
+            else _strict_key(secret_key, name="execution authorization key")
+        )
         if hmac.compare_digest(proof_key, provenance_key):
             raise ValueError(
                 "Agent provenance integrity key must differ from privacy proof integrity key"
             )
-        if secret_key is not None:
-            execution_key = bytes(secret_key)
+        if execution_key is not None:
             if hmac.compare_digest(proof_key, execution_key):
                 raise ValueError(
                     "privacy proof integrity key must differ from execution authorization key"
@@ -61,7 +65,7 @@ class ProofBoundExecutionAuthorizer(_ProofBoundExecutionAuthorizerBase):
             privacy_proof_integrity_key=proof_key,
             disclosure_ledger=disclosure_ledger,
             require_disclosure_commitment=require_disclosure_commitment,
-            secret_key=secret_key,
+            secret_key=execution_key,
             ttl_seconds=ttl_seconds,
             clock=clock,
         )
