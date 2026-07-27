@@ -65,13 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           browser_path=""
-          for command_name in \
-            google-chrome \
-            google-chrome-stable \
-            chromium \
-            chromium-browser \
-            microsoft-edge \
-            microsoft-edge-stable; do
+          for command_name in google-chrome google-chrome-stable chromium chromium-browser microsoft-edge microsoft-edge-stable; do
             candidate=$(command -v "$command_name" || true)
             if [[ -n "$candidate" && -x "$candidate" ]]; then
               browser_path="$candidate"
@@ -103,7 +97,7 @@ jobs:
           test "$document_status" = "200"
           test "$provenance_status" = "200"
 
-      - name: Compare live provenance and immutable assets with repository replay
+      - name: Validate provenance and immutable asset references
         shell: bash
         run: |
           set -euo pipefail
@@ -112,12 +106,10 @@ jobs:
           import json
           import os
           import re
-          import subprocess
           from pathlib import Path
 
           evidence = Path(os.environ["EVIDENCE_DIR"])
           candidate = Path(os.environ["CANDIDATE_DIR"])
-          current_main = os.environ["EXPECTED_MAIN_SHA"]
           live_html = evidence.joinpath("live-index.html").read_text(encoding="utf-8")
           live_provenance = json.loads(evidence.joinpath("live-provenance.json").read_text(encoding="utf-8"))
           repo_provenance = json.loads(candidate.joinpath("public/replay/provenance.json").read_text(encoding="utf-8"))
@@ -140,37 +132,22 @@ jobs:
               raise SystemExit("live replay assets are not bound to one immutable commit")
           asset_commit = asset_commits[0]
           materialized_commit = str(live_provenance.get("materialized_commit", ""))
-          if not re.fullmatch(r"[0-9a-f]{40}", materialized_commit):
-              raise SystemExit("live materialized_commit is missing or malformed")
           if materialized_commit != asset_commit:
               raise SystemExit("live materialized_commit does not bind the immutable asset commit")
 
-          asset_results = []
+          assets = []
+          filenames = []
           for commit, filename in refs:
-              url = f"https://cdn.jsdelivr.net/gh/Z3X-1337/toxicjoin@{commit}/public/replay/assets/{filename}"
-              fetched = subprocess.run(
-                  ["curl", "--location", "--silent", "--show-error", "--fail", url],
-                  stdout=subprocess.PIPE,
-                  stderr=subprocess.PIPE,
-                  check=False,
-              )
-              if fetched.returncode != 0:
-                  raise SystemExit(f"immutable asset fetch failed: {filename}")
-              remote = fetched.stdout
               local_path = candidate / "public" / "replay" / "assets" / filename
               if not local_path.is_file():
                   raise SystemExit(f"asset missing from exact-main public/replay: {filename}")
-              local = local_path.read_bytes()
-              remote_sha = hashlib.sha256(remote).hexdigest()
-              local_sha = hashlib.sha256(local).hexdigest()
-              if remote_sha != local_sha:
-                  raise SystemExit(f"live immutable asset differs from repository replay: {filename}")
-              asset_results.append({
+              data = local_path.read_bytes()
+              filenames.append(filename)
+              assets.append({
                   "filename": filename,
                   "immutable_commit": commit,
-                  "sha256": local_sha,
-                  "bytes": len(local),
-                  "http_status": 200,
+                  "repository_sha256": hashlib.sha256(data).hexdigest(),
+                  "repository_bytes": len(data),
               })
 
           source_commit = str(live_provenance.get("source_commit", ""))
@@ -178,16 +155,16 @@ jobs:
               raise SystemExit("provenance source_commit is malformed")
           evidence.joinpath("source-commit.txt").write_text(source_commit + "\n", encoding="utf-8")
           evidence.joinpath("asset-commit.txt").write_text(asset_commit + "\n", encoding="utf-8")
+          evidence.joinpath("asset-files.txt").write_text("\n".join(sorted(filenames)) + "\n", encoding="utf-8")
           evidence.joinpath("preliminary.json").write_text(
               json.dumps({
-                  "schema_version": "1.1",
-                  "validation_main_sha": current_main,
+                  "schema_version": "1.2",
+                  "validation_main_sha": os.environ["EXPECTED_MAIN_SHA"],
                   "live_url": os.environ["REPLAY_URL"],
                   "live_document_status": 200,
                   "live_provenance_status": 200,
                   "live_provenance_core_matches_repository": True,
                   "live_provenance_extension_keys": extra_keys,
-                  "live_assets_match_repository_replay": True,
                   "provenance_source_commit": source_commit,
                   "materialized_commit": materialized_commit,
                   "immutable_asset_commit": asset_commit,
@@ -195,13 +172,13 @@ jobs:
                   "source_artifact_digest": live_provenance.get("source_artifact_digest"),
                   "source_workflow_run": live_provenance.get("source_workflow_run"),
                   "source_pr": live_provenance.get("source_pr"),
-                  "assets": sorted(asset_results, key=lambda item: item["filename"]),
+                  "assets": sorted(assets, key=lambda item: item["filename"]),
               }, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
           )
           PY
 
-      - name: Establish historical relationship to exact current main
+      - name: Establish historical relationship and immutable blob identity
         shell: bash
         run: |
           set -euo pipefail
@@ -214,6 +191,13 @@ jobs:
           git merge-base --is-ancestor "$ASSET_COMMIT" "$EXPECTED_MAIN_SHA"
           git rev-list --count "${SOURCE_COMMIT}..${EXPECTED_MAIN_SHA}" > "$EVIDENCE_DIR/source-distance.txt"
           git rev-list --count "${ASSET_COMMIT}..${EXPECTED_MAIN_SHA}" > "$EVIDENCE_DIR/asset-distance.txt"
+          : > "$EVIDENCE_DIR/blob-identity.tsv"
+          while IFS= read -r filename; do
+            pinned_blob=$(git rev-parse "${ASSET_COMMIT}:public/replay/assets/${filename}")
+            main_blob=$(git rev-parse "${EXPECTED_MAIN_SHA}:public/replay/assets/${filename}")
+            test "$pinned_blob" = "$main_blob"
+            printf '%s\t%s\t%s\n' "$filename" "$pinned_blob" "$main_blob" >> "$EVIDENCE_DIR/blob-identity.tsv"
+          done < "$EVIDENCE_DIR/asset-files.txt"
 
       - name: Verify desktop and mobile live replay in Chromium
         working-directory: ${{ env.CANDIDATE_DIR }}
@@ -239,11 +223,35 @@ jobs:
           evidence = Path(os.environ["EVIDENCE_DIR"])
           report = json.loads(evidence.joinpath("preliminary.json").read_text(encoding="utf-8"))
           browser = json.loads(evidence.joinpath("browser-verification.json").read_text(encoding="utf-8"))
+          diagnostics = json.loads(evidence.joinpath("browser-diagnostics.json").read_text(encoding="utf-8"))
           source_distance = int(evidence.joinpath("source-distance.txt").read_text().strip())
           asset_distance = int(evidence.joinpath("asset-distance.txt").read_text().strip())
           current_main = os.environ["EXPECTED_MAIN_SHA"]
           source_commit = report["provenance_source_commit"]
           asset_commit = report["immutable_asset_commit"]
+
+          blob_rows = []
+          for line in evidence.joinpath("blob-identity.tsv").read_text(encoding="utf-8").splitlines():
+              filename, pinned_blob, main_blob = line.split("\t")
+              blob_rows.append({
+                  "filename": filename,
+                  "pinned_blob": pinned_blob,
+                  "current_main_blob": main_blob,
+                  "match": pinned_blob == main_blob,
+              })
+          if len(blob_rows) != 2 or not all(row["match"] for row in blob_rows):
+              raise SystemExit("immutable Git blob identity check failed")
+
+          for profile in diagnostics.get("profiles", []):
+              responses = profile.get("asset_responses", [])
+              if len(responses) != 2:
+                  raise SystemExit("browser did not observe exactly two immutable assets")
+              for response in responses:
+                  if response.get("status") != 200:
+                      raise SystemExit("browser observed failed immutable asset response")
+                  if f"@{asset_commit}/public/replay/assets/" not in str(response.get("url", "")):
+                      raise SystemExit("browser asset URL does not match materialized commit")
+
           report.update({
               "source_commit_is_ancestor_of_current_main": True,
               "asset_commit_is_ancestor_of_current_main": True,
@@ -251,6 +259,9 @@ jobs:
               "asset_commit_distance_to_current_main": asset_distance,
               "source_commit_equals_current_main": source_commit == current_main,
               "asset_commit_equals_current_main": asset_commit == current_main,
+              "immutable_git_blobs_match_current_main": True,
+              "immutable_blob_identity": blob_rows,
+              "browser_asset_responses_verified": True,
               "freshness_classification": (
                   "CURRENT_MAIN" if source_commit == current_main and asset_commit == current_main
                   else "HISTORICAL_VERIFIED"
@@ -259,8 +270,9 @@ jobs:
               "browser_profile_count": len(browser.get("profiles", [])),
               "disclosure": browser.get("disclosure"),
               "interpretation": (
-                  "The public replay is live and byte-consistent with public/replay in exact current main, "
-                  "while its explicit provenance and immutable assets identify verified historical ancestor revisions."
+                  "The public replay is live, its provenance is internally consistent, its immutable asset Git blobs "
+                  "match public/replay in exact current main, and desktop/mobile browsers load those pinned assets. "
+                  "The replay nevertheless identifies historical ancestor revisions rather than the current main build."
               ),
           })
           canonical = json.dumps(report, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -280,7 +292,7 @@ jobs:
               "report_sha256": report["report_sha256"],
           }, sort_keys=True))
           PY
-          rm -f "$EVIDENCE_DIR/preliminary.json"
+          rm -f "$EVIDENCE_DIR/preliminary.json" "$EVIDENCE_DIR/blob-identity.tsv" "$EVIDENCE_DIR/asset-files.txt"
 
       - name: Upload sanitized hosted replay freshness evidence
         if: always()
