@@ -9,14 +9,15 @@ from toxicjoin.agent import (
     DataHubAgentProposalAuthority,
     DataHubGovernanceTrustAuthority,
     GovernedAgent,
+    TrustedAgentProposalEvaluation,
     build_agent_data_context_from_snapshot,
     build_agent_goal,
 )
-from toxicjoin.agent.f6_governance import DataHubF6GovernanceAuthority
 from toxicjoin.agent.ppmc_authority import (
     AgentPpmcAuthorityError,
     DataHubAgentPpmcAuthority,
     TrustedAgentPpmcEvaluation,
+    compute_trusted_agent_ppmc_evaluation_sha256,
 )
 from toxicjoin.context.datahub import DataHubSnapshot
 from toxicjoin.context.fixture import FixtureCatalog, FixtureDataset, FixtureField
@@ -126,7 +127,7 @@ def _artifacts(monkeypatch: pytest.MonkeyPatch):
         authorized_task_purpose=PURPOSE,
         subject_key=SUBJECT_KEY,
     )
-    trust_binding = DataHubGovernanceTrustAuthority(
+    governance_trust = DataHubGovernanceTrustAuthority(
         clock=lambda: NOW + timedelta(seconds=2)
     ).bind(evaluation)
 
@@ -166,13 +167,6 @@ def _artifacts(monkeypatch: pytest.MonkeyPatch):
         evidence_root_sha256=evaluation.evidence_bundle.evidence_root_sha256,
         warehouse_snapshot_sha256=canonical_json_sha256({"warehouse": "day13-agent-ppmc-a"}),
     )
-    clearance = DataHubF6GovernanceAuthority(
-        clock=lambda: NOW + timedelta(seconds=3)
-    ).clear(
-        evaluation=evaluation,
-        governance_trust=trust_binding,
-        state=state,
-    )
     grammar = instantiate_future_action_grammar(
         build_future_action_grammar_context(
             base_state=state,
@@ -185,121 +179,111 @@ def _artifacts(monkeypatch: pytest.MonkeyPatch):
         minimum_group_size=policy.minimum_group_size
     )
     config = build_ppmc_search_config(bound=0, max_states=32)
-    return evaluation, state, clearance, grammar, forbidden_policy, config, semantic, composition
+    return (
+        evaluation,
+        governance_trust,
+        state,
+        grammar,
+        forbidden_policy,
+        config,
+        semantic,
+        composition,
+    )
 
 
 def _unexpected_oracle(state, action):
     raise AssertionError("bound-zero Agent PPMC must not invoke the local oracle")
 
 
-def test_exact_f6_clearance_drives_agent_ppmc(monkeypatch: pytest.MonkeyPatch) -> None:
-    _, state, clearance, grammar, forbidden_policy, config, _, _ = _artifacts(monkeypatch)
-
-    result = DataHubAgentPpmcAuthority(
-        clock=lambda: NOW + timedelta(seconds=4)
-    ).check(
+def _check(authority, artifacts):
+    evaluation, governance_trust, state, grammar, forbidden_policy, config, _, _ = artifacts
+    return authority.check(
+        evaluation=evaluation,
+        governance_trust=governance_trust,
         initial_state=state,
-        f6_clearance=clearance,
         grammar=grammar,
         forbidden_policy=forbidden_policy,
         local_oracle=_unexpected_oracle,
         config=config,
     )
 
-    assert result.f6_clearance_sha256 == clearance.clearance_sha256
+
+def test_internal_f6_clearance_drives_agent_ppmc(monkeypatch: pytest.MonkeyPatch) -> None:
+    artifacts = _artifacts(monkeypatch)
+    evaluation, _, state, grammar, forbidden_policy, _, _, _ = artifacts
+
+    result = _check(
+        DataHubAgentPpmcAuthority(clock=lambda: NOW + timedelta(seconds=4)),
+        artifacts,
+    )
+
+    assert result.agent_evaluation_sha256 == evaluation.evaluation_sha256
+    assert result.f6_clearance.evaluation_sha256 == evaluation.evaluation_sha256
+    assert result.f6_clearance_sha256 == result.f6_clearance.clearance_sha256
+    assert result.f6_clearance.disclosure_state_sha256 == state.state_sha256
     assert result.disclosure_state_sha256 == state.state_sha256
-    assert result.governance_binding_sha256 == clearance.f6_binding.binding_sha256
+    assert result.governance_binding_sha256 == result.f6_clearance.f6_binding.binding_sha256
     assert result.ppmc_result.status == PpmcStatus.NO_COUNTEREXAMPLE_WITHIN_BOUND
     assert result.ppmc_result.initial_state_sha256 == state.state_sha256
-    assert result.ppmc_result.governance_binding_sha256 == clearance.f6_binding.binding_sha256
+    assert result.ppmc_result.grammar_sha256 == grammar.grammar_sha256
+    assert result.ppmc_result.forbidden_policy_sha256 == forbidden_policy.policy_sha256
+    assert result.ppmc_result.governance_binding_sha256 == (
+        result.f6_clearance.f6_binding.binding_sha256
+    )
     assert result.ppmc_result_sha256 == result.ppmc_result.result_sha256
     assert result.prospective_privacy_checked is True
     assert result.execution_authorized is False
 
 
-def test_clearance_for_different_state_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-    evaluation, state, clearance, _, forbidden_policy, config, semantic, composition = _artifacts(
-        monkeypatch
-    )
-    replacement_state = build_disclosure_state(
-        scope=state.scope,
-        audit_history=(),
-        candidate_semantic=semantic,
-        candidate_composition=composition,
-        purpose_commitment_sha256=evaluation.authorized_task_purpose_sha256,
-        governance_commitment_sha256=state.governance_commitment_sha256,
-        evidence_root_sha256=state.evidence_root_sha256,
-        warehouse_snapshot_sha256=canonical_json_sha256(
-            {"warehouse": "day13-agent-ppmc-b"}
-        ),
-    )
-    replacement_grammar = instantiate_future_action_grammar(
-        build_future_action_grammar_context(
-            base_state=replacement_state,
-            base_semantic=semantic,
-            base_composition=composition,
-        )
-    )
-    assert replacement_state.state_sha256 != state.state_sha256
-
-    with pytest.raises(AgentPpmcAuthorityError, match="AGENT_PPMC_STATE_MISMATCH"):
-        DataHubAgentPpmcAuthority(clock=lambda: NOW + timedelta(seconds=4)).check(
-            initial_state=replacement_state,
-            f6_clearance=clearance,
-            grammar=replacement_grammar,
-            forbidden_policy=forbidden_policy,
-            local_oracle=_unexpected_oracle,
-            config=config,
-        )
-
-
-def test_legacy_f6_binding_cannot_substitute_for_clearance(
+def test_evaluation_subclass_is_rejected_before_virtual_serialization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _, state, clearance, grammar, forbidden_policy, config, _, _ = _artifacts(monkeypatch)
+    artifacts = _artifacts(monkeypatch)
+    evaluation, governance_trust, state, grammar, forbidden_policy, config, _, _ = artifacts
+    calls: list[str] = []
+
+    class _MaliciousEvaluation(TrustedAgentProposalEvaluation):
+        def model_dump(self, *args, **kwargs):
+            calls.append("model_dump")
+            return super().model_dump(*args, **kwargs)
+
+    attacker = _MaliciousEvaluation.model_validate(evaluation.model_dump(mode="json"))
+    calls.clear()
 
     with pytest.raises(AgentPpmcAuthorityError, match="AGENT_PPMC_INPUT_INVALID"):
         DataHubAgentPpmcAuthority(clock=lambda: NOW + timedelta(seconds=4)).check(
+            evaluation=attacker,
+            governance_trust=governance_trust,
             initial_state=state,
-            f6_clearance=clearance.f6_binding,
             grammar=grammar,
             forbidden_policy=forbidden_policy,
             local_oracle=_unexpected_oracle,
             config=config,
         )
 
-
-def test_clearance_from_future_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-    _, state, clearance, grammar, forbidden_policy, config, _, _ = _artifacts(monkeypatch)
-
-    with pytest.raises(AgentPpmcAuthorityError, match="AGENT_PPMC_CLEARANCE_FROM_FUTURE"):
-        DataHubAgentPpmcAuthority(clock=lambda: NOW + timedelta(seconds=2)).check(
-            initial_state=state,
-            f6_clearance=clearance,
-            grammar=grammar,
-            forbidden_policy=forbidden_policy,
-            local_oracle=_unexpected_oracle,
-            config=config,
-        )
+    assert calls == []
 
 
-def test_stale_clearance_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-    _, state, clearance, grammar, forbidden_policy, config, _, _ = _artifacts(monkeypatch)
+def test_stale_evidence_cannot_issue_internal_f6_clearance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts = _artifacts(monkeypatch)
 
-    with pytest.raises(AgentPpmcAuthorityError, match="AGENT_PPMC_CLEARANCE_STALE"):
-        DataHubAgentPpmcAuthority(clock=lambda: NOW + timedelta(seconds=301)).check(
-            initial_state=state,
-            f6_clearance=clearance,
-            grammar=grammar,
-            forbidden_policy=forbidden_policy,
-            local_oracle=_unexpected_oracle,
-            config=config,
+    with pytest.raises(
+        AgentPpmcAuthorityError,
+        match="AGENT_PPMC_F6_CLEARANCE_FAILED",
+    ):
+        _check(
+            DataHubAgentPpmcAuthority(clock=lambda: NOW + timedelta(seconds=301)),
+            artifacts,
         )
 
 
 def test_expiry_after_ppmc_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
-    _, state, clearance, grammar, forbidden_policy, config, _, _ = _artifacts(monkeypatch)
+    artifacts = _artifacts(monkeypatch)
     clock = _SequenceClock(
+        NOW + timedelta(seconds=299),
+        NOW + timedelta(seconds=299),
         NOW + timedelta(seconds=299),
         NOW + timedelta(seconds=301),
     )
@@ -308,59 +292,58 @@ def test_expiry_after_ppmc_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None
         AgentPpmcAuthorityError,
         match="AGENT_PPMC_CLEARANCE_STALE_AT_ISSUE",
     ):
-        DataHubAgentPpmcAuthority(clock=clock).check(
-            initial_state=state,
-            f6_clearance=clearance,
-            grammar=grammar,
-            forbidden_policy=forbidden_policy,
-            local_oracle=_unexpected_oracle,
-            config=config,
-        )
+        _check(DataHubAgentPpmcAuthority(clock=clock), artifacts)
 
 
 def test_cross_call_clock_rollback_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
-    _, state, clearance, grammar, forbidden_policy, config, _, _ = _artifacts(monkeypatch)
+    artifacts = _artifacts(monkeypatch)
     clock = _MutableClock(NOW + timedelta(seconds=10))
     authority = DataHubAgentPpmcAuthority(clock=clock)
 
-    first = authority.check(
-        initial_state=state,
-        f6_clearance=clearance,
-        grammar=grammar,
-        forbidden_policy=forbidden_policy,
-        local_oracle=_unexpected_oracle,
-        config=config,
-    )
+    first = _check(authority, artifacts)
     assert first.ppmc_result.status == PpmcStatus.NO_COUNTEREXAMPLE_WITHIN_BOUND
 
     clock.current = NOW + timedelta(seconds=5)
-    with pytest.raises(AgentPpmcAuthorityError, match="AGENT_PPMC_TIME_ROLLBACK"):
-        authority.check(
-            initial_state=state,
-            f6_clearance=clearance,
-            grammar=grammar,
-            forbidden_policy=forbidden_policy,
-            local_oracle=_unexpected_oracle,
-            config=config,
-        )
+    with pytest.raises(
+        AgentPpmcAuthorityError,
+        match="AGENT_PPMC_F6_CLEARANCE_FAILED",
+    ):
+        _check(authority, artifacts)
 
 
 def test_trusted_agent_ppmc_evaluation_hash_tampering_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _, state, clearance, grammar, forbidden_policy, config, _, _ = _artifacts(monkeypatch)
-    result = DataHubAgentPpmcAuthority(
-        clock=lambda: NOW + timedelta(seconds=4)
-    ).check(
-        initial_state=state,
-        f6_clearance=clearance,
-        grammar=grammar,
-        forbidden_policy=forbidden_policy,
-        local_oracle=_unexpected_oracle,
-        config=config,
+    result = _check(
+        DataHubAgentPpmcAuthority(clock=lambda: NOW + timedelta(seconds=4)),
+        _artifacts(monkeypatch),
     )
     payload = result.model_dump(mode="json")
     payload["evaluation_sha256"] = "0" * 64
 
     with pytest.raises(ValidationError, match="Agent PPMC evaluation hash mismatch"):
         TrustedAgentPpmcEvaluation.model_validate(payload)
+
+
+def test_self_consistent_result_state_rebinding_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _check(
+        DataHubAgentPpmcAuthority(clock=lambda: NOW + timedelta(seconds=4)),
+        _artifacts(monkeypatch),
+    )
+    different_state_sha256 = canonical_json_sha256({"state": "different"})
+    provisional = result.model_copy(
+        update={
+            "disclosure_state_sha256": different_state_sha256,
+            "evaluation_sha256": "0" * 64,
+        }
+    )
+    forged = provisional.model_copy(
+        update={
+            "evaluation_sha256": compute_trusted_agent_ppmc_evaluation_sha256(provisional)
+        }
+    )
+
+    with pytest.raises(ValidationError, match="F6/state commitment mismatch"):
+        TrustedAgentPpmcEvaluation.model_validate(forged.model_dump(mode="json"))
