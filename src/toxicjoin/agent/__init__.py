@@ -5,6 +5,10 @@ from toxicjoin.agent.datahub_discovery import (
     DataHubAgentDiscoverer,
     build_agent_data_context_from_snapshot,
 )
+from toxicjoin.agent.governance_handoff import (
+    AgentGovernanceTrustHandoffError,
+    DataHubAgentGovernanceTrustHandoffAuthority,
+)
 from toxicjoin.agent.governance_trust import (
     DataHubGovernanceTrustAuthority,
     GovernanceFactRequirement,
@@ -60,6 +64,14 @@ from toxicjoin.agent.proposal_authority import (
     TrustedAgentProposalEvaluation,
     compute_trusted_agent_proposal_evaluation_sha256,
 )
+from toxicjoin.agent.proposal_handoff import (
+    AgentProposalEvaluationCapsule,
+    AgentProposalEvaluationCapsuleError,
+    DataHubAgentProposalHandoffAuthority,
+    compute_agent_proposal_evaluation_capsule_hmac,
+    compute_agent_proposal_evaluation_capsule_sha256,
+    require_agent_proposal_evaluation_capsule,
+)
 
 __all__ = [
     "AgentCapability",
@@ -70,6 +82,7 @@ __all__ = [
     "AgentFeedback",
     "AgentFieldView",
     "AgentGoal",
+    "AgentGovernanceTrustHandoffError",
     "AgentLineageView",
     "AgentPlanner",
     "AgentPpmcAuthorityError",
@@ -80,12 +93,16 @@ __all__ = [
     "AgentProposal",
     "AgentProposalAuthorityError",
     "AgentProposalError",
+    "AgentProposalEvaluationCapsule",
+    "AgentProposalEvaluationCapsuleError",
     "DataHubAgentDiscoverer",
+    "DataHubAgentGovernanceTrustHandoffAuthority",
     "DataHubAgentPpmcAuthority",
     "DataHubAgentPpmcHandoffAuthority",
     "DataHubAgentPreExecutionProofAuthority",
     "DataHubAgentProofHandoffAuthority",
     "DataHubAgentProposalAuthority",
+    "DataHubAgentProposalHandoffAuthority",
     "DataHubGovernanceTrustAuthority",
     "GovernanceFactRequirement",
     "GovernanceTrustBinding",
@@ -100,8 +117,11 @@ __all__ = [
     "build_agent_goal",
     "compute_agent_ppmc_evaluation_capsule_hmac",
     "compute_agent_ppmc_evaluation_capsule_sha256",
+    "compute_agent_proposal_evaluation_capsule_hmac",
+    "compute_agent_proposal_evaluation_capsule_sha256",
     "compute_governance_trust_binding_sha256",
     "compute_trusted_agent_ppmc_evaluation_sha256",
     "compute_trusted_agent_proposal_evaluation_sha256",
     "require_agent_ppmc_evaluation_capsule",
+    "require_agent_proposal_evaluation_capsule",
 ]
