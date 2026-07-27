@@ -193,10 +193,6 @@ def _artifacts(monkeypatch: pytest.MonkeyPatch):
     )
 
 
-def _unexpected_oracle(state, action):
-    raise AssertionError("bound-zero Agent PPMC must not invoke the local oracle")
-
-
 def _check(authority, artifacts):
     evaluation, governance_trust, state, grammar, forbidden_policy, config, _, _ = artifacts
     return authority.check(
@@ -205,7 +201,6 @@ def _check(authority, artifacts):
         initial_state=state,
         grammar=grammar,
         forbidden_policy=forbidden_policy,
-        local_oracle=_unexpected_oracle,
         config=config,
     )
 
@@ -284,7 +279,6 @@ def test_self_consistent_grammar_context_rebinding_fails_closed_at_bound_zero(
             initial_state=state,
             grammar=forged_grammar,
             forbidden_policy=forbidden_policy,
-            local_oracle=_unexpected_oracle,
             config=config,
         )
 
@@ -311,7 +305,6 @@ def test_evaluation_subclass_is_rejected_before_virtual_serialization(
             initial_state=state,
             grammar=grammar,
             forbidden_policy=forbidden_policy,
-            local_oracle=_unexpected_oracle,
             config=config,
         )
 
