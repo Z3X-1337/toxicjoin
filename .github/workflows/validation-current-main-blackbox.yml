@@ -138,9 +138,7 @@ jobs:
           import json
           import os
           from pathlib import Path
-
-          path = Path(os.environ["EVIDENCE_DIR"]) / "external-blackbox.json"
-          report = json.loads(path.read_text(encoding="utf-8"))
+          report = json.loads((Path(os.environ["EVIDENCE_DIR"]) / "external-blackbox.json").read_text())
           assert report["source_sha"] == os.environ["EXPECTED_MAIN_SHA"]
           assert report["experiment"] == "phase-0-current-main-external-blackbox"
           assert report["test_count"] == 24
@@ -154,7 +152,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --disable-pip-version-check uv==0.8.4
+          python -m pip install --disable-pip-version-check 'uv==0.8.4'
           cd "$CANDIDATE_DIR"
           uv sync --frozen --extra dev >/dev/null
           set +e
@@ -176,7 +174,6 @@ jobs:
           import re
           import sys
           from pathlib import Path
-
           status = int(sys.argv[1])
           text = Path("/tmp/toxicjoin-vnext-probe.log").read_text(encoding="utf-8", errors="replace")
           matches = re.findall(r"(\d+) passed", text)
@@ -208,7 +205,6 @@ jobs:
           import json
           import os
           from pathlib import Path
-
           tokens = json.loads(Path(os.environ["CLIENT_SECRETS_FILE"]).read_text(encoding="utf-8"))
           logs = Path("/tmp/toxicjoin-container.log").read_text(encoding="utf-8", errors="replace")
           credential_hits = sum(1 for value in tokens.values() if str(value) in logs)
