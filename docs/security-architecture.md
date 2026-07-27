@@ -20,7 +20,11 @@ The current `POST /api/execute-safe` path is:
 caller
   -> API authentication + EXECUTE scope
   -> authenticated request identity binding
-  -> ToxicJoinPipeline
+  -> ToxicJoinPipeline construction
+       -> create one canonical ExecutionAuthorizer when an executor is configured
+       -> bind that authorizer to the executor exactly once
+       -> reject externally pre-bound product executors
+  -> ToxicJoinPipeline request handling
        -> SQL analysis
        -> governed context resolution
        -> deterministic policy evaluation
@@ -37,7 +41,7 @@ caller
             -> deterministic policy re-evaluation
             -> subject-threshold / semantic-output checks
             -> cumulative-disclosure reservation when required
-            -> bind executor authority
+            -> validate the already-bound executor authority
             -> issue single-use execution capability
             -> verify + consume capability
   -> hardened read-only DuckDB connection
@@ -51,9 +55,9 @@ caller
 
 ### Source anchors
 
-The API route authenticates `EXECUTE` scope before calling the pipeline. The pipeline performs deterministic analysis/policy handling and calls the exported verifier for execution. The exported verifier currently points to the proof-aware wrapper, but the pipeline does **not** supply a `privacy_proof`, so the wrapper delegates to the governance verifier.
+The API route authenticates `EXECUTE` scope before calling the pipeline. The pipeline owns product authority bootstrap: an execution-capable pipeline accepts only an unbound executor, creates the current canonical `ExecutionAuthorizer`, and binds it once before any request can execute. The pipeline then performs deterministic analysis/policy handling and calls the exported verifier for execution. The exported verifier currently points to the proof-aware wrapper, but the pipeline does **not** supply a `privacy_proof`, so the wrapper delegates to the governance verifier.
 
-The governance verifier pins one governance binding for the request and injects that binding into execution-authorization issuance. The core verifier performs pre-execution checks, reserves cumulative-disclosure state when required, binds execution authority, issues a capability, and only then calls the executor.
+The governance verifier pins one governance binding for the request and injects that binding into execution-authorization issuance. The core verifier performs pre-execution checks, reserves cumulative-disclosure state when required, validates that the executor is already bound to the same resolver/policy/disclosure authority, issues a capability, and only then calls the executor. Verification no longer creates an execution authority lazily.
 
 ## 3. Authority ownership
 
@@ -66,14 +70,16 @@ The governance verifier pins one governance binding for the request and injects 
 | Deterministic privacy decision | `PolicyEngine` | No |
 | Rewrite safety | deterministic rewrite + re-analysis + policy re-evaluation | No |
 | Cumulative disclosure state | `DisclosureLedger` when stateful privacy is required | No |
-| Execution capability | `ExecutionAuthorizer` in the current canonical runtime | No |
+| Execution capability | pipeline-owned `ExecutionAuthorizer` in the current canonical runtime | No |
 | Database execution | `DuckDBExecutor` | No |
 | Result release | verifier post-execution checks | No |
 | Receipt persistence | `ReceiptStore` | No |
 
 ## 4. Canonical execution authorization today
 
-`DuckDBExecutor.bind_authority()` currently constructs `ExecutionAuthorizer` when no authorizer has already been bound.
+When an execution-capable `ToxicJoinPipeline` is constructed, it requires an unbound `DuckDBExecutor`, creates one `ExecutionAuthorizer` from the pipeline-owned context resolver, policy engine, disclosure ledger, and stateful-privacy requirement, and binds that authorizer through `DuckDBExecutor.bind_authorizer()`.
+
+`DuckDBExecutor.bind_authority()` retains its historical name for verifier compatibility, but it is now validation-only: it rejects an unbound executor and rejects any resolver, policy, disclosure-ledger, or disclosure-requirement mismatch. It cannot create an authorizer during request verification.
 
 That authorizer independently re-analyzes the exact SQL, re-resolves governed context, re-evaluates deterministic policy, validates request identity and disclosure commitment, binds the resulting capability to the exact execution state, and issues an HMAC-authenticated short-lived authorization.
 
@@ -126,7 +132,7 @@ The repository contains a stronger proof-bound authorization stack:
 
 These components are **implemented and tested**, but they are not yet the canonical product execution path.
 
-The current pipeline does not build or pass a `PreExecutionPrivacyProof` into `verify_and_execute`. Therefore the proof-aware verifier wrapper behaves as the governance wrapper on the current product path, and `DuckDBExecutor.bind_authority()` constructs the legacy `ExecutionAuthorizer` unless a proof-bound authorizer was explicitly pre-bound by a direct/library caller.
+The current product pipeline does not build or pass a `PreExecutionPrivacyProof` into `verify_and_execute`, and it rejects an executor that was externally pre-bound before pipeline construction. Therefore a direct/library caller may still explicitly construct a pre-bound proof-bound executor for staged security tests, but that path cannot be injected into the current `ToxicJoinPipeline` product bootstrap. The current product authority remains the pipeline-created legacy `ExecutionAuthorizer` until a later explicit migration changes that bootstrap.
 
 This distinction is mandatory for release claims:
 
@@ -152,7 +158,7 @@ The strict authorizer rejects equality between those keys. Possession of one aut
 
 ## 10. Security invariants that must survive migration
 
-Any Phase 4/5 authorization migration must preserve all of the following:
+Any authorization migration must preserve all of the following:
 
 1. No SQL execution before deterministic policy approval and verifier prechecks.
 2. BLOCK, uncertainty, stale governance, drift, missing state, malformed proof, or authorization failure never reaches DuckDB execution.
@@ -167,6 +173,7 @@ Any Phase 4/5 authorization migration must preserve all of the following:
 11. Failed verification releases no `ExecutionResult` rows.
 12. Proof, provenance, and execution keys remain separated in strict proof mode.
 13. A proof-aware code path must never silently downgrade to legacy authorization when a proof was supplied or required.
+14. Request verification cannot create or replace the product execution authority.
 
 ## 11. Explicit non-claims
 
@@ -188,17 +195,16 @@ The current execution-authorization consumed-ID cache and default authorization 
 
 Those controls are valid for the supported single-process/single-state topology but must not be represented as horizontally coordinated controls. Shared transactional disclosure state, distributed rate limiting/replay state, and production key-management topology are separate later phases.
 
-## 13. Phase 4/5 migration boundary
+## 13. Authorization migration boundary
 
-Phase 3 does not change runtime behavior.
+Phase 4 unified the legacy and proof-aware call contract. Phase 5 closes execution-time product authority creation: product authority is now established once at pipeline construction and request verification can only validate that already-bound authority.
 
-The next authorization phases may make proof-bound execution canonical, but only through an explicit migration that:
+A later phase may make proof-bound execution canonical, but only through an explicit migration that:
 
-- defines one unified execution-authority contract;
 - wires security-owned proof creation into the product path without giving proof authority to the Agent;
-- binds the executor to the strict proof-aware authorizer;
-- removes or closes alternate execution-authority paths only after compatibility and rollback analysis;
+- changes the pipeline-owned bootstrap from legacy `ExecutionAuthorizer` to the strict proof-aware authorizer;
+- preserves the single product authority-establishment path rather than reintroducing verifier-time or caller-prebinding alternatives;
 - keeps fail-closed semantics when proof/provenance/state is absent or inconsistent;
 - re-runs exact-head internal, HTTP/Docker black-box, container, supply-chain, and release-manifest evidence before any stronger product claim is made.
 
-Until that migration lands and is proven, Section 2 is the canonical runtime truth.
+Until that migration lands and is proven, Sections 2–7 are the canonical runtime truth.
