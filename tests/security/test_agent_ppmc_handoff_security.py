@@ -43,6 +43,22 @@ def test_ppmc_handoff_authenticates_exact_evaluation_and_rejects_wrong_key(
         require_agent_ppmc_evaluation_capsule(capsule, integrity_key=WRONG_KEY)
 
 
+def test_ppmc_handoff_rejects_post_issue_capsule_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, _, capsule, _, _ = _upstream(monkeypatch)
+    mutated = capsule.model_copy(update={"ppmc_result_sha256": "f" * 64})
+
+    with pytest.raises(
+        AgentPpmcEvaluationCapsuleError,
+        match="AGENT_PPMC_HANDOFF_INVALID",
+    ):
+        require_agent_ppmc_evaluation_capsule(
+            mutated,
+            integrity_key=PROVENANCE_KEY,
+        )
+
+
 def test_ppmc_handoff_hmac_domain_is_separate_from_agent_provenance_domain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -81,7 +97,10 @@ def test_ppmc_handoff_compute_helpers_reject_nested_evaluation_subclass_before_d
             nested,
             integrity_key=PROVENANCE_KEY,
         )
-    with pytest.raises(TypeError, match="exact evaluation type"):
+    with pytest.raises(
+        AgentPpmcEvaluationCapsuleError,
+        match="AGENT_PPMC_HANDOFF_INVALID",
+    ):
         require_agent_ppmc_evaluation_capsule(
             nested,
             integrity_key=PROVENANCE_KEY,
