@@ -26,7 +26,10 @@ from toxicjoin.agent.proposal_authority import TrustedAgentProposalEvaluation
 from toxicjoin.auth import RequestIdentity, current_request_identity
 from toxicjoin.evidence.canonical import canonical_json_sha256
 from toxicjoin.policy import PolicyEngine, load_policy
-from toxicjoin.proofs.agent_provenance import compute_agent_ppmc_provenance_hmac
+from toxicjoin.proofs.agent_provenance import (
+    compute_agent_bound_proof_core_sha256,
+    compute_agent_ppmc_provenance_hmac,
+)
 from toxicjoin.proofs.models import (
     AgentPpmcProofBinding,
     PreExecutionPrivacyProof,
@@ -251,6 +254,7 @@ class DataHubAgentPreExecutionProofAuthority:
             "agent_evaluation_sha256": trusted_evaluation.evaluation_sha256,
             "agent_ppmc_evaluation_sha256": trusted_ppmc.evaluation_sha256,
             "f6_clearance_sha256": trusted_ppmc.f6_clearance_sha256,
+            "proof_core_sha256": compute_agent_bound_proof_core_sha256(base_proof),
             "request_identity_sha256": base_proof.request_identity_sha256,
             "sql_sha256": base_proof.sql_sha256,
             "query_plan_sha256": base_proof.query_plan_sha256,
