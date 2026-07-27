@@ -327,6 +327,7 @@ def _build_runtime(tmp_path):
             policy_engine=policy_engine,
             privacy_proof_integrity_key=PROOF_KEY,
             agent_provenance_integrity_key=PROVENANCE_KEY,
+            warehouse_snapshot_provider=lambda: WAREHOUSE,
             secret_key=AUTH_KEY,
             ttl_seconds=5,
             clock=lambda: VERIFY_AT.timestamp(),
