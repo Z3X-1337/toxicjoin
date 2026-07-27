@@ -24,8 +24,8 @@ class _PrivacyProofInjectingExecutor:
             privacy_proof.model_dump(mode="json")
         )
 
-    def require_authority(self, **kwargs: Any) -> None:
-        self._executor.require_authority(**kwargs)
+    def bind_authority(self, **kwargs: Any) -> None:
+        self._executor.bind_authority(**kwargs)
 
     def issue_authorization(self, sql: str, **kwargs: Any) -> Any:
         supplied = kwargs.get("privacy_proof")
