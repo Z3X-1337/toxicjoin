@@ -25,7 +25,11 @@ from toxicjoin.agent.ppmc_authority import (
     DataHubAgentPpmcAuthority,
     TrustedAgentPpmcEvaluation,
 )
-from toxicjoin.agent.proposal_authority import TrustedAgentProposalEvaluation
+from toxicjoin.agent.proposal_handoff import (
+    AgentProposalEvaluationCapsule,
+    AgentProposalEvaluationCapsuleError,
+    require_agent_proposal_evaluation_capsule,
+)
 from toxicjoin.evidence.canonical import canonical_json_sha256
 from toxicjoin.models import StrictModel
 from toxicjoin.prospective.forbidden import ForbiddenPredicatePolicy, GovernanceTrustBinding
@@ -84,7 +88,7 @@ class AgentPpmcEvaluationCapsuleError(RuntimeError):
 
 
 class DataHubAgentPpmcHandoffAuthority:
-    """Run Agent PPMC inside the security boundary and return only an authenticated capsule."""
+    """Run Agent PPMC only from an authenticated proposal evaluation and seal its output."""
 
     def __init__(self, *, provenance_integrity_key: bytes, clock=None) -> None:
         stable_code = "AGENT_PPMC_HANDOFF_INTEGRITY_KEY_INVALID"
@@ -109,20 +113,25 @@ class DataHubAgentPpmcHandoffAuthority:
     def check(
         self,
         *,
-        evaluation: TrustedAgentProposalEvaluation,
+        evaluation: AgentProposalEvaluationCapsule,
         governance_trust: DataHubGovernanceTrustBinding,
         initial_state: DisclosureState,
         grammar: FutureActionGrammar,
         forbidden_policy: ForbiddenPredicatePolicy,
         config: PpmcSearchConfig | None = None,
     ) -> AgentPpmcEvaluationCapsule:
-        """Run the existing security-owned PPMC authority and authenticate its exact output."""
+        """Authenticate proposal authority, run PPMC, then authenticate the exact PPMC output."""
 
         stable_code = "AGENT_PPMC_HANDOFF_INTERNAL_FAILED"
+        trusted_proposal_evaluation = None
         ppmc_evaluation = None
         try:
+            trusted_proposal_evaluation = require_agent_proposal_evaluation_capsule(
+                evaluation,
+                integrity_key=self._integrity_key,
+            )
             ppmc_evaluation = self._ppmc_authority.check(
-                evaluation=evaluation,
+                evaluation=trusted_proposal_evaluation,
                 governance_trust=governance_trust,
                 initial_state=initial_state,
                 grammar=grammar,
@@ -133,6 +142,9 @@ class DataHubAgentPpmcHandoffAuthority:
                 ppmc_evaluation,
                 integrity_key=self._integrity_key,
             )
+        except AgentProposalEvaluationCapsuleError as error:
+            stable_code = "AGENT_PPMC_HANDOFF_PROPOSAL_UNTRUSTED"
+            _detach_exception(error)
         except AgentPpmcAuthorityError as error:
             stable_code = error.code
             _detach_exception(error)
@@ -148,6 +160,7 @@ class DataHubAgentPpmcHandoffAuthority:
         grammar = None  # type: ignore[assignment]
         forbidden_policy = None  # type: ignore[assignment]
         config = None
+        trusted_proposal_evaluation = None
         ppmc_evaluation = None
         self = None  # type: ignore[assignment]
         raise AgentPpmcEvaluationCapsuleError(stable_code) from None
