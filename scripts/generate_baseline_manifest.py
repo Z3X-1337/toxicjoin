@@ -107,12 +107,16 @@ def build_manifest(
     *,
     root: Path,
     source_sha: str,
+    checked_out_sha: str,
     pytest_log: Path,
     benchmark_json: Path,
     environment: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     env = os.environ if environment is None else environment
     source_sha = _validate_sha(source_sha, name="source_sha")
+    checked_out_sha = _validate_sha(checked_out_sha, name="checked_out_sha")
+    if checked_out_sha != source_sha:
+        raise ValueError("checked_out_sha does not match source_sha")
 
     missing_inputs = [item for item in _REQUIRED_INPUTS if not (root / item).is_file()]
     if not (root / "pyproject.toml").is_file():
@@ -124,15 +128,13 @@ def build_manifest(
     if not benchmark_json.is_file():
         raise ValueError(f"benchmark report does not exist: {benchmark_json}")
 
-    workflow_sha_raw = env.get("GITHUB_SHA", "").strip().lower()
-    workflow_sha = (
-        _validate_sha(workflow_sha_raw, name="GITHUB_SHA") if workflow_sha_raw else None
-    )
+    event_sha_raw = env.get("GITHUB_SHA", "").strip().lower()
+    event_sha = _validate_sha(event_sha_raw, name="GITHUB_SHA") if event_sha_raw else None
 
     inputs = {item: {"sha256": _sha256_file(root / item)} for item in _REQUIRED_INPUTS}
 
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "project": {
             "name": "toxicjoin",
             "version": _project_version(root),
@@ -140,10 +142,10 @@ def build_manifest(
         "source": {
             "repository": env.get("GITHUB_REPOSITORY"),
             "source_sha": source_sha,
-            "workflow_sha": workflow_sha,
-            "source_sha_matches_workflow_sha": (
-                workflow_sha is not None and source_sha == workflow_sha
-            ),
+            "checked_out_sha": checked_out_sha,
+            "exact_checkout_verified": True,
+            "event_sha": event_sha,
+            "event_sha_matches_source_sha": event_sha is not None and event_sha == source_sha,
             "event_name": env.get("GITHUB_EVENT_NAME"),
             "ref": env.get("GITHUB_REF"),
             "workflow": env.get("GITHUB_WORKFLOW"),
@@ -187,6 +189,7 @@ def main() -> None:
     )
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--source-sha", required=True)
+    parser.add_argument("--checked-out-sha", required=True)
     parser.add_argument("--pytest-log", type=Path, required=True)
     parser.add_argument("--benchmark-json", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -196,6 +199,7 @@ def main() -> None:
         manifest = build_manifest(
             root=args.root.resolve(),
             source_sha=args.source_sha,
+            checked_out_sha=args.checked_out_sha,
             pytest_log=args.pytest_log.resolve(),
             benchmark_json=args.benchmark_json.resolve(),
         )
