@@ -97,7 +97,7 @@ jobs:
           test "$document_status" = "200"
           test "$provenance_status" = "200"
 
-      - name: Validate provenance and immutable asset references
+      - name: Validate provenance identity and immutable asset references
         shell: bash
         run: |
           set -euo pipefail
@@ -114,12 +114,26 @@ jobs:
           live_provenance = json.loads(evidence.joinpath("live-provenance.json").read_text(encoding="utf-8"))
           repo_provenance = json.loads(candidate.joinpath("public/replay/provenance.json").read_text(encoding="utf-8"))
 
-          for key, expected in repo_provenance.items():
-              if live_provenance.get(key) != expected:
-                  raise SystemExit(f"live provenance core field differs: {key}")
-          extra_keys = sorted(set(live_provenance) - set(repo_provenance))
-          if any(key != "materialized_commit" for key in extra_keys):
-              raise SystemExit(f"unexpected live provenance extensions: {extra_keys}")
+          required_identity_fields = (
+              "schema_version",
+              "source_workflow_run",
+              "source_pr",
+              "source_commit",
+              "source_artifact_id",
+              "source_artifact_digest",
+          )
+          for key in required_identity_fields:
+              if live_provenance.get(key) != repo_provenance.get(key):
+                  raise SystemExit(f"live provenance identity field differs: {key}")
+
+          repo_keys = set(repo_provenance)
+          live_keys = set(live_provenance)
+          dropped_fields = sorted(repo_keys - live_keys)
+          added_fields = sorted(live_keys - repo_keys)
+          if dropped_fields not in ([], ["artifact_name"]):
+              raise SystemExit(f"unexpected live provenance dropped fields: {dropped_fields}")
+          if added_fields not in ([], ["materialized_commit"]):
+              raise SystemExit(f"unexpected live provenance added fields: {added_fields}")
 
           pattern = re.compile(
               r"https://cdn\.jsdelivr\.net/gh/Z3X-1337/toxicjoin@([0-9a-f]{40})/public/replay/assets/([^\"']+)"
@@ -131,7 +145,10 @@ jobs:
           if len(asset_commits) != 1:
               raise SystemExit("live replay assets are not bound to one immutable commit")
           asset_commit = asset_commits[0]
+
           materialized_commit = str(live_provenance.get("materialized_commit", ""))
+          if not re.fullmatch(r"[0-9a-f]{40}", materialized_commit):
+              raise SystemExit("live materialized_commit is missing or malformed")
           if materialized_commit != asset_commit:
               raise SystemExit("live materialized_commit does not bind the immutable asset commit")
 
@@ -153,18 +170,27 @@ jobs:
           source_commit = str(live_provenance.get("source_commit", ""))
           if not re.fullmatch(r"[0-9a-f]{40}", source_commit):
               raise SystemExit("provenance source_commit is malformed")
+
+          shape_drift = bool(dropped_fields or added_fields)
           evidence.joinpath("source-commit.txt").write_text(source_commit + "\n", encoding="utf-8")
           evidence.joinpath("asset-commit.txt").write_text(asset_commit + "\n", encoding="utf-8")
           evidence.joinpath("asset-files.txt").write_text("\n".join(sorted(filenames)) + "\n", encoding="utf-8")
           evidence.joinpath("preliminary.json").write_text(
               json.dumps({
-                  "schema_version": "1.2",
+                  "schema_version": "1.3",
                   "validation_main_sha": os.environ["EXPECTED_MAIN_SHA"],
                   "live_url": os.environ["REPLAY_URL"],
                   "live_document_status": 200,
                   "live_provenance_status": 200,
-                  "live_provenance_core_matches_repository": True,
-                  "live_provenance_extension_keys": extra_keys,
+                  "provenance_identity_fields_match": True,
+                  "provenance_shape_matches_repository": not shape_drift,
+                  "provenance_drift": {
+                      "dropped_fields": dropped_fields,
+                      "added_fields": added_fields,
+                  },
+                  "repository_artifact_name": repo_provenance.get("artifact_name"),
+                  "live_artifact_name": live_provenance.get("artifact_name"),
+                  "artifact_name_preserved": live_provenance.get("artifact_name") == repo_provenance.get("artifact_name"),
                   "provenance_source_commit": source_commit,
                   "materialized_commit": materialized_commit,
                   "immutable_asset_commit": asset_commit,
@@ -252,6 +278,17 @@ jobs:
                   if f"@{asset_commit}/public/replay/assets/" not in str(response.get("url", "")):
                       raise SystemExit("browser asset URL does not match materialized commit")
 
+          is_current = source_commit == current_main and asset_commit == current_main
+          has_shape_drift = not report["provenance_shape_matches_repository"]
+          if is_current:
+              classification = "CURRENT_MAIN_WITH_PROVENANCE_SHAPE_DRIFT" if has_shape_drift else "CURRENT_MAIN"
+          else:
+              classification = (
+                  "HISTORICAL_VERIFIED_WITH_PROVENANCE_SHAPE_DRIFT"
+                  if has_shape_drift
+                  else "HISTORICAL_VERIFIED"
+              )
+
           report.update({
               "source_commit_is_ancestor_of_current_main": True,
               "asset_commit_is_ancestor_of_current_main": True,
@@ -262,17 +299,15 @@ jobs:
               "immutable_git_blobs_match_current_main": True,
               "immutable_blob_identity": blob_rows,
               "browser_asset_responses_verified": True,
-              "freshness_classification": (
-                  "CURRENT_MAIN" if source_commit == current_main and asset_commit == current_main
-                  else "HISTORICAL_VERIFIED"
-              ),
+              "freshness_classification": classification,
               "browser_verification_passed": True,
               "browser_profile_count": len(browser.get("profiles", [])),
               "disclosure": browser.get("disclosure"),
               "interpretation": (
-                  "The public replay is live, its provenance is internally consistent, its immutable asset Git blobs "
-                  "match public/replay in exact current main, and desktop/mobile browsers load those pinned assets. "
-                  "The replay nevertheless identifies historical ancestor revisions rather than the current main build."
+                  "The public replay is live; critical provenance identity and artifact-digest fields match the committed replay; "
+                  "the live deployment provenance changes shape by dropping artifact_name and adding materialized_commit; "
+                  "the immutable asset Git blobs match public/replay in exact current main and desktop/mobile browsers load those pinned assets; "
+                  "the replay identifies historical ancestor revisions rather than the current main build."
               ),
           })
           canonical = json.dumps(report, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -286,9 +321,10 @@ jobs:
           if "no live execution or DataHub write is being claimed" not in str(report["disclosure"]):
               raise SystemExit("replay disclosure missing")
           print(json.dumps({
-              "freshness_classification": report["freshness_classification"],
+              "freshness_classification": classification,
               "source_commit_distance": source_distance,
               "asset_commit_distance": asset_distance,
+              "provenance_drift": report["provenance_drift"],
               "report_sha256": report["report_sha256"],
           }, sort_keys=True))
           PY
