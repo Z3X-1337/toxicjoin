@@ -31,8 +31,12 @@ from toxicjoin.agent.governance_trust import (
     GovernanceTrustBinding as DataHubGovernanceTrustBinding,
 )
 from toxicjoin.agent.proposal_authority import TrustedAgentProposalEvaluation
+from toxicjoin.disclosure.semantic import (
+    DisclosureSemanticError,
+    build_semantic_release_from_resolution,
+)
 from toxicjoin.evidence.canonical import canonical_json_sha256
-from toxicjoin.models import StrictModel
+from toxicjoin.models import ColumnContext, ColumnRef, SensitivityCategory, StrictModel
 from toxicjoin.prospective.forbidden import ForbiddenPredicatePolicy
 from toxicjoin.prospective.grammar import FutureActionGrammar
 from toxicjoin.prospective.ppmc import (
@@ -231,6 +235,15 @@ class DataHubAgentPpmcAuthority:
             raise AgentPpmcAuthorityError("AGENT_PPMC_EVIDENCE_MISMATCH")
 
         context = trusted_grammar.context
+        try:
+            expected_base_semantic = _build_expected_agent_semantic(
+                trusted_evaluation,
+                trusted_governance,
+            )
+        except (DisclosureSemanticError, ValueError):
+            raise AgentPpmcAuthorityError("AGENT_PPMC_GRAMMAR_SEMANTIC_INVALID") from None
+        if context.base_semantic != expected_base_semantic:
+            raise AgentPpmcAuthorityError("AGENT_PPMC_GRAMMAR_SEMANTIC_MISMATCH")
         if context.initial_state_sha256 != trusted_state.state_sha256:
             raise AgentPpmcAuthorityError("AGENT_PPMC_GRAMMAR_STATE_MISMATCH")
         if context.scope_sha256 != trusted_state.scope.scope_sha256:
@@ -326,6 +339,58 @@ def compute_trusted_agent_ppmc_evaluation_sha256(
 ) -> str:
     return canonical_json_sha256(
         evaluation.model_dump(mode="json", exclude={"evaluation_sha256"})
+    )
+
+
+def _build_expected_agent_semantic(
+    evaluation: TrustedAgentProposalEvaluation,
+    governance_trust: DataHubGovernanceTrustBinding,
+):
+    source_datasets = tuple(sorted(set(evaluation.query_plan.source_datasets)))
+    dataset_subjects: dict[str, str] = {}
+    for requirement in governance_trust.requirements:
+        if (
+            requirement.predicate != "datahub.logical_name"
+            or requirement.expected_value not in source_datasets
+        ):
+            continue
+        existing = dataset_subjects.get(requirement.expected_value)
+        if existing is not None and existing != requirement.subject:
+            raise ValueError("ambiguous trusted dataset mapping")
+        dataset_subjects[requirement.expected_value] = requirement.subject
+    if tuple(sorted(dataset_subjects)) != source_datasets:
+        raise ValueError("incomplete trusted dataset mapping")
+
+    used_keys = {
+        context.ref.key
+        for context in (
+            *evaluation.resolution.projected_context,
+            *evaluation.resolution.all_referenced_context,
+        )
+    }
+    dataset_context: list[ColumnContext] = []
+    for dataset in source_datasets:
+        suffix = 0
+        while True:
+            field_path = f"__toxicjoin_dataset_binding_{suffix}__"
+            ref = ColumnRef(dataset=dataset, field_path=field_path)
+            if ref.key not in used_keys:
+                used_keys.add(ref.key)
+                break
+            suffix += 1
+        dataset_context.append(
+            ColumnContext(
+                ref=ref,
+                category=SensitivityCategory.UNCLASSIFIED,
+                datahub_urn=dataset_subjects[dataset],
+                resolved=True,
+            )
+        )
+
+    return build_semantic_release_from_resolution(
+        evaluation.query_plan,
+        evaluation.resolution,
+        additional_context=tuple(dataset_context),
     )
 
 
