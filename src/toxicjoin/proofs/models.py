@@ -52,7 +52,8 @@ class AgentPpmcProofBinding(StrictModel):
     ``binding_sha256`` commits the provenance payload itself. ``authority_hmac_sha256`` is a
     second, domain-separated authenticator produced with a key that is distinct from both the
     generic proof HMAC key and the execution-authorization key.  This prevents a generic proof
-    issuer from self-asserting Agent provenance merely because it can sign ordinary proof content.
+    issuer from self-asserting or transplanting Agent provenance merely because it can sign
+    ordinary proof content.
     """
 
     schema_version: Literal["1.0"] = "1.0"
@@ -60,6 +61,7 @@ class AgentPpmcProofBinding(StrictModel):
     agent_evaluation_sha256: Sha256
     agent_ppmc_evaluation_sha256: Sha256
     f6_clearance_sha256: Sha256
+    request_identity_sha256: Sha256
     sql_sha256: Sha256
     query_plan_sha256: Sha256
     task_purpose_sha256: Sha256
