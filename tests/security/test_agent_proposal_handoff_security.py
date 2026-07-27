@@ -26,7 +26,6 @@ from toxicjoin.agent.proposal_handoff import (
 from toxicjoin.agent.governance_trust import DataHubGovernanceTrustAuthority
 from toxicjoin.policy import load_policy
 from toxicjoin.prospective.forbidden import build_forbidden_predicate_policy
-from toxicjoin.prospective.ppmc import build_ppmc_search_config
 
 _HELPERS = runpy.run_path(
     str(Path(__file__).with_name("test_agent_preexecution_proof_authority.py"))
@@ -146,7 +145,6 @@ def test_ppmc_handoff_rejects_raw_proposal_evaluation(
             forbidden_policy=build_forbidden_predicate_policy(
                 minimum_group_size=package_policy.minimum_group_size
             ),
-            config=build_ppmc_search_config(bound=3, max_states=128),
         )
 
 
