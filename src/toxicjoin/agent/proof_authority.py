@@ -22,6 +22,11 @@ from pydantic import ValidationError
 
 from toxicjoin.agent.models import AgentProposal
 from toxicjoin.agent.ppmc_authority import TrustedAgentPpmcEvaluation
+from toxicjoin.agent.ppmc_handoff import (
+    AgentPpmcEvaluationCapsule,
+    AgentPpmcEvaluationCapsuleError,
+    require_agent_ppmc_evaluation_capsule,
+)
 from toxicjoin.agent.proposal_authority import TrustedAgentProposalEvaluation
 from toxicjoin.auth import RequestIdentity, current_request_identity
 from toxicjoin.evidence.canonical import canonical_json_sha256
@@ -88,7 +93,7 @@ class DataHubAgentPreExecutionProofAuthority:
         *,
         proposal: AgentProposal,
         evaluation: TrustedAgentProposalEvaluation,
-        ppmc_evaluation: TrustedAgentPpmcEvaluation,
+        ppmc_evaluation: AgentPpmcEvaluationCapsule,
         sql: str,
         state: DisclosureState,
         grammar: FutureActionGrammar,
@@ -125,15 +130,19 @@ class DataHubAgentPreExecutionProofAuthority:
         *,
         proposal: AgentProposal,
         evaluation: TrustedAgentProposalEvaluation,
-        ppmc_evaluation: TrustedAgentPpmcEvaluation,
+        ppmc_evaluation: AgentPpmcEvaluationCapsule,
         sql: str,
         state: DisclosureState,
         grammar: FutureActionGrammar,
     ) -> PreExecutionPrivacyProof:
+        if type(ppmc_evaluation) is TrustedAgentPpmcEvaluation:
+            raise AgentPreExecutionProofAuthorityError(
+                "AGENT_PROOF_PPMC_AUTHORITY_UNTRUSTED"
+            )
         if (
             type(proposal) is not AgentProposal
             or type(evaluation) is not TrustedAgentProposalEvaluation
-            or type(ppmc_evaluation) is not TrustedAgentPpmcEvaluation
+            or type(ppmc_evaluation) is not AgentPpmcEvaluationCapsule
             or type(sql) is not str
             or type(state) is not DisclosureState
             or type(grammar) is not FutureActionGrammar
@@ -141,6 +150,18 @@ class DataHubAgentPreExecutionProofAuthority:
             raise AgentPreExecutionProofAuthorityError("AGENT_PROOF_INPUT_INVALID")
         if not sql.strip():
             raise AgentPreExecutionProofAuthorityError("AGENT_PROOF_INPUT_INVALID")
+
+        # Authority authenticity must be established before serializing the nested PPMC evaluation.
+        # A self-consistent caller-reconstructed evaluation is not sufficient proof of PPMC origin.
+        try:
+            authoritative_ppmc = require_agent_ppmc_evaluation_capsule(
+                ppmc_evaluation,
+                integrity_key=self._provenance_integrity_key,
+            )
+        except AgentPpmcEvaluationCapsuleError:
+            raise AgentPreExecutionProofAuthorityError(
+                "AGENT_PROOF_PPMC_AUTHORITY_UNTRUSTED"
+            ) from None
 
         bound_identity = current_request_identity()
         if bound_identity is None:
@@ -152,7 +173,7 @@ class DataHubAgentPreExecutionProofAuthority:
                 evaluation.model_dump(mode="json")
             )
             trusted_ppmc = TrustedAgentPpmcEvaluation.model_validate(
-                ppmc_evaluation.model_dump(mode="json")
+                authoritative_ppmc.model_dump(mode="json")
             )
             trusted_identity = RequestIdentity.model_validate(
                 bound_identity.model_dump(mode="json")
