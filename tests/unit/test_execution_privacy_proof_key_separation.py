@@ -90,3 +90,20 @@ def test_agent_provenance_key_must_differ_from_execution_key() -> None:
             secret_key=SAME_KEY,
             clock=lambda: NOW.timestamp(),
         )
+
+
+def test_strict_authorizer_rejects_execution_key_bytes_subclass() -> None:
+    class _MaliciousBytes(bytes):
+        def __bytes__(self) -> bytes:
+            return AUTH_KEY
+
+    attacker = _MaliciousBytes(b"x" * 40)
+    with pytest.raises(ValueError, match="execution authorization key"):
+        ProofBoundExecutionAuthorizer(
+            context_resolver=_resolver(),
+            policy_engine=PolicyEngine(load_policy()),
+            privacy_proof_integrity_key=PROOF_KEY,
+            agent_provenance_integrity_key=PROVENANCE_KEY,
+            secret_key=attacker,
+            clock=lambda: NOW.timestamp(),
+        )
