@@ -59,6 +59,7 @@ def test_build_manifest_binds_exact_source_and_evidence(tmp_path: Path) -> None:
     manifest = MODULE.build_manifest(
         root=root,
         source_sha=source_sha,
+        checked_out_sha=source_sha,
         pytest_log=pytest_log,
         benchmark_json=benchmark,
         environment={
@@ -66,18 +67,35 @@ def test_build_manifest_binds_exact_source_and_evidence(tmp_path: Path) -> None:
             "GITHUB_REPOSITORY": "Z3X-1337/toxicjoin",
             "GITHUB_EVENT_NAME": "push",
             "GITHUB_REF": "refs/heads/main",
-            "GITHUB_WORKFLOW": "CI",
+            "GITHUB_WORKFLOW": "Ground Truth Baseline",
             "GITHUB_RUN_ID": "123",
             "GITHUB_RUN_ATTEMPT": "1",
         },
     )
 
+    assert manifest["schema_version"] == "1.1"
     assert manifest["source"]["source_sha"] == source_sha
-    assert manifest["source"]["source_sha_matches_workflow_sha"] is True
+    assert manifest["source"]["checked_out_sha"] == source_sha
+    assert manifest["source"]["exact_checkout_verified"] is True
+    assert manifest["source"]["event_sha_matches_source_sha"] is True
     assert manifest["validation"]["pytest"]["passed"] == 756
     assert manifest["validation"]["benchmark"]["metrics"]["total_cases"] == 30
     assert manifest["validation"]["benchmark"]["gate_failures"] == []
     assert set(manifest["inputs"]) == set(MODULE._REQUIRED_INPUTS)
+
+
+def test_build_manifest_rejects_checkout_mismatch(tmp_path: Path) -> None:
+    root, pytest_log, benchmark = _fixture_root(tmp_path)
+
+    with pytest.raises(ValueError, match="checked_out_sha does not match source_sha"):
+        MODULE.build_manifest(
+            root=root,
+            source_sha="b" * 40,
+            checked_out_sha="c" * 40,
+            pytest_log=pytest_log,
+            benchmark_json=benchmark,
+            environment={},
+        )
 
 
 def test_build_manifest_rejects_failed_benchmark(tmp_path: Path) -> None:
@@ -86,10 +104,12 @@ def test_build_manifest_rejects_failed_benchmark(tmp_path: Path) -> None:
     payload["gate_failures"] = ["false_allow_detected"]
     benchmark.write_text(json.dumps(payload), encoding="utf-8")
 
+    source_sha = "c" * 40
     with pytest.raises(ValueError, match="benchmark gate failed"):
         MODULE.build_manifest(
             root=root,
-            source_sha="c" * 40,
+            source_sha=source_sha,
+            checked_out_sha=source_sha,
             pytest_log=pytest_log,
             benchmark_json=benchmark,
             environment={},
@@ -100,10 +120,12 @@ def test_build_manifest_rejects_missing_required_input(tmp_path: Path) -> None:
     root, pytest_log, benchmark = _fixture_root(tmp_path)
     (root / "uv.lock").unlink()
 
+    source_sha = "d" * 40
     with pytest.raises(ValueError, match="required baseline inputs are missing"):
         MODULE.build_manifest(
             root=root,
-            source_sha="d" * 40,
+            source_sha=source_sha,
+            checked_out_sha=source_sha,
             pytest_log=pytest_log,
             benchmark_json=benchmark,
             environment={},
