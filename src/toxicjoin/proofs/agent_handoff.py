@@ -1,9 +1,9 @@
 """Authenticated handoff capsule for security-owned Governed-Agent pre-execution proofs.
 
-The capsule is not an execution capability. It authenticates that the exact, fully sealed
-``PreExecutionPrivacyProof`` was handed off by the security-owned Agent proof authority under the
-existing Agent-provenance trust root. The strict execution authorizer must still independently
-verify the proof integrity key, Agent provenance, current governed state, and execution bindings.
+The capsule is not an execution capability. It authenticates that the exact, content-consistent
+``PreExecutionPrivacyProof`` was handed off under the existing Agent-provenance trust root. The
+strict execution authorizer must still independently verify the proof HMAC key, Agent provenance,
+current governed state, and execution bindings.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from toxicjoin.proofs.agent_provenance import (
     require_agent_ppmc_provenance,
 )
 from toxicjoin.proofs.models import PreExecutionPrivacyProof
+from toxicjoin.proofs.preexec import compute_preexecution_privacy_proof_sha256
 
 _CAPSULE_HMAC_DOMAIN = b"toxicjoin:agent-preexecution-proof-handoff:v1\x00"
 _MIN_INTEGRITY_KEY_BYTES = 32
@@ -55,14 +56,18 @@ def seal_agent_preexecution_proof_capsule(
     *,
     integrity_key: bytes,
 ) -> AgentPreExecutionProofCapsule:
-    """Seal one exact proof under the Agent-provenance trust root."""
+    """Seal one exact, content-consistent proof under the Agent-provenance trust root."""
 
     key = _validated_key(integrity_key)
     if type(proof) is not PreExecutionPrivacyProof:
         raise AgentPreExecutionProofCapsuleError("AGENT_PROOF_CAPSULE_INVALID")
     try:
+        if compute_preexecution_privacy_proof_sha256(proof) != proof.privacy_proof_sha256:
+            raise AgentPreExecutionProofCapsuleError("AGENT_PROOF_CAPSULE_INVALID")
         provenance = require_agent_ppmc_provenance(proof, integrity_key=key)
-    except AgentProofProvenanceError:
+    except AgentPreExecutionProofCapsuleError:
+        raise
+    except (AgentProofProvenanceError, TypeError, ValueError):
         raise AgentPreExecutionProofCapsuleError(
             "AGENT_PROOF_CAPSULE_PROVENANCE_INVALID"
         ) from None
@@ -139,6 +144,7 @@ def require_agent_preexecution_proof_capsule(
         raise AgentPreExecutionProofCapsuleError("AGENT_PROOF_CAPSULE_INVALID")
 
     try:
+        expected_proof_sha256 = compute_preexecution_privacy_proof_sha256(proof)
         expected_content = compute_agent_preexecution_proof_capsule_sha256(capsule)
         expected_hmac = compute_agent_preexecution_proof_capsule_hmac(
             capsule,
@@ -147,6 +153,8 @@ def require_agent_preexecution_proof_capsule(
     except (TypeError, ValueError):
         raise AgentPreExecutionProofCapsuleError("AGENT_PROOF_CAPSULE_INVALID") from None
 
+    if expected_proof_sha256 != proof.privacy_proof_sha256:
+        raise AgentPreExecutionProofCapsuleError("AGENT_PROOF_CAPSULE_INVALID")
     if not hmac.compare_digest(expected_content, capsule.capsule_sha256):
         raise AgentPreExecutionProofCapsuleError("AGENT_PROOF_CAPSULE_INVALID")
     if not hmac.compare_digest(expected_hmac, capsule.authority_hmac_sha256):
