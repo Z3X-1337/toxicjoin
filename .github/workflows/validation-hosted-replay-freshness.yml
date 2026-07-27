@@ -177,7 +177,7 @@ jobs:
           evidence.joinpath("asset-files.txt").write_text("\n".join(sorted(filenames)) + "\n", encoding="utf-8")
           evidence.joinpath("preliminary.json").write_text(
               json.dumps({
-                  "schema_version": "1.3",
+                  "schema_version": "1.4",
                   "validation_main_sha": os.environ["EXPECTED_MAIN_SHA"],
                   "live_url": os.environ["REPLAY_URL"],
                   "live_document_status": 200,
@@ -204,19 +204,49 @@ jobs:
           )
           PY
 
-      - name: Establish historical relationship and immutable blob identity
+      - name: Establish git relationship and immutable blob identity
         shell: bash
         run: |
           set -euo pipefail
           SOURCE_COMMIT="$(cat "$EVIDENCE_DIR/source-commit.txt")"
           ASSET_COMMIT="$(cat "$EVIDENCE_DIR/asset-commit.txt")"
           git fetch --no-tags --prune --unshallow origin main || git fetch --no-tags --prune origin main
+          git fetch --no-tags origin "$SOURCE_COMMIT" "$ASSET_COMMIT"
           git cat-file -e "${SOURCE_COMMIT}^{commit}"
           git cat-file -e "${ASSET_COMMIT}^{commit}"
-          git merge-base --is-ancestor "$SOURCE_COMMIT" "$EXPECTED_MAIN_SHA"
-          git merge-base --is-ancestor "$ASSET_COMMIT" "$EXPECTED_MAIN_SHA"
-          git rev-list --count "${SOURCE_COMMIT}..${EXPECTED_MAIN_SHA}" > "$EVIDENCE_DIR/source-distance.txt"
-          git rev-list --count "${ASSET_COMMIT}..${EXPECTED_MAIN_SHA}" > "$EVIDENCE_DIR/asset-distance.txt"
+
+          relationship() {
+            local candidate="$1"
+            local current="$2"
+            if [[ "$candidate" == "$current" ]]; then
+              printf 'CURRENT\n'
+            elif git merge-base --is-ancestor "$candidate" "$current"; then
+              printf 'ANCESTOR\n'
+            elif git merge-base --is-ancestor "$current" "$candidate"; then
+              printf 'DESCENDANT\n'
+            else
+              printf 'DIVERGED\n'
+            fi
+          }
+
+          SOURCE_RELATIONSHIP="$(relationship "$SOURCE_COMMIT" "$EXPECTED_MAIN_SHA")"
+          ASSET_RELATIONSHIP="$(relationship "$ASSET_COMMIT" "$EXPECTED_MAIN_SHA")"
+          SOURCE_MERGE_BASE="$(git merge-base "$SOURCE_COMMIT" "$EXPECTED_MAIN_SHA")"
+          ASSET_MERGE_BASE="$(git merge-base "$ASSET_COMMIT" "$EXPECTED_MAIN_SHA")"
+          SOURCE_UNIQUE="$(git rev-list --count "${EXPECTED_MAIN_SHA}..${SOURCE_COMMIT}")"
+          MAIN_UNIQUE_FROM_SOURCE="$(git rev-list --count "${SOURCE_COMMIT}..${EXPECTED_MAIN_SHA}")"
+          ASSET_UNIQUE="$(git rev-list --count "${EXPECTED_MAIN_SHA}..${ASSET_COMMIT}")"
+          MAIN_UNIQUE_FROM_ASSET="$(git rev-list --count "${ASSET_COMMIT}..${EXPECTED_MAIN_SHA}")"
+
+          printf '%s\n' "$SOURCE_RELATIONSHIP" > "$EVIDENCE_DIR/source-relationship.txt"
+          printf '%s\n' "$ASSET_RELATIONSHIP" > "$EVIDENCE_DIR/asset-relationship.txt"
+          printf '%s\n' "$SOURCE_MERGE_BASE" > "$EVIDENCE_DIR/source-merge-base.txt"
+          printf '%s\n' "$ASSET_MERGE_BASE" > "$EVIDENCE_DIR/asset-merge-base.txt"
+          printf '%s\n' "$SOURCE_UNIQUE" > "$EVIDENCE_DIR/source-unique.txt"
+          printf '%s\n' "$MAIN_UNIQUE_FROM_SOURCE" > "$EVIDENCE_DIR/main-unique-from-source.txt"
+          printf '%s\n' "$ASSET_UNIQUE" > "$EVIDENCE_DIR/asset-unique.txt"
+          printf '%s\n' "$MAIN_UNIQUE_FROM_ASSET" > "$EVIDENCE_DIR/main-unique-from-asset.txt"
+
           : > "$EVIDENCE_DIR/blob-identity.tsv"
           while IFS= read -r filename; do
             pinned_blob=$(git rev-parse "${ASSET_COMMIT}:public/replay/assets/${filename}")
@@ -250,11 +280,18 @@ jobs:
           report = json.loads(evidence.joinpath("preliminary.json").read_text(encoding="utf-8"))
           browser = json.loads(evidence.joinpath("browser-verification.json").read_text(encoding="utf-8"))
           diagnostics = json.loads(evidence.joinpath("browser-diagnostics.json").read_text(encoding="utf-8"))
-          source_distance = int(evidence.joinpath("source-distance.txt").read_text().strip())
-          asset_distance = int(evidence.joinpath("asset-distance.txt").read_text().strip())
           current_main = os.environ["EXPECTED_MAIN_SHA"]
           source_commit = report["provenance_source_commit"]
           asset_commit = report["immutable_asset_commit"]
+
+          source_relationship = evidence.joinpath("source-relationship.txt").read_text().strip()
+          asset_relationship = evidence.joinpath("asset-relationship.txt").read_text().strip()
+          source_merge_base = evidence.joinpath("source-merge-base.txt").read_text().strip()
+          asset_merge_base = evidence.joinpath("asset-merge-base.txt").read_text().strip()
+          source_unique = int(evidence.joinpath("source-unique.txt").read_text().strip())
+          main_unique_from_source = int(evidence.joinpath("main-unique-from-source.txt").read_text().strip())
+          asset_unique = int(evidence.joinpath("asset-unique.txt").read_text().strip())
+          main_unique_from_asset = int(evidence.joinpath("main-unique-from-asset.txt").read_text().strip())
 
           blob_rows = []
           for line in evidence.joinpath("blob-identity.tsv").read_text(encoding="utf-8").splitlines():
@@ -278,22 +315,33 @@ jobs:
                   if f"@{asset_commit}/public/replay/assets/" not in str(response.get("url", "")):
                       raise SystemExit("browser asset URL does not match materialized commit")
 
-          is_current = source_commit == current_main and asset_commit == current_main
           has_shape_drift = not report["provenance_shape_matches_repository"]
-          if is_current:
+          if source_relationship == "CURRENT" and asset_relationship == "CURRENT":
               classification = "CURRENT_MAIN_WITH_PROVENANCE_SHAPE_DRIFT" if has_shape_drift else "CURRENT_MAIN"
-          else:
+          elif source_relationship == "ANCESTOR" and asset_relationship == "ANCESTOR":
               classification = (
-                  "HISTORICAL_VERIFIED_WITH_PROVENANCE_SHAPE_DRIFT"
+                  "HISTORICAL_ANCESTOR_WITH_PROVENANCE_SHAPE_DRIFT"
                   if has_shape_drift
-                  else "HISTORICAL_VERIFIED"
+                  else "HISTORICAL_ANCESTOR"
               )
+          elif "DIVERGED" in {source_relationship, asset_relationship}:
+              classification = (
+                  "HISTORICAL_VERIFIED_DIVERGED_LINEAGE_WITH_PROVENANCE_SHAPE_DRIFT"
+                  if has_shape_drift
+                  else "HISTORICAL_VERIFIED_DIVERGED_LINEAGE"
+              )
+          else:
+              classification = "NON_CURRENT_VERIFIED_RELATIONSHIP"
 
           report.update({
-              "source_commit_is_ancestor_of_current_main": True,
-              "asset_commit_is_ancestor_of_current_main": True,
-              "source_commit_distance_to_current_main": source_distance,
-              "asset_commit_distance_to_current_main": asset_distance,
+              "source_relationship_to_current_main": source_relationship,
+              "asset_relationship_to_current_main": asset_relationship,
+              "source_merge_base": source_merge_base,
+              "asset_merge_base": asset_merge_base,
+              "source_unique_commits_vs_current_main": source_unique,
+              "current_main_unique_commits_vs_source": main_unique_from_source,
+              "asset_unique_commits_vs_current_main": asset_unique,
+              "current_main_unique_commits_vs_asset": main_unique_from_asset,
               "source_commit_equals_current_main": source_commit == current_main,
               "asset_commit_equals_current_main": asset_commit == current_main,
               "immutable_git_blobs_match_current_main": True,
@@ -306,8 +354,8 @@ jobs:
               "interpretation": (
                   "The public replay is live; critical provenance identity and artifact-digest fields match the committed replay; "
                   "the live deployment provenance changes shape by dropping artifact_name and adding materialized_commit; "
-                  "the immutable asset Git blobs match public/replay in exact current main and desktop/mobile browsers load those pinned assets; "
-                  "the replay identifies historical ancestor revisions rather than the current main build."
+                  "the source and materialization commits are on verified Git relationships to current main, including divergence when present; "
+                  "the immutable replay asset blobs are identical to those retained in exact current main and desktop/mobile browsers load the pinned assets."
               ),
           })
           canonical = json.dumps(report, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -322,13 +370,28 @@ jobs:
               raise SystemExit("replay disclosure missing")
           print(json.dumps({
               "freshness_classification": classification,
-              "source_commit_distance": source_distance,
-              "asset_commit_distance": asset_distance,
+              "source_relationship": source_relationship,
+              "asset_relationship": asset_relationship,
+              "source_unique": source_unique,
+              "main_unique_from_source": main_unique_from_source,
+              "asset_unique": asset_unique,
+              "main_unique_from_asset": main_unique_from_asset,
               "provenance_drift": report["provenance_drift"],
               "report_sha256": report["report_sha256"],
           }, sort_keys=True))
           PY
-          rm -f "$EVIDENCE_DIR/preliminary.json" "$EVIDENCE_DIR/blob-identity.tsv" "$EVIDENCE_DIR/asset-files.txt"
+          rm -f \
+            "$EVIDENCE_DIR/preliminary.json" \
+            "$EVIDENCE_DIR/blob-identity.tsv" \
+            "$EVIDENCE_DIR/asset-files.txt" \
+            "$EVIDENCE_DIR/source-relationship.txt" \
+            "$EVIDENCE_DIR/asset-relationship.txt" \
+            "$EVIDENCE_DIR/source-merge-base.txt" \
+            "$EVIDENCE_DIR/asset-merge-base.txt" \
+            "$EVIDENCE_DIR/source-unique.txt" \
+            "$EVIDENCE_DIR/main-unique-from-source.txt" \
+            "$EVIDENCE_DIR/asset-unique.txt" \
+            "$EVIDENCE_DIR/main-unique-from-asset.txt"
 
       - name: Upload sanitized hosted replay freshness evidence
         if: always()
