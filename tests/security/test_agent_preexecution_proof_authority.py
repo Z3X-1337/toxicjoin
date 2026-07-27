@@ -6,7 +6,6 @@ import inspect
 import pytest
 
 from toxicjoin.agent import (
-    DataHubAgentPpmcAuthority,
     DataHubAgentPreExecutionProofAuthority,
     DataHubAgentProposalAuthority,
     DataHubGovernanceTrustAuthority,
@@ -14,6 +13,7 @@ from toxicjoin.agent import (
     build_agent_data_context_from_snapshot,
     build_agent_goal,
 )
+from toxicjoin.agent.ppmc_handoff import DataHubAgentPpmcHandoffAuthority
 from toxicjoin.agent.proof_authority import AgentPreExecutionProofAuthorityError
 from toxicjoin.auth import RequestIdentity, bind_request_identity
 from toxicjoin.context.datahub import DataHubSnapshot, DataHubSnapshotContextResolver
@@ -166,8 +166,9 @@ def _upstream(monkeypatch: pytest.MonkeyPatch):
         )
     )
     package_policy = load_policy()
-    ppmc_evaluation = DataHubAgentPpmcAuthority(
-        clock=lambda: NOW + timedelta(seconds=4)
+    ppmc_evaluation = DataHubAgentPpmcHandoffAuthority(
+        provenance_integrity_key=PROVENANCE_KEY,
+        clock=lambda: NOW + timedelta(seconds=4),
     ).check(
         evaluation=evaluation,
         governance_trust=governance_trust,
