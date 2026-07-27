@@ -1,0 +1,115 @@
+name: Hosted Replay Asset Diagnostics
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/validation-hosted-replay-asset-diagnostics.yml"
+      - ".github/workflows/validation-hosted-replay-freshness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      EXPECTED_MAIN_SHA: "25a18b872d21ed91abdec3ad1893c07b5f424621"
+      REPLAY_URL: https://toxicjoin-replay.vercel.app/
+      CANDIDATE_DIR: /tmp/toxicjoin-replay-diagnostic-main
+      EVIDENCE_DIR: validation-artifacts/replay-asset-diagnostics
+    steps:
+      - name: Check out validation branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+
+      - name: Pin exact current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          MAIN_SHA="$(git ls-remote origin refs/heads/main | awk 'NR==1 {print $1}')"
+          test "$MAIN_SHA" = "$EXPECTED_MAIN_SHA"
+          git fetch --no-tags --depth=1 origin "$MAIN_SHA"
+          git worktree add --detach "$CANDIDATE_DIR" "$MAIN_SHA"
+
+      - name: Capture asset fetch diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --location --silent --show-error "$REPLAY_URL" -o "$EVIDENCE_DIR/live-index.html"
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+          html = Path(os.environ["EVIDENCE_DIR"]).joinpath("live-index.html").read_text(encoding="utf-8")
+          pattern = re.compile(r"https://cdn\.jsdelivr\.net/gh/Z3X-1337/toxicjoin@[0-9a-f]{40}/public/replay/assets/[^\"']+")
+          urls = pattern.findall(html)
+          if len(urls) != 2:
+              raise SystemExit(f"expected two immutable asset URLs, got {len(urls)}")
+          Path(os.environ["EVIDENCE_DIR"]).joinpath("asset-urls.txt").write_text("\n".join(urls) + "\n", encoding="utf-8")
+          PY
+          : > "$EVIDENCE_DIR/assets.tsv"
+          while IFS= read -r url; do
+            filename="${url##*/}"
+            remote="$EVIDENCE_DIR/remote-$filename"
+            set +e
+            http_code=$(curl --location --silent --show-error \
+              --output "$remote" --write-out '%{http_code}' "$url")
+            curl_exit=$?
+            set -e
+            local_file="$CANDIDATE_DIR/public/replay/assets/$filename"
+            local_sha="missing"
+            local_bytes=0
+            if [[ -f "$local_file" ]]; then
+              local_sha=$(sha256sum "$local_file" | awk '{print $1}')
+              local_bytes=$(wc -c < "$local_file")
+            fi
+            remote_sha="missing"
+            remote_bytes=0
+            if [[ -f "$remote" ]]; then
+              remote_sha=$(sha256sum "$remote" | awk '{print $1}')
+              remote_bytes=$(wc -c < "$remote")
+            fi
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+              "$filename" "$curl_exit" "$http_code" "$local_sha" "$remote_sha" "$local_bytes" "$remote_bytes" \
+              >> "$EVIDENCE_DIR/assets.tsv"
+            rm -f "$remote"
+          done < "$EVIDENCE_DIR/asset-urls.txt"
+
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          root = Path(os.environ["EVIDENCE_DIR"])
+          rows = []
+          for line in root.joinpath("assets.tsv").read_text(encoding="utf-8").splitlines():
+              filename, curl_exit, http_code, local_sha, remote_sha, local_bytes, remote_bytes = line.split("\t")
+              rows.append({
+                  "filename": filename,
+                  "curl_exit": int(curl_exit),
+                  "http_code": int(http_code or 0),
+                  "local_sha256": local_sha,
+                  "remote_sha256": remote_sha,
+                  "local_bytes": int(local_bytes),
+                  "remote_bytes": int(remote_bytes),
+                  "sha_match": local_sha == remote_sha,
+              })
+          report = {
+              "schema_version": "1.0",
+              "validation_main_sha": os.environ["EXPECTED_MAIN_SHA"],
+              "assets": rows,
+          }
+          root.joinpath("asset-diagnostics.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          print(json.dumps(report, sort_keys=True))
+          PY
+
+      - name: Upload diagnostic evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: toxicjoin-hosted-replay-asset-diagnostics
+          path: validation-artifacts/replay-asset-diagnostics/asset-diagnostics.json
+          if-no-files-found: error
+          retention-days: 7
