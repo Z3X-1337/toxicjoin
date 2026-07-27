@@ -20,6 +20,7 @@ from toxicjoin.evidence.derivation import DataHubDerivationValidation
 from toxicjoin.models import ColumnRef, Decision
 from toxicjoin.policy import PolicyEngine
 from toxicjoin.proofs.models import (
+    AgentPpmcProofBinding,
     PreExecutionPrivacyProof,
     ProofVerificationFailure,
     ProofVerificationResult,
@@ -292,11 +293,12 @@ def verify_preexecution_privacy_proof(
 
     _validate_integrity_key(integrity_key)
     try:
-        proof = (
-            proof_or_payload
-            if isinstance(proof_or_payload, PreExecutionPrivacyProof)
-            else PreExecutionPrivacyProof.model_validate(dict(proof_or_payload))
-        )
+        if isinstance(proof_or_payload, PreExecutionPrivacyProof):
+            _require_exact_proof_types(proof_or_payload)
+            proof = proof_or_payload
+        else:
+            proof = PreExecutionPrivacyProof.model_validate(dict(proof_or_payload))
+            _require_exact_proof_types(proof)
     except (ValidationError, TypeError, ValueError):
         return ProofVerificationResult(
             valid=False,
@@ -531,10 +533,23 @@ def _require_ppmc_alignment(
         raise PreExecutionProofError("PROOF_PPMC_GOVERNANCE_BINDING_MISMATCH")
 
 
+def _require_exact_proof_types(proof: PreExecutionPrivacyProof) -> None:
+    if type(proof) is not PreExecutionPrivacyProof:
+        raise TypeError("privacy proof must use the exact proof model type")
+    if (
+        proof.agent_ppmc_provenance is not None
+        and type(proof.agent_ppmc_provenance) is not AgentPpmcProofBinding
+    ):
+        raise TypeError("privacy proof must use the exact Agent provenance model type")
+    if proof.repair is not None and type(proof.repair) is not RepairProofBinding:
+        raise TypeError("privacy proof must use the exact repair binding model type")
+
+
 def _payload(
     proof_or_payload: PreExecutionPrivacyProof | Mapping[str, Any],
 ) -> dict[str, Any]:
     if isinstance(proof_or_payload, PreExecutionPrivacyProof):
+        _require_exact_proof_types(proof_or_payload)
         return proof_or_payload.model_dump(mode="json")
     return _json_compatible(dict(proof_or_payload))
 
