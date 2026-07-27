@@ -29,6 +29,7 @@ from toxicjoin.execute import ProofBoundExecutionAuthorizer
 from toxicjoin.integrations.datahub_authority import read_only_settings_from_env
 from toxicjoin.models import ColumnRef, SensitivityCategory
 from toxicjoin.policy import PolicyEngine, load_policy
+from toxicjoin.proofs import compute_agent_ppmc_provenance_hmac
 from toxicjoin.prospective.forbidden import build_forbidden_predicate_policy
 from toxicjoin.prospective.grammar import (
     build_future_action_grammar_context,
@@ -43,6 +44,7 @@ PURPOSE = "List approved country values for the governed customer population"
 SQL = "SELECT country FROM patients WHERE customer_id IS NOT NULL"
 SUBJECT_KEY = ColumnRef(dataset="patients", field_path="customer_id")
 PROOF_KEY = b"agent-preexec-proof-integrity-key-32-bytes!!"
+PROVENANCE_KEY = b"agent-preexec-provenance-key-32-bytes-distinct!!"
 AUTH_KEY = b"agent-preexec-execution-auth-key-32-bytes!!"
 IDENTITY = RequestIdentity(
     principal_id="principal-agent-preexec",
@@ -179,6 +181,14 @@ def _upstream(monkeypatch: pytest.MonkeyPatch):
     return snapshot, proposal, evaluation, ppmc_evaluation, state, grammar
 
 
+def _proof_authority() -> DataHubAgentPreExecutionProofAuthority:
+    return DataHubAgentPreExecutionProofAuthority(
+        integrity_key=PROOF_KEY,
+        provenance_integrity_key=PROVENANCE_KEY,
+        clock=lambda: NOW + timedelta(seconds=5),
+    )
+
+
 def test_agent_proof_authority_surface_does_not_accept_legacy_ppmc_authority_inputs() -> None:
     parameters = inspect.signature(DataHubAgentPreExecutionProofAuthority.build).parameters
 
@@ -194,6 +204,7 @@ def test_agent_proof_authority_surface_does_not_accept_legacy_ppmc_authority_inp
     assert "f6_clearance" not in parameters
     assert "policy_engine" not in parameters
     assert "integrity_key" not in parameters
+    assert "provenance_integrity_key" not in parameters
 
 
 def test_agent_ppmc_provenance_mints_proof_accepted_by_strict_execution(
@@ -203,10 +214,7 @@ def test_agent_ppmc_provenance_mints_proof_accepted_by_strict_execution(
     assert ppmc_evaluation.ppmc_result.status == PpmcStatus.NO_COUNTEREXAMPLE_WITHIN_BOUND
     assert ppmc_evaluation.ppmc_result.bound == 3
 
-    proof = DataHubAgentPreExecutionProofAuthority(
-        integrity_key=PROOF_KEY,
-        clock=lambda: NOW + timedelta(seconds=5),
-    ).build(
+    proof = _proof_authority().build(
         proposal=proposal,
         evaluation=evaluation,
         ppmc_evaluation=ppmc_evaluation,
@@ -225,6 +233,10 @@ def test_agent_ppmc_provenance_mints_proof_accepted_by_strict_execution(
     assert provenance.ppmc_result_sha256 == ppmc_evaluation.ppmc_result_sha256
     assert provenance.disclosure_state_sha256 == state.state_sha256
     assert provenance.grammar_sha256 == grammar.grammar_sha256
+    assert provenance.authority_hmac_sha256 == compute_agent_ppmc_provenance_hmac(
+        provenance,
+        integrity_key=PROVENANCE_KEY,
+    )
 
     resolver = DataHubSnapshotContextResolver(
         snapshot,
@@ -235,6 +247,7 @@ def test_agent_ppmc_provenance_mints_proof_accepted_by_strict_execution(
         context_resolver=resolver,
         policy_engine=PolicyEngine(load_policy()),
         privacy_proof_integrity_key=PROOF_KEY,
+        agent_provenance_integrity_key=PROVENANCE_KEY,
         secret_key=AUTH_KEY,
         ttl_seconds=5,
         clock=lambda: (NOW + timedelta(seconds=6)).timestamp(),
@@ -261,10 +274,7 @@ def test_agent_proof_authority_rejects_sql_plan_rebinding(
         AgentPreExecutionProofAuthorityError,
         match="AGENT_PROOF_SQL_BINDING_MISMATCH",
     ):
-        DataHubAgentPreExecutionProofAuthority(
-            integrity_key=PROOF_KEY,
-            clock=lambda: NOW + timedelta(seconds=5),
-        ).build(
+        _proof_authority().build(
             proposal=proposal,
             evaluation=evaluation,
             ppmc_evaluation=ppmc_evaluation,
@@ -285,10 +295,7 @@ def test_agent_proof_authority_rejects_same_plan_different_proposal_sql(
         AgentPreExecutionProofAuthorityError,
         match="AGENT_PROOF_SQL_BINDING_MISMATCH",
     ):
-        DataHubAgentPreExecutionProofAuthority(
-            integrity_key=PROOF_KEY,
-            clock=lambda: NOW + timedelta(seconds=5),
-        ).build(
+        _proof_authority().build(
             proposal=proposal,
             evaluation=evaluation,
             ppmc_evaluation=ppmc_evaluation,
@@ -296,4 +303,15 @@ def test_agent_proof_authority_rejects_same_plan_different_proposal_sql(
             sql=same_plan_different_sql,
             state=state,
             grammar=grammar,
+        )
+
+
+def test_agent_proof_authority_rejects_reused_provenance_key() -> None:
+    with pytest.raises(
+        AgentPreExecutionProofAuthorityError,
+        match="AGENT_PROOF_INTEGRITY_KEY_INVALID",
+    ):
+        DataHubAgentPreExecutionProofAuthority(
+            integrity_key=PROOF_KEY,
+            provenance_integrity_key=PROOF_KEY,
         )
