@@ -10,6 +10,7 @@ from pydantic import Field, field_validator, model_validator
 
 from toxicjoin.evidence.canonical import canonical_json_sha256
 from toxicjoin.models import StrictModel
+from toxicjoin.proofs.ppmc_profile import PREEXECUTION_PPMC_PROFILE
 
 _HASH_PATTERN = r"^[0-9a-f]{64}$"
 _PROOF_VERSION = "0.1.0"
@@ -21,6 +22,7 @@ class ProofVerificationFailure(StrEnum):
     SCHEMA_INVALID = "PROOF_SCHEMA_INVALID"
     CONTENT_HASH_MISMATCH = "PROOF_CONTENT_HASH_MISMATCH"
     HMAC_MISMATCH = "PROOF_HMAC_MISMATCH"
+    PPMC_PROFILE_INVALID = "PROOF_PPMC_PROFILE_INVALID"
     NOT_YET_VALID = "PROOF_NOT_YET_VALID"
     EXPIRED = "PROOF_EXPIRED"
 
@@ -73,6 +75,7 @@ class PreExecutionPrivacyProof(StrictModel):
     policy_sha256: Sha256
     policy_decision_sha256: Sha256
     grammar_sha256: Sha256
+    ppmc_execution_profile: Literal["p0-preexec-v1"] = PREEXECUTION_PPMC_PROFILE
     ppmc_config_sha256: Sha256
     ppmc_forbidden_policy_sha256: Sha256
     ppmc_governance_binding_sha256: Sha256
