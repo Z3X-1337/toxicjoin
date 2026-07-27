@@ -6,7 +6,7 @@ import hmac
 
 from toxicjoin.prospective.ppmc import PpmcSearchConfig, build_ppmc_search_config
 
-PREEXECUTION_PPMC_PROFILE = "p0-preexec-v1"
+PREEXECUTION_PPMC_PROFILE = "p0-preexec-v2"
 PREEXECUTION_PPMC_BOUND = 3
 PREEXECUTION_PPMC_MAX_STATES = 256
 
@@ -14,7 +14,7 @@ PREEXECUTION_PPMC_MAX_STATES = 256
 def build_preexecution_ppmc_search_config() -> PpmcSearchConfig:
     """Return the fixed search profile owned by the proof-producing runtime.
 
-    Generic/offline PPMC remains separately configurable.  Execution-eligible Agent
+    Generic/offline PPMC remains separately configurable. Execution-eligible Agent
     handoff deliberately owns this deterministic budget so callers cannot trade
     resource consumption against the security model before proof issuance.
     """
@@ -34,11 +34,11 @@ def is_approved_preexecution_ppmc_profile(
 ) -> bool:
     """Return whether a committed PPMC configuration is execution-proof eligible.
 
-    Bound three is the exact P0 pre-execution semantic horizon.  Deeper generic
-    searches remain available for analysis but are not allowed to enlarge synchronous
-    execution-path work.  A smaller state budget remains semantically safe because
-    exhaustion is explicit FAIL_CLOSED; the profile only imposes the upper resource
-    ceiling.  The authenticated Agent path itself always emits the fixed maximum.
+    V2 fixes the P0 pre-execution semantic horizon at depth three and caps the
+    synchronous state budget. Deeper/larger generic searches remain available for
+    analysis but are not execution-proof eligible. A smaller state budget remains
+    semantically safe because exhaustion is explicit FAIL_CLOSED; the authenticated
+    Agent path itself always emits the fixed maximum.
     """
 
     if profile != PREEXECUTION_PPMC_PROFILE or bound != PREEXECUTION_PPMC_BOUND:
