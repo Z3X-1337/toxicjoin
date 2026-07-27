@@ -35,6 +35,7 @@ from toxicjoin.proofs import (
     PreExecutionPrivacyProof,
     build_preexecution_privacy_proof,
     compute_agent_ppmc_proof_binding_sha256,
+    compute_agent_ppmc_provenance_hmac,
     compute_preexecution_privacy_proof_hmac,
     compute_preexecution_privacy_proof_sha256,
 )
@@ -63,6 +64,7 @@ OBSERVED_AT = datetime(2026, 7, 25, 14, 0, tzinfo=timezone.utc)
 ISSUED_AT = OBSERVED_AT + timedelta(seconds=30)
 VERIFY_AT = ISSUED_AT + timedelta(seconds=1)
 PROOF_KEY = b"integration-proof-integrity-key-32-bytes!!"
+PROVENANCE_KEY = b"integration-agent-provenance-key-32-bytes!!"
 AUTH_KEY = b"integration-execution-auth-key-32-bytes!!!"
 URN = "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.proof_execution,PROD)"
 SQL = "SELECT country FROM patients WHERE customer_id IS NOT NULL"
@@ -153,10 +155,21 @@ def _with_agent_provenance(proof: PreExecutionPrivacyProof) -> PreExecutionPriva
     provisional = AgentPpmcProofBinding.model_construct(
         **payload,
         binding_sha256="0" * 64,
+        authority_hmac_sha256="0" * 64,
+    )
+    binding_sha256 = compute_agent_ppmc_proof_binding_sha256(provisional)
+    unsigned_provenance = AgentPpmcProofBinding.model_construct(
+        **payload,
+        binding_sha256=binding_sha256,
+        authority_hmac_sha256="0" * 64,
     )
     provenance = AgentPpmcProofBinding(
         **payload,
-        binding_sha256=compute_agent_ppmc_proof_binding_sha256(provisional),
+        binding_sha256=binding_sha256,
+        authority_hmac_sha256=compute_agent_ppmc_provenance_hmac(
+            unsigned_provenance,
+            integrity_key=PROVENANCE_KEY,
+        ),
     )
     unsigned = proof.model_copy(
         update={
@@ -303,6 +316,7 @@ def _build_runtime(tmp_path):
             context_resolver=resolver,
             policy_engine=policy_engine,
             privacy_proof_integrity_key=PROOF_KEY,
+            agent_provenance_integrity_key=PROVENANCE_KEY,
             secret_key=AUTH_KEY,
             ttl_seconds=5,
             clock=lambda: VERIFY_AT.timestamp(),
