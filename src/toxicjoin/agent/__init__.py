@@ -38,6 +38,14 @@ from toxicjoin.agent.ppmc_authority import (
     TrustedAgentPpmcEvaluation,
     compute_trusted_agent_ppmc_evaluation_sha256,
 )
+from toxicjoin.agent.ppmc_handoff import (
+    AgentPpmcEvaluationCapsule,
+    AgentPpmcEvaluationCapsuleError,
+    DataHubAgentPpmcHandoffAuthority,
+    compute_agent_ppmc_evaluation_capsule_hmac,
+    compute_agent_ppmc_evaluation_capsule_sha256,
+    require_agent_ppmc_evaluation_capsule,
+)
 from toxicjoin.agent.proof_authority import (
     AgentPreExecutionProofAuthorityError,
     DataHubAgentPreExecutionProofAuthority,
@@ -65,6 +73,8 @@ __all__ = [
     "AgentLineageView",
     "AgentPlanner",
     "AgentPpmcAuthorityError",
+    "AgentPpmcEvaluationCapsule",
+    "AgentPpmcEvaluationCapsuleError",
     "AgentPreExecutionProofAuthorityError",
     "AgentProofHandoffAuthorityError",
     "AgentProposal",
@@ -72,6 +82,7 @@ __all__ = [
     "AgentProposalError",
     "DataHubAgentDiscoverer",
     "DataHubAgentPpmcAuthority",
+    "DataHubAgentPpmcHandoffAuthority",
     "DataHubAgentPreExecutionProofAuthority",
     "DataHubAgentProofHandoffAuthority",
     "DataHubAgentProposalAuthority",
@@ -87,7 +98,10 @@ __all__ = [
     "build_agent_data_context_from_snapshot",
     "build_agent_feedback",
     "build_agent_goal",
+    "compute_agent_ppmc_evaluation_capsule_hmac",
+    "compute_agent_ppmc_evaluation_capsule_sha256",
     "compute_governance_trust_binding_sha256",
     "compute_trusted_agent_ppmc_evaluation_sha256",
     "compute_trusted_agent_proposal_evaluation_sha256",
+    "require_agent_ppmc_evaluation_capsule",
 ]

@@ -8,7 +8,7 @@ capsule before leaving this authority. The capsule is still not execution author
 from __future__ import annotations
 
 from toxicjoin.agent.models import AgentProposal
-from toxicjoin.agent.ppmc_authority import TrustedAgentPpmcEvaluation
+from toxicjoin.agent.ppmc_handoff import AgentPpmcEvaluationCapsule
 from toxicjoin.agent.proof_authority import (
     AgentPreExecutionProofAuthorityError,
     DataHubAgentPreExecutionProofAuthority,
@@ -73,7 +73,7 @@ class DataHubAgentProofHandoffAuthority:
         *,
         proposal: AgentProposal,
         evaluation: TrustedAgentProposalEvaluation,
-        ppmc_evaluation: TrustedAgentPpmcEvaluation,
+        ppmc_evaluation: AgentPpmcEvaluationCapsule,
         sql: str,
         state: DisclosureState,
         grammar: FutureActionGrammar,
