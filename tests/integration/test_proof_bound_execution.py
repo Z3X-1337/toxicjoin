@@ -354,14 +354,15 @@ def _reseal_with_transcript(
     proof: PreExecutionPrivacyProof,
     transcript_sha256: str,
 ) -> PreExecutionPrivacyProof:
-    payload = proof.model_dump(mode="json")
-    payload["ppmc_search_transcript_sha256"] = transcript_sha256
-    payload["privacy_proof_sha256"] = compute_preexecution_privacy_proof_sha256(payload)
-    payload["integrity_hmac_sha256"] = compute_preexecution_privacy_proof_hmac(
-        payload,
-        integrity_key=PROOF_KEY,
+    base = proof.model_copy(
+        update={
+            "agent_ppmc_provenance": None,
+            "ppmc_search_transcript_sha256": transcript_sha256,
+            "privacy_proof_sha256": "0" * 64,
+            "integrity_hmac_sha256": "0" * 64,
+        }
     )
-    return PreExecutionPrivacyProof.model_validate(payload)
+    return _with_agent_provenance(base)
 
 
 def test_public_verifier_executes_only_with_matching_real_privacy_proof(tmp_path) -> None:
