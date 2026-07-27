@@ -33,7 +33,8 @@ _REQUIRED_WORKFLOWS = (
 
 _BASELINE_WORKFLOW = "Ground Truth Baseline"
 _BASELINE_ARTIFACT = "toxicjoin-ground-truth-baseline"
-_MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
+_MAX_RESPONSE_BYTES = 64 * 1024 * 1024
+_REDIRECT_CODES = {301, 302, 303, 307, 308}
 
 
 def _validate_sha(value: str, *, name: str) -> str:
@@ -312,6 +313,19 @@ def build_release_manifest(
     return payload
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        return None
+
+
 class GitHubApi:
     def __init__(self, *, repository: str, token: str) -> None:
         if not repository or "/" not in repository:
@@ -321,7 +335,7 @@ class GitHubApi:
         self.repository = repository
         self.token = token
 
-    def _request(self, path: str) -> bytes:
+    def _api_request(self, path: str) -> bytes:
         request = urllib.request.Request(
             f"https://api.github.com{path}",
             headers={
@@ -333,17 +347,43 @@ class GitHubApi:
         )
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
-                data = response.read(_MAX_ARTIFACT_BYTES + 1)
+                data = response.read(_MAX_RESPONSE_BYTES + 1)
         except urllib.error.HTTPError as error:
             raise ValueError(f"GitHub API request failed with HTTP {error.code}") from None
         except urllib.error.URLError as error:
             raise ValueError("GitHub API request failed") from error
-        if len(data) > _MAX_ARTIFACT_BYTES:
+        if len(data) > _MAX_RESPONSE_BYTES:
             raise ValueError("GitHub API response exceeded safety limit")
         return data
 
+    def _artifact_redirect(self, *, artifact_id: int) -> str:
+        request = urllib.request.Request(
+            f"https://api.github.com/repos/{self.repository}/actions/artifacts/{artifact_id}/zip",
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {self.token}",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "toxicjoin-release-manifest",
+            },
+        )
+        opener = urllib.request.build_opener(_NoRedirect)
+        try:
+            with opener.open(request, timeout=30) as response:
+                location = response.headers.get("Location")
+        except urllib.error.HTTPError as error:
+            if error.code not in _REDIRECT_CODES:
+                raise ValueError(
+                    f"GitHub artifact download request failed with HTTP {error.code}"
+                ) from None
+            location = error.headers.get("Location")
+        except urllib.error.URLError as error:
+            raise ValueError("GitHub artifact download request failed") from error
+        if not location or not location.startswith("https://"):
+            raise ValueError("GitHub artifact download did not return a secure redirect")
+        return location
+
     def get_json(self, path: str) -> dict[str, Any]:
-        payload = json.loads(self._request(path).decode("utf-8"))
+        payload = json.loads(self._api_request(path).decode("utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("GitHub API response must be a JSON object")
         return payload
@@ -366,7 +406,23 @@ class GitHubApi:
         return [item for item in artifacts if isinstance(item, dict)]
 
     def download_artifact(self, *, artifact_id: int) -> bytes:
-        return self._request(f"/repos/{self.repository}/actions/artifacts/{artifact_id}/zip")
+        location = self._artifact_redirect(artifact_id=artifact_id)
+        request = urllib.request.Request(
+            location,
+            headers={"User-Agent": "toxicjoin-release-manifest"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                data = response.read(_MAX_RESPONSE_BYTES + 1)
+        except urllib.error.HTTPError as error:
+            raise ValueError(
+                f"signed artifact download failed with HTTP {error.code}"
+            ) from None
+        except urllib.error.URLError as error:
+            raise ValueError("signed artifact download failed") from error
+        if len(data) > _MAX_RESPONSE_BYTES:
+            raise ValueError("ground-truth baseline artifact exceeded safety limit")
+        return data
 
 
 def collect_gate_runs(
@@ -377,23 +433,20 @@ def collect_gate_runs(
     poll_seconds: int,
 ) -> dict[str, dict[str, Any]]:
     deadline = time.monotonic() + max(0, wait_seconds)
-    last_pending: list[str] = []
     while True:
         runs = client.list_runs(source_sha=source_sha)
         selected, pending = select_gate_runs(runs=runs, source_sha=source_sha)
         if not pending:
             return selected
-        last_pending = pending
         if time.monotonic() >= deadline:
             raise ValueError(
-                "required workflows did not become ready before timeout: "
-                + ", ".join(last_pending)
+                "required workflows did not become ready before timeout: " + ", ".join(pending)
             )
         time.sleep(max(1, poll_seconds))
 
 
 def _read_baseline_from_zip(data: bytes) -> tuple[dict[str, Any], bytes]:
-    if len(data) > _MAX_ARTIFACT_BYTES:
+    if len(data) > _MAX_RESPONSE_BYTES:
         raise ValueError("ground-truth baseline artifact exceeds safety limit")
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
