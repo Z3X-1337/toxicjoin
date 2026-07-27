@@ -31,8 +31,10 @@ from toxicjoin.integrations.datahub_mcp import DataHubMcpSettings
 from toxicjoin.models import ColumnRef, SensitivityCategory
 from toxicjoin.policy import PolicyEngine, load_policy
 from toxicjoin.proofs import (
+    AgentPpmcProofBinding,
     PreExecutionPrivacyProof,
     build_preexecution_privacy_proof,
+    compute_agent_ppmc_proof_binding_sha256,
     compute_preexecution_privacy_proof_hmac,
     compute_preexecution_privacy_proof_sha256,
 )
@@ -122,6 +124,59 @@ def _snapshot() -> DataHubSnapshot:
         lineage_sample={"relationships": []},
         discovered_tools=("get_entities", "get_lineage", "list_schema_fields"),
         observed_at=OBSERVED_AT,
+    )
+
+
+def _with_agent_provenance(proof: PreExecutionPrivacyProof) -> PreExecutionPrivacyProof:
+    payload = {
+        "agent_proposal_sha256": "1" * 64,
+        "agent_evaluation_sha256": "2" * 64,
+        "agent_ppmc_evaluation_sha256": "3" * 64,
+        "f6_clearance_sha256": "4" * 64,
+        "sql_sha256": proof.sql_sha256,
+        "query_plan_sha256": proof.query_plan_sha256,
+        "task_purpose_sha256": proof.task_purpose_sha256,
+        "purpose_commitment_sha256": proof.purpose_commitment_sha256,
+        "subject_key_sha256": proof.subject_key_sha256,
+        "governance_context_sha256": proof.governance_context_sha256,
+        "governance_binding_sha256": proof.governance_binding_sha256,
+        "evidence_root_sha256": proof.evidence_root_sha256,
+        "evidence_validation_sha256": proof.evidence_validation_sha256,
+        "policy_sha256": proof.policy_sha256,
+        "policy_decision_sha256": proof.policy_decision_sha256,
+        "disclosure_state_sha256": proof.disclosure_state_sha256,
+        "grammar_sha256": proof.grammar_sha256,
+        "ppmc_governance_binding_sha256": proof.ppmc_governance_binding_sha256,
+        "ppmc_result_sha256": proof.ppmc_result_sha256,
+        "evidence_expires_at": proof.expires_at,
+    }
+    provisional = AgentPpmcProofBinding.model_construct(
+        **payload,
+        binding_sha256="0" * 64,
+    )
+    provenance = AgentPpmcProofBinding(
+        **payload,
+        binding_sha256=compute_agent_ppmc_proof_binding_sha256(provisional),
+    )
+    unsigned = proof.model_copy(
+        update={
+            "agent_ppmc_provenance": provenance,
+            "privacy_proof_sha256": "0" * 64,
+            "integrity_hmac_sha256": "0" * 64,
+        }
+    )
+    with_content = unsigned.model_copy(
+        update={
+            "privacy_proof_sha256": compute_preexecution_privacy_proof_sha256(unsigned)
+        }
+    )
+    return with_content.model_copy(
+        update={
+            "integrity_hmac_sha256": compute_preexecution_privacy_proof_hmac(
+                with_content,
+                integrity_key=PROOF_KEY,
+            )
+        }
     )
 
 
@@ -240,6 +295,7 @@ def _build_runtime(tmp_path):
         integrity_key=PROOF_KEY,
         issued_at=ISSUED_AT,
     )
+    proof = _with_agent_provenance(proof)
 
     executor = SpyDuckDBExecutor(database, max_preview_rows=10)
     executor.bind_authorizer(
