@@ -26,6 +26,7 @@ from toxicjoin.proofs.models import (
     PreExecutionPrivacyProof,
     compute_agent_ppmc_proof_binding_sha256,
 )
+from toxicjoin.proofs.ppmc_profile import PREEXECUTION_PPMC_PROFILE
 from toxicjoin.proofs.preexec import compute_preexecution_privacy_proof_sha256
 
 NOW = datetime(2026, 7, 27, 14, 0, tzinfo=timezone.utc)
@@ -64,7 +65,7 @@ def _proof(*, identity_char: str = "1", trusted_provenance: bool = True) -> PreE
         policy_sha256=_hash("d"),
         policy_decision_sha256=_hash("e"),
         grammar_sha256=_hash("f"),
-        ppmc_execution_profile="p0-preexec-v1",
+        ppmc_execution_profile=PREEXECUTION_PPMC_PROFILE,
         ppmc_config_sha256=_hash("0"),
         ppmc_forbidden_policy_sha256=_hash("1"),
         ppmc_governance_binding_sha256=_hash("2"),
