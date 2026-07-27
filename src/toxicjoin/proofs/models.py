@@ -49,11 +49,13 @@ class RepairProofBinding(StrictModel):
 class AgentPpmcProofBinding(StrictModel):
     """Cryptographically separated Governed-Agent provenance commitment for one proof.
 
-    ``binding_sha256`` commits the provenance payload itself. ``authority_hmac_sha256`` is a
-    second, domain-separated authenticator produced with a key that is distinct from both the
-    generic proof HMAC key and the execution-authorization key. The binding commits not only the
-    Agent PPMC result hash but also the exact proof-facing PPMC profile metadata, preventing a
-    generic proof issuer from relabeling a genuine bounded result as a stronger search.
+    ``proof_core_sha256`` commits every base-proof field before Agent provenance and the enclosing
+    proof hashes are attached. ``binding_sha256`` commits the provenance payload itself, while
+    ``authority_hmac_sha256`` authenticates that payload with a key distinct from both the generic
+    proof HMAC key and the execution-authorization key. Explicit PPMC fields remain duplicated for
+    diagnosability, while the proof-core commitment prevents a generic proof issuer from rewriting
+    lifetime, snapshot, repair, profile, or any future base-proof field and retaining genuine Agent
+    provenance.
     """
 
     schema_version: Literal["1.0"] = "1.0"
@@ -61,6 +63,7 @@ class AgentPpmcProofBinding(StrictModel):
     agent_evaluation_sha256: Sha256
     agent_ppmc_evaluation_sha256: Sha256
     f6_clearance_sha256: Sha256
+    proof_core_sha256: Sha256
     request_identity_sha256: Sha256
     sql_sha256: Sha256
     query_plan_sha256: Sha256
