@@ -112,7 +112,7 @@ jobs:
           import json
           import os
           import re
-          import urllib.request
+          import subprocess
           from pathlib import Path
 
           evidence = Path(os.environ["EVIDENCE_DIR"])
@@ -148,10 +148,15 @@ jobs:
           asset_results = []
           for commit, filename in refs:
               url = f"https://cdn.jsdelivr.net/gh/Z3X-1337/toxicjoin@{commit}/public/replay/assets/{filename}"
-              with urllib.request.urlopen(url, timeout=30) as response:
-                  if response.status != 200:
-                      raise SystemExit(f"asset HTTP status was {response.status}")
-                  remote = response.read()
+              fetched = subprocess.run(
+                  ["curl", "--location", "--silent", "--show-error", "--fail", url],
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+                  check=False,
+              )
+              if fetched.returncode != 0:
+                  raise SystemExit(f"immutable asset fetch failed: {filename}")
+              remote = fetched.stdout
               local_path = candidate / "public" / "replay" / "assets" / filename
               if not local_path.is_file():
                   raise SystemExit(f"asset missing from exact-main public/replay: {filename}")
