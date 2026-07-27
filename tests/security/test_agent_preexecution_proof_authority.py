@@ -195,7 +195,7 @@ def test_agent_proof_authority_surface_does_not_accept_legacy_ppmc_authority_inp
     assert "proposal" in parameters
     assert "evaluation" in parameters
     assert "ppmc_evaluation" in parameters
-    assert "identity" in parameters
+    assert "identity" not in parameters
     assert "sql" in parameters
     assert "state" in parameters
     assert "grammar" in parameters
@@ -207,6 +207,25 @@ def test_agent_proof_authority_surface_does_not_accept_legacy_ppmc_authority_inp
     assert "provenance_integrity_key" not in parameters
 
 
+def test_agent_proof_authority_requires_bound_request_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, proposal, evaluation, ppmc_evaluation, state, grammar = _upstream(monkeypatch)
+
+    with pytest.raises(
+        AgentPreExecutionProofAuthorityError,
+        match="AGENT_PROOF_IDENTITY_REQUIRED",
+    ):
+        _proof_authority().build(
+            proposal=proposal,
+            evaluation=evaluation,
+            ppmc_evaluation=ppmc_evaluation,
+            sql=SQL,
+            state=state,
+            grammar=grammar,
+        )
+
+
 def test_agent_ppmc_provenance_mints_proof_accepted_by_strict_execution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -214,15 +233,15 @@ def test_agent_ppmc_provenance_mints_proof_accepted_by_strict_execution(
     assert ppmc_evaluation.ppmc_result.status == PpmcStatus.NO_COUNTEREXAMPLE_WITHIN_BOUND
     assert ppmc_evaluation.ppmc_result.bound == 3
 
-    proof = _proof_authority().build(
-        proposal=proposal,
-        evaluation=evaluation,
-        ppmc_evaluation=ppmc_evaluation,
-        identity=IDENTITY,
-        sql=SQL,
-        state=state,
-        grammar=grammar,
-    )
+    with bind_request_identity(IDENTITY):
+        proof = _proof_authority().build(
+            proposal=proposal,
+            evaluation=evaluation,
+            ppmc_evaluation=ppmc_evaluation,
+            sql=SQL,
+            state=state,
+            grammar=grammar,
+        )
 
     provenance = proof.agent_ppmc_provenance
     assert provenance is not None
@@ -230,6 +249,9 @@ def test_agent_ppmc_provenance_mints_proof_accepted_by_strict_execution(
     assert provenance.agent_evaluation_sha256 == evaluation.evaluation_sha256
     assert provenance.agent_ppmc_evaluation_sha256 == ppmc_evaluation.evaluation_sha256
     assert provenance.f6_clearance_sha256 == ppmc_evaluation.f6_clearance_sha256
+    assert provenance.request_identity_sha256 == canonical_json_sha256(
+        IDENTITY.model_dump(mode="json")
+    )
     assert provenance.ppmc_result_sha256 == ppmc_evaluation.ppmc_result_sha256
     assert provenance.disclosure_state_sha256 == state.state_sha256
     assert provenance.grammar_sha256 == grammar.grammar_sha256
@@ -270,19 +292,19 @@ def test_agent_proof_authority_rejects_sql_plan_rebinding(
 ) -> None:
     _, proposal, evaluation, ppmc_evaluation, state, grammar = _upstream(monkeypatch)
 
-    with pytest.raises(
-        AgentPreExecutionProofAuthorityError,
-        match="AGENT_PROOF_SQL_BINDING_MISMATCH",
-    ):
-        _proof_authority().build(
-            proposal=proposal,
-            evaluation=evaluation,
-            ppmc_evaluation=ppmc_evaluation,
-            identity=IDENTITY,
-            sql="SELECT customer_id FROM patients",
-            state=state,
-            grammar=grammar,
-        )
+    with bind_request_identity(IDENTITY):
+        with pytest.raises(
+            AgentPreExecutionProofAuthorityError,
+            match="AGENT_PROOF_SQL_BINDING_MISMATCH",
+        ):
+            _proof_authority().build(
+                proposal=proposal,
+                evaluation=evaluation,
+                ppmc_evaluation=ppmc_evaluation,
+                sql="SELECT customer_id FROM patients",
+                state=state,
+                grammar=grammar,
+            )
 
 
 def test_agent_proof_authority_rejects_same_plan_different_proposal_sql(
@@ -291,19 +313,19 @@ def test_agent_proof_authority_rejects_same_plan_different_proposal_sql(
     _, proposal, evaluation, ppmc_evaluation, state, grammar = _upstream(monkeypatch)
     same_plan_different_sql = SQL + " "
 
-    with pytest.raises(
-        AgentPreExecutionProofAuthorityError,
-        match="AGENT_PROOF_SQL_BINDING_MISMATCH",
-    ):
-        _proof_authority().build(
-            proposal=proposal,
-            evaluation=evaluation,
-            ppmc_evaluation=ppmc_evaluation,
-            identity=IDENTITY,
-            sql=same_plan_different_sql,
-            state=state,
-            grammar=grammar,
-        )
+    with bind_request_identity(IDENTITY):
+        with pytest.raises(
+            AgentPreExecutionProofAuthorityError,
+            match="AGENT_PROOF_SQL_BINDING_MISMATCH",
+        ):
+            _proof_authority().build(
+                proposal=proposal,
+                evaluation=evaluation,
+                ppmc_evaluation=ppmc_evaluation,
+                sql=same_plan_different_sql,
+                state=state,
+                grammar=grammar,
+            )
 
 
 def test_agent_proof_authority_rejects_reused_provenance_key() -> None:
