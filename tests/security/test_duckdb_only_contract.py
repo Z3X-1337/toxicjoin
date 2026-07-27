@@ -108,13 +108,24 @@ def test_authorization_schema_cannot_carry_alternate_dialect() -> None:
 def test_direct_verifier_fails_closed_on_non_duckdb_execution_dialect(tmp_path) -> None:
     database = tmp_path / "demo.duckdb"
     seed_database(database)
+    resolver = _resolver()
+    engine = _engine()
+    executor = DuckDBExecutor(database)
+    executor.bind_authorizer(
+        ExecutionAuthorizer(
+            context_resolver=resolver,
+            policy_engine=engine,
+            secret_key=b"direct-dialect-verifier-authority-key!!",
+        )
+    )
+
     result = verify_and_execute(
         SQL,
         task_purpose=TASK,
         subject_key=SUBJECT,
-        context_resolver=_resolver(),
-        policy_engine=_engine(),
-        executor=DuckDBExecutor(database),
+        context_resolver=resolver,
+        policy_engine=engine,
+        executor=executor,
         required_minimum_group_size=20,
         require_subject_threshold=False,
         dialect="postgres",
