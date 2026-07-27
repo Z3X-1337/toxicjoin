@@ -26,6 +26,10 @@ from toxicjoin.proofs.models import (
     RepairProofBinding,
     compute_repair_proof_binding_sha256,
 )
+from toxicjoin.proofs.ppmc_profile import (
+    PREEXECUTION_PPMC_PROFILE,
+    is_approved_preexecution_ppmc_profile,
+)
 from toxicjoin.prospective.forbidden import GovernanceTrustBinding
 from toxicjoin.prospective.grammar import FutureActionGrammar
 from toxicjoin.prospective.ppmc import PpmcSearchResult, PpmcStatus
@@ -213,6 +217,7 @@ def build_preexecution_privacy_proof(
         "policy_sha256": policy_sha256,
         "policy_decision_sha256": policy_decision_sha256,
         "grammar_sha256": grammar.grammar_sha256,
+        "ppmc_execution_profile": PREEXECUTION_PPMC_PROFILE,
         "ppmc_config_sha256": ppmc_result.config_sha256,
         "ppmc_forbidden_policy_sha256": ppmc_result.forbidden_policy_sha256,
         "ppmc_governance_binding_sha256": governance_trust_binding.binding_sha256,
@@ -309,6 +314,14 @@ def verify_preexecution_privacy_proof(
     )
     if not hmac.compare_digest(expected_hmac, proof.integrity_hmac_sha256):
         failures.add(ProofVerificationFailure.HMAC_MISMATCH)
+
+    if not is_approved_preexecution_ppmc_profile(
+        profile=proof.ppmc_execution_profile,
+        bound=proof.ppmc_bound,
+        max_states=proof.ppmc_max_states,
+        config_sha256=proof.ppmc_config_sha256,
+    ):
+        failures.add(ProofVerificationFailure.PPMC_PROFILE_INVALID)
 
     current = _utc(now or datetime.now(timezone.utc))
     if proof.issued_at > current + timedelta(seconds=1):
@@ -496,6 +509,13 @@ def _require_ppmc_alignment(
 ) -> None:
     if ppmc_result.status != PpmcStatus.NO_COUNTEREXAMPLE_WITHIN_BOUND:
         raise PreExecutionProofError("PROOF_PPMC_NOT_SAFE")
+    if not is_approved_preexecution_ppmc_profile(
+        profile=PREEXECUTION_PPMC_PROFILE,
+        bound=ppmc_result.bound,
+        max_states=ppmc_result.max_states,
+        config_sha256=ppmc_result.config_sha256,
+    ):
+        raise PreExecutionProofError("PROOF_PPMC_PROFILE_INVALID")
     if ppmc_result.initial_state_sha256 != state.state_sha256:
         raise PreExecutionProofError("PROOF_PPMC_STATE_MISMATCH")
     if ppmc_result.grammar_sha256 != grammar.grammar_sha256:
