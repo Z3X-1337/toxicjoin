@@ -6,7 +6,9 @@ non-authoritative preimage witness plus the security-owned proposal/PPMC capabil
 execution-relevant artifacts, authenticates provenance under an independent authority key, and only
 then seals the enclosing pre-execution privacy proof.
 
-Nothing in this module executes SQL or mutates DisclosureState/DataHub state.
+Authenticated request identity is derived from the bound request context and is never accepted as a
+caller-selected proof-authority input. Nothing in this module executes SQL or mutates
+DisclosureState/DataHub state.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from pydantic import ValidationError
 from toxicjoin.agent.models import AgentProposal
 from toxicjoin.agent.ppmc_authority import TrustedAgentPpmcEvaluation
 from toxicjoin.agent.proposal_authority import TrustedAgentProposalEvaluation
-from toxicjoin.auth import RequestIdentity
+from toxicjoin.auth import RequestIdentity, current_request_identity
 from toxicjoin.evidence.canonical import canonical_json_sha256
 from toxicjoin.policy import PolicyEngine, load_policy
 from toxicjoin.proofs.agent_provenance import compute_agent_ppmc_provenance_hmac
@@ -84,7 +86,6 @@ class DataHubAgentPreExecutionProofAuthority:
         proposal: AgentProposal,
         evaluation: TrustedAgentProposalEvaluation,
         ppmc_evaluation: TrustedAgentPpmcEvaluation,
-        identity: RequestIdentity,
         sql: str,
         state: DisclosureState,
         grammar: FutureActionGrammar,
@@ -97,7 +98,6 @@ class DataHubAgentPreExecutionProofAuthority:
                 proposal=proposal,
                 evaluation=evaluation,
                 ppmc_evaluation=ppmc_evaluation,
-                identity=identity,
                 sql=sql,
                 state=state,
                 grammar=grammar,
@@ -111,7 +111,6 @@ class DataHubAgentPreExecutionProofAuthority:
         proposal = None  # type: ignore[assignment]
         evaluation = None  # type: ignore[assignment]
         ppmc_evaluation = None  # type: ignore[assignment]
-        identity = None  # type: ignore[assignment]
         sql = None  # type: ignore[assignment]
         state = None  # type: ignore[assignment]
         grammar = None  # type: ignore[assignment]
@@ -124,7 +123,6 @@ class DataHubAgentPreExecutionProofAuthority:
         proposal: AgentProposal,
         evaluation: TrustedAgentProposalEvaluation,
         ppmc_evaluation: TrustedAgentPpmcEvaluation,
-        identity: RequestIdentity,
         sql: str,
         state: DisclosureState,
         grammar: FutureActionGrammar,
@@ -133,7 +131,6 @@ class DataHubAgentPreExecutionProofAuthority:
             type(proposal) is not AgentProposal
             or type(evaluation) is not TrustedAgentProposalEvaluation
             or type(ppmc_evaluation) is not TrustedAgentPpmcEvaluation
-            or type(identity) is not RequestIdentity
             or type(sql) is not str
             or type(state) is not DisclosureState
             or type(grammar) is not FutureActionGrammar
@@ -141,6 +138,10 @@ class DataHubAgentPreExecutionProofAuthority:
             raise AgentPreExecutionProofAuthorityError("AGENT_PROOF_INPUT_INVALID")
         if not sql.strip():
             raise AgentPreExecutionProofAuthorityError("AGENT_PROOF_INPUT_INVALID")
+
+        bound_identity = current_request_identity()
+        if bound_identity is None:
+            raise AgentPreExecutionProofAuthorityError("AGENT_PROOF_IDENTITY_REQUIRED")
 
         try:
             trusted_proposal = AgentProposal.model_validate(proposal.model_dump(mode="json"))
@@ -150,10 +151,12 @@ class DataHubAgentPreExecutionProofAuthority:
             trusted_ppmc = TrustedAgentPpmcEvaluation.model_validate(
                 ppmc_evaluation.model_dump(mode="json")
             )
-            trusted_identity = RequestIdentity.model_validate(identity.model_dump(mode="json"))
+            trusted_identity = RequestIdentity.model_validate(
+                bound_identity.model_dump(mode="json")
+            )
             trusted_state = DisclosureState.model_validate(state.model_dump(mode="json"))
             trusted_grammar = FutureActionGrammar.model_validate(grammar.model_dump(mode="json"))
-        except (ValidationError, ValueError):
+        except (ValidationError, ValueError, AttributeError):
             raise AgentPreExecutionProofAuthorityError("AGENT_PROOF_INPUT_INVALID") from None
 
         if trusted_proposal.proposal_sha256 != trusted_evaluation.proposal_sha256:
