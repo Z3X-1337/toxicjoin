@@ -262,6 +262,7 @@ class DataHubAgentPpmcAuthority:
         local_oracle = _build_policy_engine_oracle(
             trusted_evaluation,
             trusted_grammar,
+            trusted_policy,
         )
 
         started_at = self._sample_clock()
@@ -349,6 +350,7 @@ def compute_trusted_agent_ppmc_evaluation_sha256(
 def _build_policy_engine_oracle(
     evaluation: TrustedAgentProposalEvaluation,
     grammar: FutureActionGrammar,
+    forbidden_policy: ForbiddenPredicatePolicy,
 ) -> PolicyEngineLocalOracle:
     package_policy = load_policy()
     package_policy_sha256 = canonical_json_sha256(package_policy.model_dump(mode="json"))
@@ -357,6 +359,8 @@ def _build_policy_engine_oracle(
         or evaluation.policy_config_sha256 != package_policy_sha256
     ):
         raise AgentPpmcAuthorityError("AGENT_PPMC_POLICY_MISMATCH")
+    if forbidden_policy.minimum_group_size != package_policy.minimum_group_size:
+        raise AgentPpmcAuthorityError("AGENT_PPMC_FORBIDDEN_POLICY_MISMATCH")
 
     try:
         governance = build_policy_oracle_governance_context(
