@@ -15,10 +15,11 @@ from toxicjoin.proofs.agent_provenance import (
 )
 
 _MIN_KEY_BYTES = 32
+_HASH_CHARS = frozenset("0123456789abcdef")
 
 
 class ProofBoundExecutionAuthorizer(_ProofBoundExecutionAuthorizerBase):
-    """Proof-bound authorizer with cryptographically separated authority keys."""
+    """Proof-bound authorizer with separated keys and live warehouse-state rebinding."""
 
     def __init__(
         self,
@@ -27,6 +28,7 @@ class ProofBoundExecutionAuthorizer(_ProofBoundExecutionAuthorizerBase):
         policy_engine,
         privacy_proof_integrity_key: bytes,
         agent_provenance_integrity_key: bytes,
+        warehouse_snapshot_provider: Callable[[], str | None] | None = None,
         disclosure_ledger=None,
         require_disclosure_commitment: bool = False,
         secret_key: bytes | None = None,
@@ -41,6 +43,8 @@ class ProofBoundExecutionAuthorizer(_ProofBoundExecutionAuthorizerBase):
             agent_provenance_integrity_key,
             name="Agent provenance integrity key",
         )
+        if warehouse_snapshot_provider is not None and not callable(warehouse_snapshot_provider):
+            raise ValueError("warehouse snapshot provider must be callable")
         execution_key = (
             None
             if secret_key is None
@@ -78,9 +82,10 @@ class ProofBoundExecutionAuthorizer(_ProofBoundExecutionAuthorizerBase):
                 "Agent provenance integrity key must differ from execution authorization key"
             )
         self._agent_provenance_integrity_key = provenance_key
+        self._warehouse_snapshot_provider = warehouse_snapshot_provider
 
     def _verify_bound_privacy_proof(self, proof, **kwargs):
-        """Authenticate the proof, then authenticate and align Agent provenance separately."""
+        """Authenticate proof/provenance and rebind it to the current warehouse snapshot."""
 
         verified = super()._verify_bound_privacy_proof(proof, **kwargs)
         try:
@@ -90,7 +95,38 @@ class ProofBoundExecutionAuthorizer(_ProofBoundExecutionAuthorizerBase):
             )
         except AgentProofProvenanceError as exc:
             raise ExecutionAuthorizationError(exc.code) from None
+        self._require_current_warehouse_snapshot(proof.warehouse_snapshot_sha256)
         return verified
+
+    def _require_current_warehouse_snapshot(self, expected_snapshot_sha256: str | None) -> None:
+        provider = self._warehouse_snapshot_provider
+        if provider is None:
+            raise ExecutionAuthorizationError("AUTH_WAREHOUSE_SNAPSHOT_UNAVAILABLE")
+        try:
+            current_snapshot_sha256 = provider()
+        except Exception:
+            raise ExecutionAuthorizationError("AUTH_WAREHOUSE_SNAPSHOT_UNAVAILABLE") from None
+
+        if current_snapshot_sha256 is not None and not _valid_sha256(current_snapshot_sha256):
+            raise ExecutionAuthorizationError("AUTH_WAREHOUSE_SNAPSHOT_UNAVAILABLE")
+        if expected_snapshot_sha256 is not None and not _valid_sha256(expected_snapshot_sha256):
+            raise ExecutionAuthorizationError("AUTH_PRIVACY_PROOF_WAREHOUSE_SNAPSHOT_INVALID")
+
+        if current_snapshot_sha256 is None or expected_snapshot_sha256 is None:
+            if current_snapshot_sha256 is expected_snapshot_sha256:
+                return
+            raise ExecutionAuthorizationError("AUTH_PRIVACY_PROOF_WAREHOUSE_SNAPSHOT_MISMATCH")
+
+        if not hmac.compare_digest(current_snapshot_sha256, expected_snapshot_sha256):
+            raise ExecutionAuthorizationError("AUTH_PRIVACY_PROOF_WAREHOUSE_SNAPSHOT_MISMATCH")
+
+
+def _valid_sha256(value: object) -> bool:
+    return (
+        type(value) is str
+        and len(value) == 64
+        and all(char in _HASH_CHARS for char in value)
+    )
 
 
 def _strict_key(value: bytes, *, name: str) -> bytes:

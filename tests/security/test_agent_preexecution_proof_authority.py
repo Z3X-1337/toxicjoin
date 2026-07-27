@@ -278,6 +278,7 @@ def test_agent_ppmc_provenance_mints_proof_accepted_by_strict_execution(
         policy_engine=PolicyEngine(load_policy()),
         privacy_proof_integrity_key=PROOF_KEY,
         agent_provenance_integrity_key=PROVENANCE_KEY,
+        warehouse_snapshot_provider=lambda: state.warehouse_snapshot_sha256,
         secret_key=AUTH_KEY,
         ttl_seconds=5,
         clock=lambda: (NOW + timedelta(seconds=6)).timestamp(),

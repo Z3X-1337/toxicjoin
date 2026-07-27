@@ -205,13 +205,19 @@ def _sealed_proof(*, transcript_sha256: str = DUMMY) -> PreExecutionPrivacyProof
     )
 
 
-def _authorizer() -> ProofBoundExecutionAuthorizer:
+def _authorizer(*, warehouse_snapshot_provider=None) -> ProofBoundExecutionAuthorizer:
     resolver, engine, *_ = _runtime()
+    provider = (
+        (lambda: DUMMY)
+        if warehouse_snapshot_provider is None
+        else warehouse_snapshot_provider
+    )
     return ProofBoundExecutionAuthorizer(
         context_resolver=resolver,
         policy_engine=engine,
         privacy_proof_integrity_key=PROOF_KEY,
         agent_provenance_integrity_key=PROVENANCE_KEY,
+        warehouse_snapshot_provider=provider,
         secret_key=AUTH_KEY,
         ttl_seconds=5,
         clock=lambda: NOW,
@@ -247,6 +253,62 @@ def test_proof_bound_authorization_binds_exact_proof_and_caps_ttl() -> None:
     assert authorization.expires_at == pytest.approx(proof.expires_at.timestamp())
     assert authorization.expires_at < authorization.issued_at + 5
     assert {ref.key for ref in plan.projected_columns} == {"customers.coarse_region"}
+
+
+def test_warehouse_snapshot_drift_between_issue_and_consume_is_rejected() -> None:
+    current = {"snapshot": DUMMY}
+    authorizer = _authorizer(
+        warehouse_snapshot_provider=lambda: current["snapshot"]
+    )
+    proof = _sealed_proof()
+
+    with bind_request_identity(IDENTITY):
+        authorization = authorizer.issue(
+            SQL,
+            task_purpose=TASK,
+            subject_key=SUBJECT,
+            privacy_proof=proof,
+            expected_governance_binding=_expected_binding(authorizer),
+        )
+        current["snapshot"] = "e" * 64
+        with pytest.raises(
+            ExecutionAuthorizationError,
+            match="AUTH_PRIVACY_PROOF_WAREHOUSE_SNAPSHOT_MISMATCH",
+        ):
+            authorizer.verify_and_consume(
+                authorization,
+                SQL,
+                task_purpose=TASK,
+                subject_key=SUBJECT,
+                privacy_proof=proof,
+            )
+
+
+def test_missing_warehouse_snapshot_provider_fails_closed_at_proof_use() -> None:
+    resolver, engine, *_ = _runtime()
+    authorizer = ProofBoundExecutionAuthorizer(
+        context_resolver=resolver,
+        policy_engine=engine,
+        privacy_proof_integrity_key=PROOF_KEY,
+        agent_provenance_integrity_key=PROVENANCE_KEY,
+        secret_key=AUTH_KEY,
+        ttl_seconds=5,
+        clock=lambda: NOW,
+    )
+    proof = _sealed_proof()
+
+    with bind_request_identity(IDENTITY):
+        with pytest.raises(
+            ExecutionAuthorizationError,
+            match="AUTH_WAREHOUSE_SNAPSHOT_UNAVAILABLE",
+        ):
+            authorizer.issue(
+                SQL,
+                task_purpose=TASK,
+                subject_key=SUBJECT,
+                privacy_proof=proof,
+                expected_governance_binding=_expected_binding(authorizer),
+            )
 
 
 def test_proof_is_required_at_issue_and_consume() -> None:
