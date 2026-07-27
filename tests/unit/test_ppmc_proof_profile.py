@@ -61,6 +61,21 @@ def test_preexecution_profile_rejects_state_budget_above_execution_ceiling() -> 
     )
 
 
+def test_preexecution_profile_rejects_legacy_v1_identifier() -> None:
+    config = build_ppmc_search_config(
+        bound=PREEXECUTION_PPMC_BOUND,
+        max_states=PREEXECUTION_PPMC_MAX_STATES,
+    )
+
+    assert PREEXECUTION_PPMC_PROFILE == "p0-preexec-v2"
+    assert not is_approved_preexecution_ppmc_profile(
+        profile="p0-preexec-v1",
+        bound=config.bound,
+        max_states=config.max_states,
+        config_sha256=config.config_sha256,
+    )
+
+
 def test_preexecution_profile_rejects_config_rebinding() -> None:
     assert not is_approved_preexecution_ppmc_profile(
         profile=PREEXECUTION_PPMC_PROFILE,
