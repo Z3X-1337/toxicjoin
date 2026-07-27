@@ -270,3 +270,26 @@ def test_agent_proof_authority_rejects_sql_plan_rebinding(
             state=state,
             grammar=grammar,
         )
+
+
+def test_agent_proof_authority_rejects_same_plan_different_proposal_sql(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, evaluation, ppmc_evaluation, state, grammar = _upstream(monkeypatch)
+    same_plan_different_sql = SQL + " "
+
+    with pytest.raises(
+        AgentPreExecutionProofAuthorityError,
+        match="AGENT_PROOF_SQL_BINDING_MISMATCH",
+    ):
+        DataHubAgentPreExecutionProofAuthority(
+            integrity_key=PROOF_KEY,
+            clock=lambda: NOW + timedelta(seconds=5),
+        ).build(
+            evaluation=evaluation,
+            ppmc_evaluation=ppmc_evaluation,
+            identity=IDENTITY,
+            sql=same_plan_different_sql,
+            state=state,
+            grammar=grammar,
+        )
