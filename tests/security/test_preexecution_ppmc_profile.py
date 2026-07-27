@@ -32,6 +32,7 @@ from toxicjoin.prospective.ppmc import (
     PpmcStatus,
     build_ppmc_search_config,
     check_prospective_privacy,
+    compute_ppmc_result_sha256,
 )
 from toxicjoin.sql import analyze_sql
 
@@ -59,15 +60,10 @@ def _weak_bound_ppmc(artifacts):
     )
 
 
-def _resign_with_weak_bound(proof):
-    weak_config = build_ppmc_search_config(
-        bound=0,
-        max_states=proof.ppmc_max_states,
-    )
+def _resign(proof, **updates):
     unsigned = proof.model_copy(
         update={
-            "ppmc_bound": 0,
-            "ppmc_config_sha256": weak_config.config_sha256,
+            **updates,
             "privacy_proof_sha256": "0" * 64,
             "integrity_hmac_sha256": "0" * 64,
         }
@@ -87,6 +83,38 @@ def _resign_with_weak_bound(proof):
     )
 
 
+def _resign_with_weak_bound(proof):
+    weak_config = build_ppmc_search_config(
+        bound=0,
+        max_states=proof.ppmc_max_states,
+    )
+    return _resign(
+        proof,
+        ppmc_bound=0,
+        ppmc_config_sha256=weak_config.config_sha256,
+    )
+
+
+def _build_proof_with_ppmc(artifacts, ppmc_result):
+    return build_preexecution_privacy_proof(
+        identity=IDENTITY,
+        task_purpose=PURPOSE,
+        sql=SQL,
+        subject_key=SUBJECT,
+        context=artifacts["context"],
+        governance_binding=artifacts["governance_binding"],
+        evidence_bundle=artifacts["bundle"],
+        evidence_validation=artifacts["validation"],
+        policy_engine=artifacts["policy_engine"],
+        state=artifacts["state"],
+        grammar=artifacts["grammar"],
+        governance_trust_binding=artifacts["trust_binding"],
+        ppmc_result=ppmc_result,
+        integrity_key=KEY,
+        issued_at=ISSUED_AT,
+    )
+
+
 def test_preexecution_builder_rejects_weak_ppmc_bound() -> None:
     artifacts = _artifacts()
     weak_ppmc = _weak_bound_ppmc(artifacts)
@@ -94,23 +122,24 @@ def test_preexecution_builder_rejects_weak_ppmc_bound() -> None:
     assert weak_ppmc.bound == 0
 
     with pytest.raises(PreExecutionProofError, match="PROOF_PPMC_PROFILE_INVALID"):
-        build_preexecution_privacy_proof(
-            identity=IDENTITY,
-            task_purpose=PURPOSE,
-            sql=SQL,
-            subject_key=SUBJECT,
-            context=artifacts["context"],
-            governance_binding=artifacts["governance_binding"],
-            evidence_bundle=artifacts["bundle"],
-            evidence_validation=artifacts["validation"],
-            policy_engine=artifacts["policy_engine"],
-            state=artifacts["state"],
-            grammar=artifacts["grammar"],
-            governance_trust_binding=artifacts["trust_binding"],
-            ppmc_result=weak_ppmc,
-            integrity_key=KEY,
-            issued_at=ISSUED_AT,
-        )
+        _build_proof_with_ppmc(artifacts, weak_ppmc)
+
+
+def test_preexecution_builder_rejects_rebound_ppmc_config_hash() -> None:
+    artifacts = _artifacts()
+    ppmc = artifacts["ppmc"]
+    provisional = ppmc.model_copy(
+        update={
+            "config_sha256": "f" * 64,
+            "result_sha256": "0" * 64,
+        }
+    )
+    forged = provisional.model_copy(
+        update={"result_sha256": compute_ppmc_result_sha256(provisional)}
+    )
+
+    with pytest.raises(PreExecutionProofError, match="PROOF_PPMC_PROFILE_INVALID"):
+        _build_proof_with_ppmc(artifacts, forged)
 
 
 def test_proof_verifier_rejects_valid_hmac_with_weak_ppmc_profile() -> None:
@@ -119,6 +148,22 @@ def test_proof_verifier_rejects_valid_hmac_with_weak_ppmc_profile() -> None:
 
     result = verify_preexecution_privacy_proof(
         weak_proof,
+        integrity_key=KEY,
+        now=ISSUED_AT,
+    )
+
+    assert result.valid is False
+    assert tuple(failure.value for failure in result.failures) == (
+        "PROOF_PPMC_PROFILE_INVALID",
+    )
+
+
+def test_proof_verifier_rejects_valid_hmac_with_rebound_ppmc_config() -> None:
+    proof, _ = _proof()
+    forged = _resign(proof, ppmc_config_sha256="e" * 64)
+
+    result = verify_preexecution_privacy_proof(
+        forged,
         integrity_key=KEY,
         now=ISSUED_AT,
     )
