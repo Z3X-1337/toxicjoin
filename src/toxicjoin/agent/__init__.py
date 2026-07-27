@@ -32,6 +32,12 @@ from toxicjoin.agent.models import (
     build_agent_feedback,
     build_agent_goal,
 )
+from toxicjoin.agent.ppmc_authority import (
+    AgentPpmcAuthorityError,
+    DataHubAgentPpmcAuthority,
+    TrustedAgentPpmcEvaluation,
+    compute_trusted_agent_ppmc_evaluation_sha256,
+)
 from toxicjoin.agent.proposal_authority import (
     AgentProposalAuthorityError,
     DataHubAgentProposalAuthority,
@@ -50,16 +56,19 @@ __all__ = [
     "AgentGoal",
     "AgentLineageView",
     "AgentPlanner",
+    "AgentPpmcAuthorityError",
     "AgentProposal",
     "AgentProposalAuthorityError",
     "AgentProposalError",
     "DataHubAgentDiscoverer",
+    "DataHubAgentPpmcAuthority",
     "DataHubAgentProposalAuthority",
     "DataHubGovernanceTrustAuthority",
     "GovernanceFactRequirement",
     "GovernanceTrustBinding",
     "GovernanceTrustBindingError",
     "GovernedAgent",
+    "TrustedAgentPpmcEvaluation",
     "TrustedAgentProposalEvaluation",
     "TrustedPlannerAdapter",
     "build_agent_data_context",
@@ -67,5 +76,6 @@ __all__ = [
     "build_agent_feedback",
     "build_agent_goal",
     "compute_governance_trust_binding_sha256",
+    "compute_trusted_agent_ppmc_evaluation_sha256",
     "compute_trusted_agent_proposal_evaluation_sha256",
 ]
