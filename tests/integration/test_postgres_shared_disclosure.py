@@ -5,8 +5,6 @@ import threading
 
 import pytest
 
-psycopg = pytest.importorskip("psycopg")
-
 from toxicjoin.auth import RequestIdentity
 from toxicjoin.demo import default_fixture_catalog
 from toxicjoin.disclosure import CompositionRule, DisclosureStateTopology, build_disclosure_event
@@ -20,6 +18,10 @@ _COHORT_KEY = b"phase17-shared-cohort-hmac-key-32-bytes!!"
 _SUBJECT = ColumnRef(dataset="orders", field_path="customer_id")
 
 
+def _psycopg():
+    return pytest.importorskip("psycopg")
+
+
 def _dsn() -> str:
     value = os.getenv(_DSN_ENV)
     if not value:
@@ -28,6 +30,7 @@ def _dsn() -> str:
 
 
 def _reset_database() -> None:
+    psycopg = _psycopg()
     with psycopg.connect(_dsn(), autocommit=True) as connection:
         connection.execute(f'DROP SCHEMA IF EXISTS "{_SCHEMA}" CASCADE')
 
