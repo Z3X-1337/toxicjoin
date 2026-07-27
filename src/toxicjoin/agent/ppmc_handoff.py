@@ -32,9 +32,10 @@ from toxicjoin.agent.proposal_handoff import (
 )
 from toxicjoin.evidence.canonical import canonical_json_sha256
 from toxicjoin.models import StrictModel
+from toxicjoin.proofs.ppmc_profile import build_preexecution_ppmc_search_config
 from toxicjoin.prospective.forbidden import ForbiddenPredicatePolicy, GovernanceTrustBinding
 from toxicjoin.prospective.grammar import FutureActionGrammar
-from toxicjoin.prospective.ppmc import PpmcSearchConfig, PpmcSearchResult
+from toxicjoin.prospective.ppmc import PpmcSearchResult
 from toxicjoin.prospective.twin import DisclosureState
 
 _HANDOFF_HMAC_DOMAIN = b"toxicjoin:agent-ppmc-evaluation-handoff:v1\x00"
@@ -88,7 +89,7 @@ class AgentPpmcEvaluationCapsuleError(RuntimeError):
 
 
 class DataHubAgentPpmcHandoffAuthority:
-    """Run Agent PPMC only from an authenticated proposal evaluation and seal its output."""
+    """Run Agent PPMC from an authenticated proposal under a fixed execution resource profile."""
 
     def __init__(self, *, provenance_integrity_key: bytes, clock=None) -> None:
         stable_code = "AGENT_PPMC_HANDOFF_INTEGRITY_KEY_INVALID"
@@ -118,25 +119,26 @@ class DataHubAgentPpmcHandoffAuthority:
         initial_state: DisclosureState,
         grammar: FutureActionGrammar,
         forbidden_policy: ForbiddenPredicatePolicy,
-        config: PpmcSearchConfig | None = None,
     ) -> AgentPpmcEvaluationCapsule:
-        """Authenticate proposal authority, run PPMC, then authenticate the exact PPMC output."""
+        """Authenticate proposal authority, run fixed-profile PPMC, then authenticate its output."""
 
         stable_code = "AGENT_PPMC_HANDOFF_INTERNAL_FAILED"
         trusted_proposal_evaluation = None
         ppmc_evaluation = None
+        resource_config = None
         try:
             trusted_proposal_evaluation = require_agent_proposal_evaluation_capsule(
                 evaluation,
                 integrity_key=self._integrity_key,
             )
+            resource_config = build_preexecution_ppmc_search_config()
             ppmc_evaluation = self._ppmc_authority.check(
                 evaluation=trusted_proposal_evaluation,
                 governance_trust=governance_trust,
                 initial_state=initial_state,
                 grammar=grammar,
                 forbidden_policy=forbidden_policy,
-                config=config,
+                config=resource_config,
             )
             return seal_agent_ppmc_evaluation_capsule(
                 ppmc_evaluation,
@@ -159,9 +161,9 @@ class DataHubAgentPpmcHandoffAuthority:
         initial_state = None  # type: ignore[assignment]
         grammar = None  # type: ignore[assignment]
         forbidden_policy = None  # type: ignore[assignment]
-        config = None
         trusted_proposal_evaluation = None
         ppmc_evaluation = None
+        resource_config = None
         self = None  # type: ignore[assignment]
         raise AgentPpmcEvaluationCapsuleError(stable_code) from None
 
