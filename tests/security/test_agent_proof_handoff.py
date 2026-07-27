@@ -227,8 +227,8 @@ def test_capsule_hmac_does_not_override_untrusted_inner_agent_provenance() -> No
         )
 
 
-def test_capsule_rejects_tampered_proof_content_commitment_before_handoff() -> None:
-    proof = _proof().model_copy(update={"sql_sha256": _hash("f")})
+def test_capsule_rejects_stale_proof_content_commitment_before_handoff() -> None:
+    proof = _proof().model_copy(update={"privacy_proof_sha256": _hash("f")})
 
     with pytest.raises(AgentPreExecutionProofCapsuleError, match="AGENT_PROOF_CAPSULE_INVALID"):
         seal_agent_preexecution_proof_capsule(
