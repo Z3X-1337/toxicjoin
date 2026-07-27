@@ -47,13 +47,12 @@ class RepairProofBinding(StrictModel):
 
 
 class AgentPpmcProofBinding(StrictModel):
-    """Security-owned provenance commitment from Governed-Agent PPMC into one proof.
+    """Cryptographically separated Governed-Agent provenance commitment for one proof.
 
-    The binding deliberately contains commitments rather than the full Agent artifacts.  The
-    security-owned Agent proof authority revalidates the full typed artifacts before minting this
-    binding; the proof HMAC then authenticates the resulting provenance commitment.  Execution
-    independently checks that every security-relevant duplicate commitment still matches the
-    enclosing proof.
+    ``binding_sha256`` commits the provenance payload itself. ``authority_hmac_sha256`` is a
+    second, domain-separated authenticator produced with a key that is distinct from both the
+    generic proof HMAC key and the execution-authorization key.  This prevents a generic proof
+    issuer from self-asserting Agent provenance merely because it can sign ordinary proof content.
     """
 
     schema_version: Literal["1.0"] = "1.0"
@@ -78,6 +77,7 @@ class AgentPpmcProofBinding(StrictModel):
     ppmc_result_sha256: Sha256
     evidence_expires_at: datetime
     binding_sha256: Sha256
+    authority_hmac_sha256: Sha256
 
     @field_validator("evidence_expires_at")
     @classmethod
@@ -188,5 +188,8 @@ def compute_repair_proof_binding_sha256(binding: RepairProofBinding) -> str:
 
 def compute_agent_ppmc_proof_binding_sha256(binding: AgentPpmcProofBinding) -> str:
     return canonical_json_sha256(
-        binding.model_dump(mode="json", exclude={"binding_sha256"})
+        binding.model_dump(
+            mode="json",
+            exclude={"binding_sha256", "authority_hmac_sha256"},
+        )
     )
