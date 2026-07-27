@@ -45,8 +45,15 @@ def _binding_payload(proof: PreExecutionPrivacyProof) -> dict:
         "policy_decision_sha256": proof.policy_decision_sha256,
         "disclosure_state_sha256": proof.disclosure_state_sha256,
         "grammar_sha256": proof.grammar_sha256,
+        "ppmc_execution_profile": proof.ppmc_execution_profile,
+        "ppmc_config_sha256": proof.ppmc_config_sha256,
+        "ppmc_forbidden_policy_sha256": proof.ppmc_forbidden_policy_sha256,
         "ppmc_governance_binding_sha256": proof.ppmc_governance_binding_sha256,
+        "ppmc_search_transcript_sha256": proof.ppmc_search_transcript_sha256,
         "ppmc_result_sha256": proof.ppmc_result_sha256,
+        "ppmc_status": proof.ppmc_status,
+        "ppmc_bound": proof.ppmc_bound,
+        "ppmc_max_states": proof.ppmc_max_states,
         "evidence_expires_at": proof.expires_at,
     }
 
