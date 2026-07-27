@@ -96,6 +96,7 @@ def require_agent_ppmc_provenance(
         )
 
     expected = {
+        "request_identity_sha256": proof.request_identity_sha256,
         "sql_sha256": proof.sql_sha256,
         "query_plan_sha256": proof.query_plan_sha256,
         "task_purpose_sha256": proof.task_purpose_sha256,
