@@ -21,8 +21,10 @@ caller
   -> API authentication + EXECUTE scope
   -> authenticated request identity binding
   -> ToxicJoinPipeline construction
-       -> create one canonical ExecutionAuthorizer when an executor is configured
+       -> require an unbound executor
+       -> when authority prerequisites are present, create one canonical ExecutionAuthorizer
        -> bind that authorizer to the executor exactly once
+       -> if required disclosure state is absent, leave the executor unbound for audited fail-closed handling
        -> reject externally pre-bound product executors
   -> ToxicJoinPipeline request handling
        -> SQL analysis
@@ -55,7 +57,7 @@ caller
 
 ### Source anchors
 
-The API route authenticates `EXECUTE` scope before calling the pipeline. The pipeline owns product authority bootstrap: an execution-capable pipeline accepts only an unbound executor, creates the current canonical `ExecutionAuthorizer`, and binds it once before any request can execute. The pipeline then performs deterministic analysis/policy handling and calls the exported verifier for execution. The exported verifier currently points to the proof-aware wrapper, but the pipeline does **not** supply a `privacy_proof`, so the wrapper delegates to the governance verifier.
+The API route authenticates `EXECUTE` scope before calling the pipeline. The pipeline owns product authority bootstrap: a runnable execution pipeline accepts only an unbound executor, creates the current canonical `ExecutionAuthorizer` from the security-owned resolver/policy/disclosure configuration, and binds it once before any request can execute. If stateful privacy is required but the disclosure ledger is absent, the pipeline deliberately leaves the executor unbound so the verifier can fail closed with an auditable request receipt rather than constructing a weaker authority. The pipeline then performs deterministic analysis/policy handling and calls the exported verifier for execution. The exported verifier currently points to the proof-aware wrapper, but the pipeline does **not** supply a `privacy_proof`, so the wrapper delegates to the governance verifier.
 
 The governance verifier pins one governance binding for the request and injects that binding into execution-authorization issuance. The core verifier performs pre-execution checks, reserves cumulative-disclosure state when required, validates that the executor is already bound to the same resolver/policy/disclosure authority, issues a capability, and only then calls the executor. Verification no longer creates an execution authority lazily.
 
@@ -77,7 +79,7 @@ The governance verifier pins one governance binding for the request and injects 
 
 ## 4. Canonical execution authorization today
 
-When an execution-capable `ToxicJoinPipeline` is constructed, it requires an unbound `DuckDBExecutor`, creates one `ExecutionAuthorizer` from the pipeline-owned context resolver, policy engine, disclosure ledger, and stateful-privacy requirement, and binds that authorizer through `DuckDBExecutor.bind_authorizer()`.
+When a runnable execution-capable `ToxicJoinPipeline` is constructed with its required security state available, it requires an unbound `DuckDBExecutor`, creates one `ExecutionAuthorizer` from the pipeline-owned context resolver, policy engine, disclosure ledger, and stateful-privacy requirement, and binds that authorizer through `DuckDBExecutor.bind_authorizer()`.
 
 `DuckDBExecutor.bind_authority()` retains its historical name for verifier compatibility, but it is now validation-only: it rejects an unbound executor and rejects any resolver, policy, disclosure-ledger, or disclosure-requirement mismatch. It cannot create an authorizer during request verification.
 
@@ -117,7 +119,9 @@ The governance wrapper treats this commitment as a release reservation:
 - a failed or exceptional path transitions it to `ABORTED`;
 - execution-authorization issuance and consumption independently validate the commitment when it is required.
 
-This prevents a failed request that releases no rows from poisoning future disclosure history.
+If stateful privacy is required but its disclosure ledger is unavailable during pipeline construction, ToxicJoin does not create a reduced-safety execution authorizer. The executor remains unbound; request verification returns `DISCLOSURE_STATE_UNAVAILABLE` before capability issuance or DuckDB access, and the pipeline still persists the fail-closed decision receipt.
+
+This prevents a failed request that releases no rows from poisoning future disclosure history and preserves an audit record for missing-state failures.
 
 ## 7. vNext proof-bound components: implemented, not canonical yet
 
@@ -174,6 +178,7 @@ Any authorization migration must preserve all of the following:
 12. Proof, provenance, and execution keys remain separated in strict proof mode.
 13. A proof-aware code path must never silently downgrade to legacy authorization when a proof was supplied or required.
 14. Request verification cannot create or replace the product execution authority.
+15. Missing required disclosure state cannot cause construction of a reduced-safety execution authority.
 
 ## 11. Explicit non-claims
 
@@ -197,7 +202,7 @@ Those controls are valid for the supported single-process/single-state topology 
 
 ## 13. Authorization migration boundary
 
-Phase 4 unified the legacy and proof-aware call contract. Phase 5 closes execution-time product authority creation: product authority is now established once at pipeline construction and request verification can only validate that already-bound authority.
+Phase 4 unified the legacy and proof-aware call contract. Phase 5 closes execution-time product authority creation: for runnable configurations with required state present, product authority is established once at pipeline construction and request verification can only validate that already-bound authority. Degraded configurations missing required disclosure state remain deliberately unbound and fail closed before execution while preserving the request receipt.
 
 A later phase may make proof-bound execution canonical, but only through an explicit migration that:
 
