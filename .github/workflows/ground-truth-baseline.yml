@@ -67,8 +67,10 @@ jobs:
         shell: bash
         run: |
           set +e
+          checked_out_sha="$(git rev-parse HEAD)"
           uv run --frozen python scripts/generate_baseline_manifest.py \
             --source-sha "$TOXICJOIN_SOURCE_SHA" \
+            --checked-out-sha "$checked_out_sha" \
             --pytest-log pytest-3.11.log \
             --benchmark-json artifacts/benchmark/benchmark.json \
             --output artifacts/baseline/baseline.json \
