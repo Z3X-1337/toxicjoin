@@ -7,7 +7,7 @@ import pytest
 
 from toxicjoin.context import FixtureContextResolver
 from toxicjoin.demo import seed_database
-from toxicjoin.execute import DuckDBExecutor, ExecutionError
+from toxicjoin.execute import DuckDBExecutor, ExecutionAuthorizer, ExecutionError
 from toxicjoin.models import ColumnRef, Decision, ReasonCode
 from toxicjoin.policy import PolicyEngine, load_policy
 from toxicjoin.rewrite import enforce_minimum_group_size
@@ -54,6 +54,19 @@ def _engine() -> PolicyEngine:
     return PolicyEngine(load_policy())
 
 
+def _bound_runtime(database: Path) -> tuple[DuckDBExecutor, FixtureContextResolver, PolicyEngine]:
+    resolver = _resolver()
+    engine = _engine()
+    executor = DuckDBExecutor(database)
+    executor.bind_authorizer(
+        ExecutionAuthorizer(
+            context_resolver=resolver,
+            policy_engine=engine,
+        )
+    )
+    return executor, resolver, engine
+
+
 def test_rewritten_flagship_query_executes_and_verifies(tmp_path) -> None:
     database = tmp_path / "demo.duckdb"
     seed_database(database)
@@ -62,14 +75,15 @@ def test_rewritten_flagship_query_executes_and_verifies(tmp_path) -> None:
         subject_key=SUBJECT,
         minimum_group_size=20,
     )
+    executor, resolver, engine = _bound_runtime(database)
 
     result = verify_and_execute(
         rewrite.safe_sql,
         task_purpose="Find regions with elevated churn risk",
         subject_key=SUBJECT,
-        context_resolver=_resolver(),
-        policy_engine=_engine(),
-        executor=DuckDBExecutor(database),
+        context_resolver=resolver,
+        policy_engine=engine,
+        executor=executor,
         required_minimum_group_size=20,
     )
 
@@ -181,7 +195,12 @@ def test_executor_rejects_post_authorization_sql_mutation(tmp_path) -> None:
     resolver = _resolver()
     engine = _engine()
     executor = DuckDBExecutor(database)
-    executor.bind_authority(context_resolver=resolver, policy_engine=engine)
+    executor.bind_authorizer(
+        ExecutionAuthorizer(
+            context_resolver=resolver,
+            policy_engine=engine,
+        )
+    )
 
     sql = "SELECT c.coarse_region FROM customers c LIMIT 5"
     authorization = executor.issue_authorization(
@@ -204,14 +223,15 @@ def test_executor_rejects_post_authorization_sql_mutation(tmp_path) -> None:
 def test_executor_hardens_duckdb_configuration(tmp_path) -> None:
     database = tmp_path / "demo.duckdb"
     seed_database(database)
+    executor, resolver, engine = _bound_runtime(database)
 
     result = verify_and_execute(
         "SELECT current_setting('enable_external_access') AS external_access",
         task_purpose="Verify hardened DuckDB execution configuration",
         subject_key=SUBJECT,
-        context_resolver=_resolver(),
-        policy_engine=_engine(),
-        executor=DuckDBExecutor(database),
+        context_resolver=resolver,
+        policy_engine=engine,
+        executor=executor,
         required_minimum_group_size=20,
         require_subject_threshold=False,
     )
