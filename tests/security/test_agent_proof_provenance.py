@@ -16,6 +16,7 @@ from toxicjoin.proofs import (
     AgentPpmcProofBinding,
     PreExecutionPrivacyProof,
     compute_agent_ppmc_proof_binding_sha256,
+    compute_agent_ppmc_provenance_hmac,
     compute_preexecution_privacy_proof_hmac,
     compute_preexecution_privacy_proof_sha256,
 )
@@ -24,6 +25,7 @@ from toxicjoin.sql import analyze_sql
 
 AUTH_KEY = b"agent-proof-auth-key-distinct-32-bytes!!"
 PROOF_KEY = b"agent-proof-integrity-key-distinct-32!!"
+PROVENANCE_KEY = b"agent-proof-provenance-key-distinct-32!!"
 NOW = 1_800_100_000.0
 NOW_DT = datetime.fromtimestamp(NOW, tz=timezone.utc)
 URN = "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.agent_proof,PROD)"
@@ -157,18 +159,32 @@ def _reseal_with_provenance(
     proof: PreExecutionPrivacyProof,
     *,
     ppmc_result_sha256: str,
-    authority_hmac_sha256: str = "f" * 64,
+    trusted_authority: bool,
 ) -> PreExecutionPrivacyProof:
     binding_payload = _binding_payload(proof, ppmc_result_sha256=ppmc_result_sha256)
     provisional = AgentPpmcProofBinding.model_construct(
         **binding_payload,
         binding_sha256="0" * 64,
-        authority_hmac_sha256=authority_hmac_sha256,
+        authority_hmac_sha256="0" * 64,
     )
-    provenance = AgentPpmcProofBinding.model_construct(
+    binding_sha256 = compute_agent_ppmc_proof_binding_sha256(provisional)
+    unsigned_provenance = AgentPpmcProofBinding.model_construct(
         **binding_payload,
-        binding_sha256=compute_agent_ppmc_proof_binding_sha256(provisional),
-        authority_hmac_sha256=authority_hmac_sha256,
+        binding_sha256=binding_sha256,
+        authority_hmac_sha256="0" * 64,
+    )
+    authority_hmac = (
+        compute_agent_ppmc_provenance_hmac(
+            unsigned_provenance,
+            integrity_key=PROVENANCE_KEY,
+        )
+        if trusted_authority
+        else "f" * 64
+    )
+    provenance = AgentPpmcProofBinding(
+        **binding_payload,
+        binding_sha256=binding_sha256,
+        authority_hmac_sha256=authority_hmac,
     )
     unsigned = proof.model_copy(
         update={
@@ -198,6 +214,7 @@ def _authorizer() -> ProofBoundExecutionAuthorizer:
         context_resolver=resolver,
         policy_engine=engine,
         privacy_proof_integrity_key=PROOF_KEY,
+        agent_provenance_integrity_key=PROVENANCE_KEY,
         secret_key=AUTH_KEY,
         ttl_seconds=5,
         clock=lambda: NOW,
@@ -225,7 +242,11 @@ def test_public_proof_bound_authorizer_rejects_generic_proof_without_agent_prove
 def test_public_proof_bound_authorizer_rejects_hmac_valid_rebound_agent_provenance() -> None:
     authorizer = _authorizer()
     generic = _generic_sealed_proof()
-    forged = _reseal_with_provenance(generic, ppmc_result_sha256="e" * 64)
+    forged = _reseal_with_provenance(
+        generic,
+        ppmc_result_sha256="e" * 64,
+        trusted_authority=True,
+    )
 
     assert forged.integrity_hmac_sha256 != generic.integrity_hmac_sha256
     assert forged.agent_ppmc_provenance is not None
@@ -251,7 +272,7 @@ def test_generic_proof_key_cannot_self_mint_agent_provenance() -> None:
     forged = _reseal_with_provenance(
         generic,
         ppmc_result_sha256=generic.ppmc_result_sha256,
-        authority_hmac_sha256="f" * 64,
+        trusted_authority=False,
     )
 
     assert forged.agent_ppmc_provenance is not None
