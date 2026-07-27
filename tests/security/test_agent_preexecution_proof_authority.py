@@ -6,9 +6,9 @@ import inspect
 import pytest
 
 from toxicjoin.agent import (
+    DataHubAgentGovernanceTrustHandoffAuthority,
     DataHubAgentPreExecutionProofAuthority,
-    DataHubAgentProposalAuthority,
-    DataHubGovernanceTrustAuthority,
+    DataHubAgentProposalHandoffAuthority,
     GovernedAgent,
     build_agent_data_context_from_snapshot,
     build_agent_goal,
@@ -103,10 +103,11 @@ def _upstream(monkeypatch: pytest.MonkeyPatch):
     planning_context = build_agent_data_context_from_snapshot(snapshot)
     goal = build_agent_goal("List non-sensitive country values for the approved population")
     proposal = GovernedAgent(_Planner()).propose(goal=goal, context=planning_context)
-    evaluation = DataHubAgentProposalAuthority(
+    evaluation_capsule = DataHubAgentProposalHandoffAuthority(
         snapshot=snapshot,
         read_settings=read_only_settings_from_env(),
         policy_engine=PolicyEngine(load_policy()),
+        provenance_integrity_key=PROVENANCE_KEY,
         clock=lambda: NOW + timedelta(seconds=1),
         datahub_max_age_seconds=300,
     ).evaluate(
@@ -116,9 +117,11 @@ def _upstream(monkeypatch: pytest.MonkeyPatch):
         authorized_task_purpose=PURPOSE,
         subject_key=SUBJECT_KEY,
     )
-    governance_trust = DataHubGovernanceTrustAuthority(
-        clock=lambda: NOW + timedelta(seconds=2)
-    ).bind(evaluation)
+    evaluation = evaluation_capsule.evaluation
+    governance_trust = DataHubAgentGovernanceTrustHandoffAuthority(
+        provenance_integrity_key=PROVENANCE_KEY,
+        clock=lambda: NOW + timedelta(seconds=2),
+    ).bind(evaluation_capsule)
 
     semantic = build_semantic_release_from_resolution(
         evaluation.query_plan,
@@ -170,7 +173,7 @@ def _upstream(monkeypatch: pytest.MonkeyPatch):
         provenance_integrity_key=PROVENANCE_KEY,
         clock=lambda: NOW + timedelta(seconds=4),
     ).check(
-        evaluation=evaluation,
+        evaluation=evaluation_capsule,
         governance_trust=governance_trust,
         initial_state=state,
         grammar=grammar,
