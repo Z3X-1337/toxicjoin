@@ -17,7 +17,7 @@ from toxicjoin.context.governance import (
     resolve_with_governance_binding,
 )
 from toxicjoin.disclosure import DisclosureLedger
-from toxicjoin.execute import DuckDBExecutor
+from toxicjoin.execute import DuckDBExecutor, ExecutionAuthorizer
 from toxicjoin.models import (
     ColumnContext,
     ColumnRef,
@@ -93,7 +93,6 @@ class ToxicJoinPipeline:
         self.policy_engine = policy_engine
         self.receipt_store = receipt_store
         self.mode = mode
-        self.executor = executor
         self.stateful_privacy_required = (
             mode == ReceiptMode.LIVE
             if stateful_privacy_required is None
@@ -103,6 +102,25 @@ class ToxicJoinPipeline:
             disclosure_ledger if self.stateful_privacy_required else None
         )
         self.include_sanitized_sql = include_sanitized_sql
+        self.executor = executor
+
+        if self.executor is not None:
+            if self.executor.authorization_bound:
+                raise ValueError(
+                    "pipeline requires an unbound executor; execution authority is pipeline-owned"
+                )
+            if self.stateful_privacy_required and self.disclosure_ledger is None:
+                raise ValueError(
+                    "execution-capable stateful pipeline requires a disclosure ledger"
+                )
+            self.executor.bind_authorizer(
+                ExecutionAuthorizer(
+                    context_resolver=self.context_resolver,
+                    policy_engine=self.policy_engine,
+                    disclosure_ledger=self.disclosure_ledger,
+                    require_disclosure_commitment=self.stateful_privacy_required,
+                )
+            )
 
     def analyze(self, request: PipelineRequest) -> PipelineResult:
         return self._run(request, execute=False)
