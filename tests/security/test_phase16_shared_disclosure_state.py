@@ -2,9 +2,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from toxicjoin.auth import RequestIdentity
 from toxicjoin.demo import default_fixture_catalog
-from toxicjoin.disclosure import CompositionRule, DisclosureLedger, build_disclosure_event
+from toxicjoin.disclosure import (
+    CompositionRule,
+    DisclosureLedger,
+    DisclosureStateTopology,
+    DisclosureStateTopologyError,
+    build_disclosure_event,
+    require_disclosure_state_topology,
+    resolve_declared_replica_count,
+)
+from toxicjoin.disclosure.secure_ledger import DisclosureLedger as SQLiteDisclosureLedger
 from toxicjoin.models import ColumnRef
 from toxicjoin.sql import analyze_sql
 
@@ -39,20 +50,15 @@ def _sensitive_sql(literal: str) -> str:
     )
 
 
-def test_replica_local_ledgers_cannot_partition_cumulative_privacy_history(tmp_path: Path) -> None:
-    """Two replicas must not both authorize a globally conflicting protected release.
-
-    The cohort key and privacy scope are deliberately shared. The only partition is persistent
-    disclosure history: each replica owns a different SQLite database. A single authoritative
-    ledger proves that alpha -> beta is a cumulative variation and must block beta.
-    """
+def test_raw_replica_local_sqlite_partitions_cumulative_privacy_history(tmp_path: Path) -> None:
+    """Document why the raw SQLite primitive is not a horizontally authoritative backend."""
 
     cohort_key_path = tmp_path / "shared-cohort.key"
-    replica_a = DisclosureLedger(
+    replica_a = SQLiteDisclosureLedger(
         tmp_path / "replica-a.sqlite3",
         cohort_key_path=cohort_key_path,
     )
-    replica_b = DisclosureLedger(
+    replica_b = SQLiteDisclosureLedger(
         tmp_path / "replica-b.sqlite3",
         cohort_key_path=cohort_key_path,
     )
@@ -62,19 +68,61 @@ def test_replica_local_ledgers_cannot_partition_cumulative_privacy_history(tmp_p
     decision_a = replica_a.evaluate_and_commit(_event(sql_a, 1), sql=sql_a)
     decision_b = replica_b.evaluate_and_commit(_event(sql_b, 2), sql=sql_b)
 
-    control = DisclosureLedger(
+    control = SQLiteDisclosureLedger(
         tmp_path / "authoritative-control.sqlite3",
         cohort_key_path=cohort_key_path,
     )
     control_a = control.evaluate_and_commit(_event(sql_a, 101), sql=sql_a)
     control_b = control.evaluate_and_commit(_event(sql_b, 102), sql=sql_b)
 
+    assert decision_a.allowed is True
+    assert decision_b.allowed is True
+    assert decision_a.rule == CompositionRule.FIRST_PROTECTED_RELEASE
+    assert decision_b.rule == CompositionRule.FIRST_PROTECTED_RELEASE
+
     assert control_a.allowed is True
     assert control_b.allowed is False
     assert control_b.rule == CompositionRule.CUMULATIVE_VARIATION_BLOCK
 
-    assert decision_a.allowed is True
-    assert decision_b.allowed is False, (
-        "replica-local SQLite histories partition the cumulative privacy scope: replica B "
-        "authorized a protected cohort variation that the same globally composed history blocks"
+
+def test_public_sqlite_authority_rejects_declared_multi_replica_deployment(tmp_path: Path) -> None:
+    with pytest.raises(
+        DisclosureStateTopologyError,
+        match="multi-replica stateful privacy requires a shared authoritative disclosure backend",
+    ):
+        DisclosureLedger(
+            tmp_path / "disclosures.sqlite3",
+            deployment_replica_count=2,
+        )
+
+
+def test_public_sqlite_authority_honors_replica_count_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TOXICJOIN_REPLICA_COUNT", "3")
+
+    with pytest.raises(
+        DisclosureStateTopologyError,
+        match="multi-replica stateful privacy requires a shared authoritative disclosure backend",
+    ):
+        DisclosureLedger(tmp_path / "disclosures.sqlite3")
+
+
+def test_single_node_and_future_shared_authoritative_topologies_are_explicit(tmp_path: Path) -> None:
+    ledger = DisclosureLedger(
+        tmp_path / "disclosures.sqlite3",
+        deployment_replica_count=1,
     )
+
+    assert ledger.state_topology is DisclosureStateTopology.SINGLE_NODE
+    assert ledger.deployment_replica_count == 1
+    assert resolve_declared_replica_count("1") == 1
+
+    require_disclosure_state_topology(
+        topology=DisclosureStateTopology.SHARED_AUTHORITATIVE,
+        replica_count=8,
+    )
+
+    with pytest.raises(DisclosureStateTopologyError, match="invalid disclosure deployment replica count"):
+        resolve_declared_replica_count(True)
