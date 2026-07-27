@@ -33,7 +33,9 @@ from toxicjoin.models import ColumnRef, SensitivityCategory
 from toxicjoin.policy import PolicyEngine, load_policy
 from toxicjoin.prospective.forbidden import build_forbidden_predicate_policy
 from toxicjoin.prospective.grammar import (
+    FutureActionGrammarContext,
     build_future_action_grammar_context,
+    compute_future_action_context_sha256,
     instantiate_future_action_grammar,
 )
 from toxicjoin.prospective.ppmc import PpmcStatus, build_ppmc_search_config
@@ -208,6 +210,19 @@ def _check(authority, artifacts):
     )
 
 
+def _rebind_context(grammar, *, field: str, value: str):
+    provisional = grammar.context.model_copy(
+        update={field: value, "context_sha256": "0" * 64}
+    )
+    rebound = provisional.model_copy(
+        update={"context_sha256": compute_future_action_context_sha256(provisional)}
+    )
+    canonical_context = FutureActionGrammarContext.model_validate(
+        rebound.model_dump(mode="json")
+    )
+    return instantiate_future_action_grammar(canonical_context)
+
+
 def test_internal_f6_clearance_drives_agent_ppmc(monkeypatch: pytest.MonkeyPatch) -> None:
     artifacts = _artifacts(monkeypatch)
     evaluation, _, state, grammar, forbidden_policy, _, _, _ = artifacts
@@ -233,6 +248,45 @@ def test_internal_f6_clearance_drives_agent_ppmc(monkeypatch: pytest.MonkeyPatch
     assert result.ppmc_result_sha256 == result.ppmc_result.result_sha256
     assert result.prospective_privacy_checked is True
     assert result.execution_authorized is False
+
+
+@pytest.mark.parametrize(
+    ("field", "error_code"),
+    (
+        ("scope_sha256", "AGENT_PPMC_GRAMMAR_SCOPE_MISMATCH"),
+        ("purpose_commitment_sha256", "AGENT_PPMC_GRAMMAR_PURPOSE_MISMATCH"),
+        ("governance_commitment_sha256", "AGENT_PPMC_GRAMMAR_GOVERNANCE_MISMATCH"),
+        ("evidence_root_sha256", "AGENT_PPMC_GRAMMAR_EVIDENCE_MISMATCH"),
+        ("base_warehouse_snapshot_sha256", "AGENT_PPMC_GRAMMAR_SNAPSHOT_MISMATCH"),
+    ),
+)
+def test_self_consistent_grammar_context_rebinding_fails_closed_at_bound_zero(
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    error_code: str,
+) -> None:
+    (
+        evaluation,
+        governance_trust,
+        state,
+        grammar,
+        forbidden_policy,
+        config,
+        _,
+        _,
+    ) = _artifacts(monkeypatch)
+    forged_grammar = _rebind_context(grammar, field=field, value="a" * 64)
+
+    with pytest.raises(AgentPpmcAuthorityError, match=error_code):
+        DataHubAgentPpmcAuthority(clock=lambda: NOW + timedelta(seconds=4)).check(
+            evaluation=evaluation,
+            governance_trust=governance_trust,
+            initial_state=state,
+            grammar=forged_grammar,
+            forbidden_policy=forbidden_policy,
+            local_oracle=_unexpected_oracle,
+            config=config,
+        )
 
 
 def test_evaluation_subclass_is_rejected_before_virtual_serialization(
