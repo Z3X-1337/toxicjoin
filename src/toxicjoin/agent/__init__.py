@@ -42,6 +42,10 @@ from toxicjoin.agent.proof_authority import (
     AgentPreExecutionProofAuthorityError,
     DataHubAgentPreExecutionProofAuthority,
 )
+from toxicjoin.agent.proof_handoff import (
+    AgentProofHandoffAuthorityError,
+    DataHubAgentProofHandoffAuthority,
+)
 from toxicjoin.agent.proposal_authority import (
     AgentProposalAuthorityError,
     DataHubAgentProposalAuthority,
@@ -62,12 +66,14 @@ __all__ = [
     "AgentPlanner",
     "AgentPpmcAuthorityError",
     "AgentPreExecutionProofAuthorityError",
+    "AgentProofHandoffAuthorityError",
     "AgentProposal",
     "AgentProposalAuthorityError",
     "AgentProposalError",
     "DataHubAgentDiscoverer",
     "DataHubAgentPpmcAuthority",
     "DataHubAgentPreExecutionProofAuthority",
+    "DataHubAgentProofHandoffAuthority",
     "DataHubAgentProposalAuthority",
     "DataHubGovernanceTrustAuthority",
     "GovernanceFactRequirement",
