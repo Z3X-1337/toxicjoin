@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 import toxicjoin.benchmark.ppmc_hard_gate as hard_gate
+from toxicjoin.disclosure.models import DisclosureScope
 from toxicjoin.evidence.canonical import canonical_json_sha256
 from toxicjoin.prospective.forbidden import (
     ForbiddenPredicateId,
@@ -15,7 +16,7 @@ from toxicjoin.prospective.ppmc import (
     build_ppmc_search_config,
     check_prospective_privacy,
 )
-from toxicjoin.prospective.twin import DisclosureState
+from toxicjoin.prospective.twin import DisclosureAtom, DisclosureState
 
 
 def _capture_hard_gate_inputs(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
@@ -119,6 +120,109 @@ def test_ppmc_still_revalidates_exact_state_constructed_without_validation(
         )
 
 
+def test_ppmc_nested_scope_subclass_cannot_split_revalidation_from_transition_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_hard_gate_inputs(monkeypatch)
+    legitimate = captured["initial_state"]
+    grammar = captured["grammar"]
+    assert type(legitimate) is DisclosureState
+    legitimate_scope = legitimate.scope
+    assert type(legitimate_scope) is DisclosureScope
+
+    class MaliciousScope(DisclosureScope):
+        def model_dump(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
+            return legitimate_scope.model_dump(*args, **kwargs)
+
+    malicious_scope = MaliciousScope.model_construct(
+        **{
+            **legitimate_scope.__dict__,
+            "scope_sha256": canonical_json_sha256(
+                {"scope": "phase-12-polymorphic-runtime-only"}
+            ),
+        }
+    )
+    malicious_state = DisclosureState.model_construct(
+        **{
+            **legitimate.__dict__,
+            "scope": malicious_scope,
+        }
+    )
+
+    try:
+        result = check_prospective_privacy(
+            **{
+                **captured,
+                "initial_state": malicious_state,
+            }
+        )
+    except PpmcError as error:
+        assert "trusted input failed canonical revalidation" in str(error)
+        return
+
+    assert result.status == PpmcStatus.NO_COUNTEREXAMPLE_WITHIN_BOUND
+    assert result.transition_rejections == len(grammar.actions)
+    pytest.fail(
+        "PPMC accepted a nested polymorphic DisclosureScope whose runtime scope "
+        "differed from the canonically revalidated state"
+    )
+
+
+def test_ppmc_nested_atom_subclass_cannot_split_revalidation_from_transition_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_hard_gate_inputs(monkeypatch)
+    legitimate = captured["initial_state"]
+    grammar = captured["grammar"]
+    assert type(legitimate) is DisclosureState
+    legitimate_atom = legitimate.released_atoms[0]
+    assert type(legitimate_atom) is DisclosureAtom
+
+    class MaliciousAtom(DisclosureAtom):
+        def model_dump(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
+            return legitimate_atom.model_dump(*args, **kwargs)
+
+    runtime_only_atom_sha = canonical_json_sha256(
+        {"atom": "phase-12-polymorphic-runtime-only"}
+    )
+    assert runtime_only_atom_sha not in {
+        atom.atom_sha256 for atom in legitimate.released_atoms
+    }
+    malicious_atom = MaliciousAtom.model_construct(
+        **{
+            **legitimate_atom.__dict__,
+            "atom_sha256": runtime_only_atom_sha,
+        }
+    )
+    malicious_state = DisclosureState.model_construct(
+        **{
+            **legitimate.__dict__,
+            "released_atoms": tuple(
+                malicious_atom if atom is legitimate_atom else atom
+                for atom in legitimate.released_atoms
+            ),
+        }
+    )
+
+    try:
+        result = check_prospective_privacy(
+            **{
+                **captured,
+                "initial_state": malicious_state,
+            }
+        )
+    except PpmcError as error:
+        assert "trusted input failed canonical revalidation" in str(error)
+        return
+
+    assert result.status == PpmcStatus.NO_COUNTEREXAMPLE_WITHIN_BOUND
+    assert result.transition_rejections == len(grammar.actions)
+    pytest.fail(
+        "PPMC accepted a nested polymorphic DisclosureAtom whose runtime identity "
+        "differed from the canonically revalidated state"
+    )
+
+
 def test_ppmc_rejects_polymorphic_governance_binding_before_f6_evaluation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -181,3 +285,30 @@ def test_ppmc_rejects_polymorphic_governance_binding_before_f6_evaluation(
         "PPMC accepted a polymorphic GovernanceTrustBinding and cleared F6 using "
         "runtime trust semantics that differed from canonical revalidation"
     )
+
+
+def test_ppmc_still_revalidates_exact_governance_binding_constructed_without_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_hard_gate_inputs(monkeypatch)
+    legitimate_binding = captured["governance_binding"]
+    assert type(legitimate_binding) is GovernanceTrustBinding
+    assert legitimate_binding.trusted is True
+
+    corrupt = GovernanceTrustBinding.model_construct(
+        **{
+            **legitimate_binding.__dict__,
+            "trusted": False,
+        }
+    )
+    assert type(corrupt) is GovernanceTrustBinding
+    assert corrupt.binding_sha256 == legitimate_binding.binding_sha256
+
+    with pytest.raises(PpmcError, match="trusted input failed canonical revalidation"):
+        check_prospective_privacy(
+            **{
+                **captured,
+                "governance_binding": corrupt,
+                "config": build_ppmc_search_config(bound=0, max_states=100),
+            }
+        )
