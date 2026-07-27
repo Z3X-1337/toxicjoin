@@ -18,7 +18,9 @@ from toxicjoin.execute import (
 from toxicjoin.models import ColumnRef, SensitivityCategory
 from toxicjoin.policy import PolicyEngine, load_policy
 from toxicjoin.proofs import (
+    AgentPpmcProofBinding,
     PreExecutionPrivacyProof,
+    compute_agent_ppmc_proof_binding_sha256,
     compute_preexecution_privacy_proof_hmac,
     compute_preexecution_privacy_proof_sha256,
 )
@@ -92,6 +94,40 @@ def _runtime():
     return resolver, engine, plan, resolution, binding, decision
 
 
+def _with_agent_provenance(proof: PreExecutionPrivacyProof) -> PreExecutionPrivacyProof:
+    payload = {
+        "agent_proposal_sha256": "1" * 64,
+        "agent_evaluation_sha256": "2" * 64,
+        "agent_ppmc_evaluation_sha256": "3" * 64,
+        "f6_clearance_sha256": "4" * 64,
+        "sql_sha256": proof.sql_sha256,
+        "query_plan_sha256": proof.query_plan_sha256,
+        "task_purpose_sha256": proof.task_purpose_sha256,
+        "purpose_commitment_sha256": proof.purpose_commitment_sha256,
+        "subject_key_sha256": proof.subject_key_sha256,
+        "governance_context_sha256": proof.governance_context_sha256,
+        "governance_binding_sha256": proof.governance_binding_sha256,
+        "evidence_root_sha256": proof.evidence_root_sha256,
+        "evidence_validation_sha256": proof.evidence_validation_sha256,
+        "policy_sha256": proof.policy_sha256,
+        "policy_decision_sha256": proof.policy_decision_sha256,
+        "disclosure_state_sha256": proof.disclosure_state_sha256,
+        "grammar_sha256": proof.grammar_sha256,
+        "ppmc_governance_binding_sha256": proof.ppmc_governance_binding_sha256,
+        "ppmc_result_sha256": proof.ppmc_result_sha256,
+        "evidence_expires_at": proof.expires_at,
+    }
+    provisional = AgentPpmcProofBinding.model_construct(
+        **payload,
+        binding_sha256="0" * 64,
+    )
+    provenance = AgentPpmcProofBinding(
+        **payload,
+        binding_sha256=compute_agent_ppmc_proof_binding_sha256(provisional),
+    )
+    return proof.model_copy(update={"agent_ppmc_provenance": provenance})
+
+
 def _sealed_proof(*, transcript_sha256: str = DUMMY) -> PreExecutionPrivacyProof:
     _, engine, plan, resolution, binding, decision = _runtime()
     proof = PreExecutionPrivacyProof(
@@ -133,6 +169,7 @@ def _sealed_proof(*, transcript_sha256: str = DUMMY) -> PreExecutionPrivacyProof
         privacy_proof_sha256="0" * 64,
         integrity_hmac_sha256="0" * 64,
     )
+    proof = _with_agent_provenance(proof)
     content_sha256 = compute_preexecution_privacy_proof_sha256(proof)
     proof = proof.model_copy(update={"privacy_proof_sha256": content_sha256})
     return proof.model_copy(
