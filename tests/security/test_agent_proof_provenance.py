@@ -159,7 +159,7 @@ def _reseal_with_provenance(
     proof: PreExecutionPrivacyProof,
     *,
     ppmc_result_sha256: str,
-    trusted_authority: bool,
+    authority_key: bytes,
 ) -> PreExecutionPrivacyProof:
     binding_payload = _binding_payload(proof, ppmc_result_sha256=ppmc_result_sha256)
     provisional = AgentPpmcProofBinding.model_construct(
@@ -173,18 +173,13 @@ def _reseal_with_provenance(
         binding_sha256=binding_sha256,
         authority_hmac_sha256="0" * 64,
     )
-    authority_hmac = (
-        compute_agent_ppmc_provenance_hmac(
-            unsigned_provenance,
-            integrity_key=PROVENANCE_KEY,
-        )
-        if trusted_authority
-        else "f" * 64
-    )
     provenance = AgentPpmcProofBinding(
         **binding_payload,
         binding_sha256=binding_sha256,
-        authority_hmac_sha256=authority_hmac,
+        authority_hmac_sha256=compute_agent_ppmc_provenance_hmac(
+            unsigned_provenance,
+            integrity_key=authority_key,
+        ),
     )
     unsigned = proof.model_copy(
         update={
@@ -245,7 +240,7 @@ def test_public_proof_bound_authorizer_rejects_hmac_valid_rebound_agent_provenan
     forged = _reseal_with_provenance(
         generic,
         ppmc_result_sha256="e" * 64,
-        trusted_authority=True,
+        authority_key=PROVENANCE_KEY,
     )
 
     assert forged.integrity_hmac_sha256 != generic.integrity_hmac_sha256
@@ -272,11 +267,20 @@ def test_generic_proof_key_cannot_self_mint_agent_provenance() -> None:
     forged = _reseal_with_provenance(
         generic,
         ppmc_result_sha256=generic.ppmc_result_sha256,
-        trusted_authority=False,
+        authority_key=PROOF_KEY,
     )
 
-    assert forged.agent_ppmc_provenance is not None
-    assert forged.agent_ppmc_provenance.ppmc_result_sha256 == forged.ppmc_result_sha256
+    provenance = forged.agent_ppmc_provenance
+    assert provenance is not None
+    assert provenance.ppmc_result_sha256 == forged.ppmc_result_sha256
+    assert provenance.authority_hmac_sha256 == compute_agent_ppmc_provenance_hmac(
+        provenance,
+        integrity_key=PROOF_KEY,
+    )
+    assert provenance.authority_hmac_sha256 != compute_agent_ppmc_provenance_hmac(
+        provenance,
+        integrity_key=PROVENANCE_KEY,
+    )
 
     with bind_request_identity(IDENTITY):
         with pytest.raises(
