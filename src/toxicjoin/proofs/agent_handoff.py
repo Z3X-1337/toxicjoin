@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from datetime import datetime
 from typing import Literal
 
 from pydantic import Field
@@ -35,8 +36,8 @@ class AgentPreExecutionProofCapsule(StrictModel):
     proof_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     agent_provenance_binding_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     request_identity_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    issued_at: object
-    expires_at: object
+    issued_at: datetime
+    expires_at: datetime
     capsule_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     authority_hmac_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
