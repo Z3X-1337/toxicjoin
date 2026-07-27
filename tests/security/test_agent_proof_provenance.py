@@ -142,6 +142,7 @@ def _binding_payload(proof: PreExecutionPrivacyProof, *, ppmc_result_sha256: str
         "agent_evaluation_sha256": "2" * 64,
         "agent_ppmc_evaluation_sha256": "3" * 64,
         "f6_clearance_sha256": "4" * 64,
+        "request_identity_sha256": proof.request_identity_sha256,
         "sql_sha256": proof.sql_sha256,
         "query_plan_sha256": proof.query_plan_sha256,
         "task_purpose_sha256": proof.task_purpose_sha256,
@@ -338,8 +339,10 @@ def test_agent_provenance_cannot_be_transplanted_to_another_request_identity() -
     )
     transplanted = _reseal_for_identity(genuine, ALT_IDENTITY)
 
-    assert transplanted.agent_ppmc_provenance is not None
-    assert transplanted.request_identity_sha256 != generic.request_identity_sha256
+    provenance = transplanted.agent_ppmc_provenance
+    assert provenance is not None
+    assert provenance.request_identity_sha256 == generic.request_identity_sha256
+    assert transplanted.request_identity_sha256 != provenance.request_identity_sha256
 
     with bind_request_identity(ALT_IDENTITY):
         with pytest.raises(
