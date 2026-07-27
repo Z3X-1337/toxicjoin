@@ -33,11 +33,13 @@ def compute_agent_ppmc_provenance_hmac(
     """Compute the domain-separated authority HMAC for one provenance binding."""
 
     key = _validated_key(integrity_key)
-    if isinstance(binding_or_payload, AgentPpmcProofBinding):
+    if type(binding_or_payload) is AgentPpmcProofBinding:
         payload = binding_or_payload.model_dump(
             mode="json",
             exclude={"authority_hmac_sha256"},
         )
+    elif isinstance(binding_or_payload, AgentPpmcProofBinding):
+        raise TypeError("Agent PPMC proof provenance must use the exact model type")
     else:
         payload = {
             str(name): value
@@ -65,9 +67,9 @@ def require_agent_ppmc_provenance(
 ) -> AgentPpmcProofBinding:
     """Require one authentic, internally aligned Agent PPMC provenance binding for ``proof``.
 
-    The enclosing proof HMAC and this provenance HMAC have separate trust roots.  The strict
+    The enclosing proof HMAC and this provenance HMAC have separate trust roots. The strict
     execution authorizer authenticates the ordinary proof first, then verifies this independent
-    authority tag before trusting any Agent provenance claim.
+    authority tag and every duplicated PPMC proof claim before trusting Agent provenance.
     """
 
     key = _validated_key(integrity_key)
@@ -76,17 +78,26 @@ def require_agent_ppmc_provenance(
         raise AgentProofProvenanceError(
             "AUTH_PRIVACY_PROOF_AGENT_PROVENANCE_REQUIRED"
         )
-
-    expected_binding_sha256 = compute_agent_ppmc_proof_binding_sha256(binding)
-    if not hmac.compare_digest(expected_binding_sha256, binding.binding_sha256):
+    if type(binding) is not AgentPpmcProofBinding:
         raise AgentProofProvenanceError(
             "AUTH_PRIVACY_PROOF_AGENT_PROVENANCE_INVALID"
         )
 
-    expected_authority_hmac = compute_agent_ppmc_provenance_hmac(
-        binding,
-        integrity_key=key,
-    )
+    try:
+        expected_binding_sha256 = compute_agent_ppmc_proof_binding_sha256(binding)
+        expected_authority_hmac = compute_agent_ppmc_provenance_hmac(
+            binding,
+            integrity_key=key,
+        )
+    except (TypeError, ValueError):
+        raise AgentProofProvenanceError(
+            "AUTH_PRIVACY_PROOF_AGENT_PROVENANCE_INVALID"
+        ) from None
+
+    if not hmac.compare_digest(expected_binding_sha256, binding.binding_sha256):
+        raise AgentProofProvenanceError(
+            "AUTH_PRIVACY_PROOF_AGENT_PROVENANCE_INVALID"
+        )
     if not hmac.compare_digest(
         expected_authority_hmac,
         binding.authority_hmac_sha256,
@@ -110,11 +121,18 @@ def require_agent_ppmc_provenance(
         "policy_decision_sha256": proof.policy_decision_sha256,
         "disclosure_state_sha256": proof.disclosure_state_sha256,
         "grammar_sha256": proof.grammar_sha256,
+        "ppmc_execution_profile": proof.ppmc_execution_profile,
+        "ppmc_config_sha256": proof.ppmc_config_sha256,
+        "ppmc_forbidden_policy_sha256": proof.ppmc_forbidden_policy_sha256,
         "ppmc_governance_binding_sha256": proof.ppmc_governance_binding_sha256,
+        "ppmc_search_transcript_sha256": proof.ppmc_search_transcript_sha256,
         "ppmc_result_sha256": proof.ppmc_result_sha256,
+        "ppmc_status": proof.ppmc_status,
+        "ppmc_bound": proof.ppmc_bound,
+        "ppmc_max_states": proof.ppmc_max_states,
     }
     for field_name, expected_value in expected.items():
-        if not hmac.compare_digest(getattr(binding, field_name), expected_value):
+        if getattr(binding, field_name) != expected_value:
             raise AgentProofProvenanceError(
                 "AUTH_PRIVACY_PROOF_AGENT_PROVENANCE_INVALID"
             )
