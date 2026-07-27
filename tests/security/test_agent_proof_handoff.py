@@ -37,6 +37,11 @@ def _hash(char: str) -> str:
     return char * 64
 
 
+class _ExplosiveAgentPpmcProofBinding(AgentPpmcProofBinding):
+    def model_dump(self, *args, **kwargs):
+        raise AssertionError("virtual serialization reached")
+
+
 def _proof(*, identity_char: str = "1", trusted_provenance: bool = True) -> PreExecutionPrivacyProof:
     base = PreExecutionPrivacyProof.model_construct(
         schema_version="1.0",
@@ -140,6 +145,15 @@ def _proof(*, identity_char: str = "1", trusted_provenance: bool = True) -> PreE
     )
 
 
+def _poison_provenance_virtual_serialization(
+    proof: PreExecutionPrivacyProof,
+) -> PreExecutionPrivacyProof:
+    provenance = proof.agent_ppmc_provenance
+    assert provenance is not None
+    explosive = _ExplosiveAgentPpmcProofBinding.model_construct(**provenance.__dict__)
+    return proof.model_copy(update={"agent_ppmc_provenance": explosive})
+
+
 def _manually_sealed_capsule(proof: PreExecutionPrivacyProof) -> AgentPreExecutionProofCapsule:
     provenance = proof.agent_ppmc_provenance
     assert provenance is not None
@@ -219,6 +233,38 @@ def test_capsule_rejects_tampered_proof_content_commitment_before_handoff() -> N
     with pytest.raises(AgentPreExecutionProofCapsuleError, match="AGENT_PROOF_CAPSULE_INVALID"):
         seal_agent_preexecution_proof_capsule(
             proof,
+            integrity_key=PROVENANCE_KEY,
+        )
+
+
+def test_capsule_seal_rejects_provenance_subclass_before_virtual_serialization() -> None:
+    poisoned = _poison_provenance_virtual_serialization(_proof())
+
+    with pytest.raises(
+        AgentPreExecutionProofCapsuleError,
+        match="AGENT_PROOF_CAPSULE_PROVENANCE_INVALID",
+    ):
+        seal_agent_preexecution_proof_capsule(
+            poisoned,
+            integrity_key=PROVENANCE_KEY,
+        )
+
+
+def test_capsule_verify_rejects_provenance_subclass_before_virtual_serialization() -> None:
+    proof = _proof()
+    capsule = seal_agent_preexecution_proof_capsule(
+        proof,
+        integrity_key=PROVENANCE_KEY,
+    )
+    poisoned = _poison_provenance_virtual_serialization(proof)
+    poisoned_capsule = capsule.model_copy(update={"proof": poisoned})
+
+    with pytest.raises(
+        AgentPreExecutionProofCapsuleError,
+        match="AGENT_PROOF_CAPSULE_PROVENANCE_INVALID",
+    ):
+        require_agent_preexecution_proof_capsule(
+            poisoned_capsule,
             integrity_key=PROVENANCE_KEY,
         )
 
