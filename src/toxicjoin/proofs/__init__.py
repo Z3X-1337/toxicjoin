@@ -1,5 +1,6 @@
 """Machine-verifiable privacy proof artifacts."""
 
+from toxicjoin.proofs.agent_provenance import compute_agent_ppmc_provenance_hmac
 from toxicjoin.proofs.models import (
     AgentPpmcProofBinding,
     PreExecutionPrivacyProof,
@@ -25,6 +26,7 @@ __all__ = [
     "RepairProofBinding",
     "build_preexecution_privacy_proof",
     "compute_agent_ppmc_proof_binding_sha256",
+    "compute_agent_ppmc_provenance_hmac",
     "compute_preexecution_privacy_proof_hmac",
     "compute_preexecution_privacy_proof_sha256",
     "verify_preexecution_privacy_proof",
