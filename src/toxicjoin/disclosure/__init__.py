@@ -27,7 +27,7 @@ from toxicjoin.disclosure.models import (
     GovernedSubjectDomain,
     SemanticOutput,
 )
-from toxicjoin.disclosure.secure_ledger import DisclosureLedger
+from toxicjoin.disclosure.runtime_ledger import DisclosureLedger
 from toxicjoin.disclosure.semantic import (
     DisclosureSemanticError,
     build_disclosure_event,
@@ -37,6 +37,12 @@ from toxicjoin.disclosure.semantic import (
     build_semantic_release_from_resolution,
     resolve_governed_subject_domain,
     resolve_governed_subject_domain_from_resolver,
+)
+from toxicjoin.disclosure.topology import (
+    DisclosureStateTopology,
+    DisclosureStateTopologyError,
+    require_disclosure_state_topology,
+    resolve_declared_replica_count,
 )
 
 __all__ = [
@@ -56,6 +62,8 @@ __all__ = [
     "DisclosureScope",
     "DisclosureSemanticError",
     "DisclosureSemanticRelease",
+    "DisclosureStateTopology",
+    "DisclosureStateTopologyError",
     "GovernedColumn",
     "GovernedSubjectDomain",
     "SemanticOutput",
@@ -68,6 +76,8 @@ __all__ = [
     "canonicalize_cohort_sql",
     "evaluate_composition_history",
     "is_protected_release",
+    "require_disclosure_state_topology",
+    "resolve_declared_replica_count",
     "resolve_governed_subject_domain",
     "resolve_governed_subject_domain_from_resolver",
 ]
