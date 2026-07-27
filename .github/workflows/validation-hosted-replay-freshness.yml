@@ -1,0 +1,288 @@
+name: Phase 0 Hosted Replay Freshness Validation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/validation-hosted-replay-freshness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-0-hosted-replay-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-hosted-replay-freshness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      EXPECTED_MAIN_SHA: "25a18b872d21ed91abdec3ad1893c07b5f424621"
+      REPLAY_URL: https://toxicjoin-replay.vercel.app/
+      CANDIDATE_DIR: /tmp/toxicjoin-phase0-replay-main
+      EVIDENCE_DIR: validation-artifacts/hosted-replay-freshness
+
+    steps:
+      - name: Check out independent validation workflow
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+
+      - name: Resolve and pin exact current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          MAIN_SHA="$(git ls-remote origin refs/heads/main | awk 'NR==1 {print $1}')"
+          if [[ ! "$MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Could not resolve refs/heads/main" >&2
+            exit 1
+          fi
+          if [[ "$MAIN_SHA" != "$EXPECTED_MAIN_SHA" ]]; then
+            echo "main moved; hosted replay freshness target is stale" >&2
+            exit 1
+          fi
+          printf '%s\n' "$MAIN_SHA" > "$EVIDENCE_DIR/current-main-sha.txt"
+          git fetch --no-tags --depth=1 origin "$MAIN_SHA"
+          git worktree add --detach "$CANDIDATE_DIR" "$MAIN_SHA"
+          test "$(git -C "$CANDIDATE_DIR" rev-parse HEAD)" = "$MAIN_SHA"
+
+      - name: Set up Node.js 22.16.0
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22.16.0"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked browser automation client
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: npm ci --no-audit --no-fund
+
+      - name: Discover preinstalled Chrome or Edge
+        id: browser
+        shell: bash
+        run: |
+          set -euo pipefail
+          browser_path=""
+          for command_name in \
+            google-chrome \
+            google-chrome-stable \
+            chromium \
+            chromium-browser \
+            microsoft-edge \
+            microsoft-edge-stable; do
+            candidate=$(command -v "$command_name" || true)
+            if [[ -n "$candidate" && -x "$candidate" ]]; then
+              browser_path="$candidate"
+              break
+            fi
+          done
+          if [[ -z "$browser_path" ]]; then
+            browser_path=$(find /usr/bin /opt -maxdepth 4 -type f \
+              \( -name 'google-chrome*' -o -name 'chromium*' -o -name 'microsoft-edge*' \) \
+              -perm -111 2>/dev/null | head -n 1 || true)
+          fi
+          if [[ -z "$browser_path" ]]; then
+            echo "No supported preinstalled browser was found." >&2
+            exit 1
+          fi
+          echo "path=$browser_path" >> "$GITHUB_OUTPUT"
+          "$browser_path" --version
+
+      - name: Fetch live replay document and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          document_status=$(curl --location --silent --show-error \
+            --output "$EVIDENCE_DIR/live-index.html" \
+            --write-out '%{http_code}' "$REPLAY_URL")
+          provenance_status=$(curl --location --silent --show-error \
+            --output "$EVIDENCE_DIR/live-provenance.json" \
+            --write-out '%{http_code}' "${REPLAY_URL}provenance.json")
+          test "$document_status" = "200"
+          test "$provenance_status" = "200"
+          printf '%s\n' "$document_status" > "$EVIDENCE_DIR/document-status.txt"
+          printf '%s\n' "$provenance_status" > "$EVIDENCE_DIR/provenance-status.txt"
+
+      - name: Compare live provenance and immutable assets with repository replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          import urllib.request
+          from pathlib import Path
+
+          evidence = Path(os.environ["EVIDENCE_DIR"])
+          candidate = Path(os.environ["CANDIDATE_DIR"])
+          current_main = os.environ["EXPECTED_MAIN_SHA"]
+          live_html = evidence.joinpath("live-index.html").read_text(encoding="utf-8")
+          live_provenance = json.loads(evidence.joinpath("live-provenance.json").read_text(encoding="utf-8"))
+          repo_provenance = json.loads(candidate.joinpath("public/replay/provenance.json").read_text(encoding="utf-8"))
+          if live_provenance != repo_provenance:
+              raise SystemExit("live provenance differs from exact-main public/replay provenance")
+
+          pattern = re.compile(
+              r"https://cdn\.jsdelivr\.net/gh/Z3X-1337/toxicjoin@([0-9a-f]{40})/public/replay/assets/([^\"']+)"
+          )
+          refs = pattern.findall(live_html)
+          if len(refs) != 2:
+              raise SystemExit(f"expected exactly two immutable asset references, got {len(refs)}")
+          asset_commits = sorted({commit for commit, _ in refs})
+          if len(asset_commits) != 1:
+              raise SystemExit("live replay assets are not bound to one immutable commit")
+
+          asset_results = []
+          for commit, filename in refs:
+              url = f"https://cdn.jsdelivr.net/gh/Z3X-1337/toxicjoin@{commit}/public/replay/assets/{filename}"
+              with urllib.request.urlopen(url, timeout=30) as response:
+                  if response.status != 200:
+                      raise SystemExit(f"asset HTTP status was {response.status}")
+                  remote = response.read()
+              local_path = candidate / "public" / "replay" / "assets" / filename
+              if not local_path.is_file():
+                  raise SystemExit(f"asset missing from exact-main public/replay: {filename}")
+              local = local_path.read_bytes()
+              remote_sha = hashlib.sha256(remote).hexdigest()
+              local_sha = hashlib.sha256(local).hexdigest()
+              if remote_sha != local_sha:
+                  raise SystemExit(f"live immutable asset differs from repository replay: {filename}")
+              asset_results.append({
+                  "filename": filename,
+                  "immutable_commit": commit,
+                  "sha256": local_sha,
+                  "bytes": len(local),
+                  "http_status": 200,
+              })
+
+          source_commit = str(live_provenance.get("source_commit", ""))
+          if not re.fullmatch(r"[0-9a-f]{40}", source_commit):
+              raise SystemExit("provenance source_commit is malformed")
+          asset_commit = asset_commits[0]
+          evidence.joinpath("source-commit.txt").write_text(source_commit + "\n", encoding="utf-8")
+          evidence.joinpath("asset-commit.txt").write_text(asset_commit + "\n", encoding="utf-8")
+          preliminary = {
+              "schema_version": "1.0",
+              "validation_main_sha": current_main,
+              "live_url": os.environ["REPLAY_URL"],
+              "live_document_status": 200,
+              "live_provenance_status": 200,
+              "live_provenance_matches_repository": True,
+              "live_assets_match_repository_replay": True,
+              "provenance_source_commit": source_commit,
+              "immutable_asset_commit": asset_commit,
+              "source_artifact_id": live_provenance.get("source_artifact_id"),
+              "source_artifact_digest": live_provenance.get("source_artifact_digest"),
+              "source_workflow_run": live_provenance.get("source_workflow_run"),
+              "source_pr": live_provenance.get("source_pr"),
+              "assets": sorted(asset_results, key=lambda item: item["filename"]),
+          }
+          evidence.joinpath("preliminary.json").write_text(
+              json.dumps(preliminary, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Establish historical relationship to exact current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_COMMIT="$(cat "$EVIDENCE_DIR/source-commit.txt")"
+          ASSET_COMMIT="$(cat "$EVIDENCE_DIR/asset-commit.txt")"
+          git fetch --no-tags --prune --unshallow origin main || git fetch --no-tags --prune origin main
+          git cat-file -e "${SOURCE_COMMIT}^{commit}"
+          git cat-file -e "${ASSET_COMMIT}^{commit}"
+          git merge-base --is-ancestor "$SOURCE_COMMIT" "$EXPECTED_MAIN_SHA"
+          git merge-base --is-ancestor "$ASSET_COMMIT" "$EXPECTED_MAIN_SHA"
+          SOURCE_DISTANCE="$(git rev-list --count "${SOURCE_COMMIT}..${EXPECTED_MAIN_SHA}")"
+          ASSET_DISTANCE="$(git rev-list --count "${ASSET_COMMIT}..${EXPECTED_MAIN_SHA}")"
+          printf '%s\n' "$SOURCE_DISTANCE" > "$EVIDENCE_DIR/source-distance.txt"
+          printf '%s\n' "$ASSET_DISTANCE" > "$EVIDENCE_DIR/asset-distance.txt"
+
+      - name: Verify desktop and mobile live replay in Chromium
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        env:
+          BROWSER_EXECUTABLE: ${{ steps.browser.outputs.path }}
+          REPLAY_URL: ${{ env.REPLAY_URL }}
+        run: node scripts/verify_hosted_replay.mjs
+
+      - name: Build final freshness evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$CANDIDATE_DIR/artifacts/hosted-replay/verification.json" "$EVIDENCE_DIR/browser-verification.json"
+          cp "$CANDIDATE_DIR/artifacts/hosted-replay/diagnostics.json" "$EVIDENCE_DIR/browser-diagnostics.json"
+          cp "$CANDIDATE_DIR/artifacts/hosted-replay/desktop.png" "$EVIDENCE_DIR/desktop.png"
+          cp "$CANDIDATE_DIR/artifacts/hosted-replay/mobile.png" "$EVIDENCE_DIR/mobile.png"
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          evidence = Path(os.environ["EVIDENCE_DIR"])
+          report = json.loads(evidence.joinpath("preliminary.json").read_text(encoding="utf-8"))
+          browser = json.loads(evidence.joinpath("browser-verification.json").read_text(encoding="utf-8"))
+          source_distance = int(evidence.joinpath("source-distance.txt").read_text().strip())
+          asset_distance = int(evidence.joinpath("asset-distance.txt").read_text().strip())
+          current_main = os.environ["EXPECTED_MAIN_SHA"]
+          source_commit = report["provenance_source_commit"]
+          asset_commit = report["immutable_asset_commit"]
+          report.update({
+              "source_commit_is_ancestor_of_current_main": True,
+              "asset_commit_is_ancestor_of_current_main": True,
+              "source_commit_distance_to_current_main": source_distance,
+              "asset_commit_distance_to_current_main": asset_distance,
+              "source_commit_equals_current_main": source_commit == current_main,
+              "asset_commit_equals_current_main": asset_commit == current_main,
+              "freshness_classification": (
+                  "CURRENT_MAIN" if source_commit == current_main and asset_commit == current_main
+                  else "HISTORICAL_VERIFIED"
+              ),
+              "browser_verification_passed": True,
+              "browser_profile_count": len(browser.get("profiles", [])),
+              "disclosure": browser.get("disclosure"),
+              "interpretation": (
+                  "The public replay is live and byte-consistent with public/replay in exact current main, "
+                  "but its provenance and immutable assets identify historical ancestor revisions rather than the current main build."
+              ),
+          })
+          canonical = json.dumps(report, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+          report["report_sha256"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+          evidence.joinpath("freshness.json").write_text(
+              json.dumps(report, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          if report["browser_profile_count"] != 2:
+              raise SystemExit("expected desktop and mobile browser profiles")
+          if "no live execution or DataHub write is being claimed" not in str(report["disclosure"]):
+              raise SystemExit("replay disclosure missing")
+          print(json.dumps({
+              "freshness_classification": report["freshness_classification"],
+              "source_commit_distance": source_distance,
+              "asset_commit_distance": asset_distance,
+              "report_sha256": report["report_sha256"],
+          }, sort_keys=True))
+          PY
+          rm -f "$EVIDENCE_DIR/preliminary.json"
+
+      - name: Upload sanitized hosted replay freshness evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: toxicjoin-phase0-hosted-replay-freshness
+          path: |
+            validation-artifacts/hosted-replay-freshness/current-main-sha.txt
+            validation-artifacts/hosted-replay-freshness/live-index.html
+            validation-artifacts/hosted-replay-freshness/live-provenance.json
+            validation-artifacts/hosted-replay-freshness/freshness.json
+            validation-artifacts/hosted-replay-freshness/browser-verification.json
+            validation-artifacts/hosted-replay-freshness/browser-diagnostics.json
+            validation-artifacts/hosted-replay-freshness/desktop.png
+            validation-artifacts/hosted-replay-freshness/mobile.png
+          if-no-files-found: warn
+          retention-days: 30
