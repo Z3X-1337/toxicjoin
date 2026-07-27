@@ -7,6 +7,7 @@ import hmac
 import json
 from typing import Any, Mapping
 
+from toxicjoin.evidence.canonical import canonical_json_sha256
 from toxicjoin.proofs.models import (
     AgentPpmcProofBinding,
     PreExecutionPrivacyProof,
@@ -15,6 +16,11 @@ from toxicjoin.proofs.models import (
 
 _AGENT_PROVENANCE_HMAC_DOMAIN = b"toxicjoin:agent-ppmc-proof-provenance:v1\x00"
 _MIN_INTEGRITY_KEY_BYTES = 32
+_AGENT_PROOF_CORE_EXCLUDED = {
+    "agent_ppmc_provenance",
+    "privacy_proof_sha256",
+    "integrity_hmac_sha256",
+}
 
 
 class AgentProofProvenanceError(RuntimeError):
@@ -23,6 +29,16 @@ class AgentProofProvenanceError(RuntimeError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+def compute_agent_bound_proof_core_sha256(proof: PreExecutionPrivacyProof) -> str:
+    """Commit every base-proof field without introducing a provenance/hash cycle."""
+
+    if type(proof) is not PreExecutionPrivacyProof:
+        raise TypeError("Agent-bound privacy proof must use the exact model type")
+    return canonical_json_sha256(
+        proof.model_dump(mode="json", exclude=_AGENT_PROOF_CORE_EXCLUDED)
+    )
 
 
 def compute_agent_ppmc_provenance_hmac(
@@ -65,14 +81,14 @@ def require_agent_ppmc_provenance(
     *,
     integrity_key: bytes,
 ) -> AgentPpmcProofBinding:
-    """Require one authentic, internally aligned Agent PPMC provenance binding for ``proof``.
-
-    The enclosing proof HMAC and this provenance HMAC have separate trust roots. The strict
-    execution authorizer authenticates the ordinary proof first, then verifies this independent
-    authority tag and every duplicated PPMC proof claim before trusting Agent provenance.
-    """
+    """Require authentic Agent provenance bound to the exact non-polymorphic proof core."""
 
     key = _validated_key(integrity_key)
+    if type(proof) is not PreExecutionPrivacyProof:
+        raise AgentProofProvenanceError(
+            "AUTH_PRIVACY_PROOF_AGENT_PROVENANCE_INVALID"
+        )
+
     binding = proof.agent_ppmc_provenance
     if binding is None:
         raise AgentProofProvenanceError(
@@ -89,6 +105,7 @@ def require_agent_ppmc_provenance(
             binding,
             integrity_key=key,
         )
+        expected_proof_core_sha256 = compute_agent_bound_proof_core_sha256(proof)
     except (TypeError, ValueError):
         raise AgentProofProvenanceError(
             "AUTH_PRIVACY_PROOF_AGENT_PROVENANCE_INVALID"
@@ -104,6 +121,13 @@ def require_agent_ppmc_provenance(
     ):
         raise AgentProofProvenanceError(
             "AUTH_PRIVACY_PROOF_AGENT_PROVENANCE_UNTRUSTED"
+        )
+    if not hmac.compare_digest(
+        expected_proof_core_sha256,
+        binding.proof_core_sha256,
+    ):
+        raise AgentProofProvenanceError(
+            "AUTH_PRIVACY_PROOF_AGENT_PROVENANCE_INVALID"
         )
 
     expected = {
