@@ -47,6 +47,7 @@ from toxicjoin.models import (
     StrictModel,
 )
 from toxicjoin.policy import PolicyEngine
+from toxicjoin.proofs.models import PreExecutionPrivacyProof
 from toxicjoin.sql import SqlAnalysisError, analyze_sql
 
 
@@ -93,7 +94,11 @@ class ExecutionAuthorization(StrictModel):
 
 
 class ExecutionAuthorizer:
-    """Issue and consume exact-query execution capabilities."""
+    """Issue and consume exact-query execution capabilities.
+
+    The base contract reserves ``privacy_proof`` for proof-aware subclasses. The
+    legacy authority rejects any supplied proof explicitly instead of ignoring it.
+    """
 
     def __init__(
         self,
@@ -146,6 +151,7 @@ class ExecutionAuthorizer:
         *,
         task_purpose: str,
         subject_key: ColumnRef,
+        privacy_proof: PreExecutionPrivacyProof | None = None,
         dialect: str = SUPPORTED_EXECUTION_DIALECT,
         rewrite_parent_sql: str | None = None,
         disclosure_commitment: DisclosureCommitment | None = None,
@@ -154,6 +160,8 @@ class ExecutionAuthorizer:
         """Independently re-evaluate exact SQL and issue only for fully committed ALLOW."""
 
         _validate_execution_dialect(dialect)
+        if privacy_proof is not None:
+            raise ExecutionAuthorizationError("AUTH_PRIVACY_PROOF_BINDING_REQUIRED")
         if not task_purpose.strip():
             raise ExecutionAuthorizationError("AUTH_INVALID_TASK_PURPOSE")
 
@@ -234,12 +242,15 @@ class ExecutionAuthorizer:
         *,
         task_purpose: str,
         subject_key: ColumnRef,
+        privacy_proof: PreExecutionPrivacyProof | None = None,
         dialect: str = SUPPORTED_EXECUTION_DIALECT,
         rewrite_parent_sql: str | None = None,
     ) -> QueryPlan:
         """Verify current policy/privacy/governance state, consume, and return its plan."""
 
         _validate_execution_dialect(dialect)
+        if privacy_proof is not None:
+            raise ExecutionAuthorizationError("AUTH_PRIVACY_PROOF_BINDING_REQUIRED")
         expected_mac = self._mac(
             authorization.model_copy(update={"mac_sha256": "0" * 64})
         )
