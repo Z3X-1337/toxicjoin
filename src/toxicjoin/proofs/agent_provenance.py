@@ -1,14 +1,20 @@
-"""Independent alignment checks for Governed-Agent PPMC proof provenance."""
+"""Independent authentication/alignment checks for Governed-Agent PPMC proof provenance."""
 
 from __future__ import annotations
 
+import hashlib
 import hmac
+import json
+from typing import Any, Mapping
 
 from toxicjoin.proofs.models import (
     AgentPpmcProofBinding,
     PreExecutionPrivacyProof,
     compute_agent_ppmc_proof_binding_sha256,
 )
+
+_AGENT_PROVENANCE_HMAC_DOMAIN = b"toxicjoin:agent-ppmc-proof-provenance:v1\x00"
+_MIN_INTEGRITY_KEY_BYTES = 32
 
 
 class AgentProofProvenanceError(RuntimeError):
@@ -19,17 +25,52 @@ class AgentProofProvenanceError(RuntimeError):
         super().__init__(code)
 
 
+def compute_agent_ppmc_provenance_hmac(
+    binding_or_payload: AgentPpmcProofBinding | Mapping[str, Any],
+    *,
+    integrity_key: bytes,
+) -> str:
+    """Compute the domain-separated authority HMAC for one provenance binding."""
+
+    key = _validated_key(integrity_key)
+    if isinstance(binding_or_payload, AgentPpmcProofBinding):
+        payload = binding_or_payload.model_dump(
+            mode="json",
+            exclude={"authority_hmac_sha256"},
+        )
+    else:
+        payload = {
+            str(name): value
+            for name, value in dict(binding_or_payload).items()
+            if name != "authority_hmac_sha256"
+        }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        default=_json_default,
+    ).encode("utf-8")
+    return hmac.new(
+        key,
+        _AGENT_PROVENANCE_HMAC_DOMAIN + encoded,
+        hashlib.sha256,
+    ).hexdigest()
+
+
 def require_agent_ppmc_provenance(
     proof: PreExecutionPrivacyProof,
+    *,
+    integrity_key: bytes,
 ) -> AgentPpmcProofBinding:
-    """Require one internally consistent Agent PPMC provenance binding for ``proof``.
+    """Require one authentic, internally aligned Agent PPMC provenance binding for ``proof``.
 
-    This function intentionally does not verify the proof HMAC itself.  The strict execution
-    authorizer first authenticates the enclosing proof through the ordinary proof verifier, then
-    calls this function to ensure the authenticated Agent provenance cannot be rebound to different
-    SQL, governance, policy, state, grammar, or PPMC artifacts.
+    The enclosing proof HMAC and this provenance HMAC have separate trust roots.  The strict
+    execution authorizer authenticates the ordinary proof first, then verifies this independent
+    authority tag before trusting any Agent provenance claim.
     """
 
+    key = _validated_key(integrity_key)
     binding = proof.agent_ppmc_provenance
     if binding is None:
         raise AgentProofProvenanceError(
@@ -40,6 +81,18 @@ def require_agent_ppmc_provenance(
     if not hmac.compare_digest(expected_binding_sha256, binding.binding_sha256):
         raise AgentProofProvenanceError(
             "AUTH_PRIVACY_PROOF_AGENT_PROVENANCE_INVALID"
+        )
+
+    expected_authority_hmac = compute_agent_ppmc_provenance_hmac(
+        binding,
+        integrity_key=key,
+    )
+    if not hmac.compare_digest(
+        expected_authority_hmac,
+        binding.authority_hmac_sha256,
+    ):
+        raise AgentProofProvenanceError(
+            "AUTH_PRIVACY_PROOF_AGENT_PROVENANCE_UNTRUSTED"
         )
 
     expected = {
@@ -74,3 +127,17 @@ def require_agent_ppmc_provenance(
             "AUTH_PRIVACY_PROOF_AGENT_PROVENANCE_INVALID"
         )
     return binding
+
+
+def _validated_key(integrity_key: bytes) -> bytes:
+    if type(integrity_key) is not bytes or len(integrity_key) < _MIN_INTEGRITY_KEY_BYTES:
+        raise ValueError("Agent provenance integrity key must be at least 32 bytes")
+    return bytes(integrity_key)
+
+
+def _json_default(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    raise TypeError(f"unsupported provenance HMAC value: {type(value).__name__}")
