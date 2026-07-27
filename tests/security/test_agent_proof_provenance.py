@@ -38,6 +38,12 @@ IDENTITY = RequestIdentity(
     agent_id="agent-agent-proof",
     session_id="session-agent-proof",
 )
+ALT_IDENTITY = RequestIdentity(
+    principal_id=IDENTITY.principal_id,
+    credential_id="credential-agent-proof-alt",
+    agent_id=IDENTITY.agent_id,
+    session_id="session-agent-proof-alt",
+)
 DUMMY = "d" * 64
 
 
@@ -203,6 +209,32 @@ def _reseal_with_provenance(
     )
 
 
+def _reseal_for_identity(
+    proof: PreExecutionPrivacyProof,
+    identity: RequestIdentity,
+) -> PreExecutionPrivacyProof:
+    unsigned = proof.model_copy(
+        update={
+            "request_identity_sha256": canonical_json_sha256(identity.model_dump(mode="json")),
+            "privacy_proof_sha256": "0" * 64,
+            "integrity_hmac_sha256": "0" * 64,
+        }
+    )
+    with_content = unsigned.model_copy(
+        update={
+            "privacy_proof_sha256": compute_preexecution_privacy_proof_sha256(unsigned)
+        }
+    )
+    return with_content.model_copy(
+        update={
+            "integrity_hmac_sha256": compute_preexecution_privacy_proof_hmac(
+                with_content,
+                integrity_key=PROOF_KEY,
+            )
+        }
+    )
+
+
 def _authorizer() -> ProofBoundExecutionAuthorizer:
     resolver, engine, *_ = _runtime()
     return ProofBoundExecutionAuthorizer(
@@ -292,5 +324,32 @@ def test_generic_proof_key_cannot_self_mint_agent_provenance() -> None:
                 task_purpose=TASK,
                 subject_key=SUBJECT,
                 privacy_proof=forged,
+                expected_governance_binding=authorizer.context_resolver.current_governance_binding(),
+            )
+
+
+def test_agent_provenance_cannot_be_transplanted_to_another_request_identity() -> None:
+    authorizer = _authorizer()
+    generic = _generic_sealed_proof()
+    genuine = _reseal_with_provenance(
+        generic,
+        ppmc_result_sha256=generic.ppmc_result_sha256,
+        authority_key=PROVENANCE_KEY,
+    )
+    transplanted = _reseal_for_identity(genuine, ALT_IDENTITY)
+
+    assert transplanted.agent_ppmc_provenance is not None
+    assert transplanted.request_identity_sha256 != generic.request_identity_sha256
+
+    with bind_request_identity(ALT_IDENTITY):
+        with pytest.raises(
+            ExecutionAuthorizationError,
+            match="AUTH_PRIVACY_PROOF_AGENT_PROVENANCE_INVALID",
+        ):
+            authorizer.issue(
+                SQL,
+                task_purpose=TASK,
+                subject_key=SUBJECT,
+                privacy_proof=transplanted,
                 expected_governance_binding=authorizer.context_resolver.current_governance_binding(),
             )
