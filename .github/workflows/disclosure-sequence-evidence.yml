@@ -16,6 +16,7 @@ on:
       - "src/toxicjoin/benchmark/disclosure_sequences.py"
       - "tests/security/test_cumulative_disclosure_gate.py"
       - "tests/security/test_cumulative_execution_binding.py"
+      - "tests/security/test_phase16_shared_disclosure_state.py"
       - ".github/workflows/disclosure-sequence-evidence.yml"
   workflow_dispatch:
 
@@ -65,6 +66,7 @@ jobs:
           python -m pytest -q \
             tests/security/test_cumulative_disclosure_gate.py \
             tests/security/test_cumulative_execution_binding.py \
+            tests/security/test_phase16_shared_disclosure_state.py \
             | tee artifacts/pytest.txt
 
       - name: Generate cross-query sequence report
