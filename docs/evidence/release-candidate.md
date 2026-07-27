@@ -1,34 +1,38 @@
-# ToxicJoin Final Release Evidence
+# ToxicJoin Historical Pre-vNext Release Evidence
 
-This is the authoritative judge-facing release index.
+> **Status: historical evidence snapshot.** This file preserves the evidence chain that was presented around the PR #68/#70 release state. It is **not** an authoritative manifest for the repository's current `main` and must not be used to claim that the historical runtime head is the current product revision.
 
-## Release identity
+The repository has since reopened for vNext development. Phase 0 of the current hardening/release-truth work established newer exact-revision evidence separately. A generated current release manifest is intentionally handled as a later release-hygiene step; manual documentation must not pretend to be that authority.
 
-Current judge-facing `main` HEAD after PR #70 documentation/evidence synchronization:
+## Historical release identity
+
+At the time of the original judge-facing synchronization in PR #70, the repository snapshot was:
 
 ```text
 e1192edc2deb961ad9d85187ba2985f82296ed53
 ```
 
-Frozen runtime merge from PR #68:
+Historical runtime merge from PR #68:
 
 ```text
 ee4991a93070c148e41dd158c952d5f1e9a6ed2c
 ```
 
-Exact security-remediation runtime head validated before landing:
+Exact historical security-remediation runtime head validated before that landing:
 
 ```text
 536c37c34de7b36495d33f63095585f72e5f4b46
 ```
 
-PR #68 merged that exact validated runtime head into `main`; the runtime merge introduced no file-tree difference relative to it. PR #70 landed afterward and changed only judge-facing README/documentation/evidence. It did not change runtime source, policy, parser, rewriter, executor, verifier, authentication, disclosure implementation, dependencies, Docker runtime, or workflow definitions. Therefore `e1192edc…` is the current repository HEAD presented to judges, while `536c37c…` remains the exact runtime provenance for the security and DataHub evidence below. Policy version remains `0.2.0`.
+PR #68 merged that validated runtime head and the merge introduced no file-tree difference relative to it. PR #70 then changed judge-facing documentation/evidence only. Those statements remain useful provenance for the historical evidence below, but `e1192edc…` and `536c37c…` are **not current repository-head identifiers**.
 
-No new feature, refactor, dependency, or policy change is authorized during release freeze unless a proven release blocker requires reopening the candidate.
+The deterministic policy version for this historical evidence set is `0.2.0`.
 
-## Exact final-security-head gates
+The old release-freeze statement applied to that historical submission candidate. It does not describe the repository after vNext development resumed.
 
-All release/security workflows below completed successfully on `536c37c34de7b36495d33f63095585f72e5f4b46`:
+## Historical exact-security-head gates
+
+The following workflows completed successfully on exact historical runtime head `536c37c34de7b36495d33f63095585f72e5f4b46`:
 
 | Gate | Run | Result |
 |---|---:|---:|
@@ -41,11 +45,13 @@ All release/security workflows below completed successfully on `536c37c34de7b364
 | Disclosure Sequence Evidence | `30143510867` | PASS |
 | Live DataHub Evidence | `30143510876` | PASS |
 
-Python 3.12 pytest artifact: **309 passed**, with one upstream Starlette/FastAPI deprecation warning only.
+Python 3.12 pytest reported **309 passed**, with one upstream Starlette/FastAPI deprecation warning.
 
-## Final 30-case benchmark
+These results validate that exact historical head. They must not be relabeled as current-main CI evidence.
 
-Exact-head CI artifact:
+## Historical 30-case benchmark
+
+Exact-head artifact:
 
 - artifact ID `8615270504`;
 - artifact digest `sha256:88737151d88603a0c3994a4e479a1e2c8ee6e0aa909615b9127703d92a128599`;
@@ -64,9 +70,9 @@ Exact-head CI artifact:
 
 This is a deterministic regression corpus for the supported SQL/policy profile, not a claim of universal privacy-detection accuracy.
 
-## Security closure in PR #68
+## Historical PR #68 security closure
 
-The final audit found and fixed concrete issues before submission:
+The pre-vNext audit found and fixed concrete issues including:
 
 - protected conditional aggregate oracle paths such as `COUNT(CASE...)` and filtered counts;
 - cohort identity that previously discarded root SELECT predicates/thresholds/targets;
@@ -76,22 +82,13 @@ The final audit found and fixed concrete issues before submission:
 - raw protected engine/database error leakage;
 - broad default Docker Compose host binding.
 
-The resulting controls include:
+The resulting controls included conditional aggregate exposure classification, keyed cohort identity, conservative repeated-release semantics, append-only `PENDING -> RELEASED | ABORTED` disclosure state, HMAC-authenticated receipts, fail-closed receipt-key handling, sanitized protected execution errors, and loopback-only default Compose publication.
 
-- conditional aggregate exposure classification and fail-closed policy;
-- keyed cohort identity that preserves projection expressions while ignoring cosmetic aliases;
-- conservative one-new-protected-release semantics until trusted snapshot identity exists;
-- append-only `PENDING -> RELEASED | ABORTED` disclosure state;
-- receipt schema 1.5 with content SHA-256 plus HMAC-SHA256 authenticity;
-- fail-closed receipt-key handling and filename/payload identity checks;
-- stable public authorization errors with sanitized protected execution failures;
-- loopback-only default Compose publication.
+These controls remain part of project history, but current runtime claims must be established from current code and current evidence rather than inferred from this historical section.
 
-Regression coverage includes threshold/subject mutation, concurrent reservations, aborted release handling, receipt semantic/ID/timestamp/governance tampering, attacker recomputation of public SHA without the HMAC key, wrong/missing HMAC key handling, execution-error sanitization, and secure deployment defaults.
+## Historical exact-image black-box validation
 
-## Final exact-image black-box validation
-
-Validation-only PR #69 reran the independent production-image harness against the exact final security head. The validation branch itself was never merged.
+Validation-only PR #69 reran the independent production-image harness against the historical exact security head. The validation branch was never merged.
 
 Run `30145592349`: **24/24 PASS**.
 
@@ -101,13 +98,13 @@ Run `30145592349`: **24/24 PASS**.
 - report SHA-256 `c857cf8856e1850124f5d0c6bff2a2cdcbf1baa01ea21372db5bcb9fbb8d6dd3`;
 - failed probes `0`.
 
-Coverage includes authentication/scope separation, request limits, rate limiting, fail-closed mutation and compositional sensitive export, legitimate low-risk execution, receipt ownership isolation, receipt mode `0600`, persisted-receipt tamper detection, restricted production API surface, TrustedHost, non-root/read-only container boundaries, capability drop, no-new-privileges, localhost exposure, and response/log leakage checks.
+Coverage included authentication/scope separation, request limits, rate limiting, fail-closed mutation and compositional sensitive export, legitimate low-risk execution, receipt ownership isolation, receipt mode `0600`, persisted-receipt tamper detection, restricted production API surface, TrustedHost, non-root/read-only container boundaries, capability drop, no-new-privileges, localhost exposure, and response/log leakage checks.
 
 See [`final-security-blackbox.md`](final-security-blackbox.md) and [`final-security-blackbox.json`](final-security-blackbox.json).
 
-## Final Live DataHub OSS + official MCP
+## Historical Live DataHub OSS + official MCP evidence
 
-Exact final security-head run `30143510876`: **PASS**.
+Historical exact-security-head run `30143510876`: **PASS**.
 
 Evidence artifact:
 
@@ -119,7 +116,7 @@ Diagnostics artifact:
 - artifact ID `8615316546`;
 - digest `sha256:4ecb6e0843e5804ac4c1f477b86e095e5398cbefb345573675a9f82f8e488922`.
 
-The exact-head run proved:
+That run proved:
 
 - 5 datasets;
 - 19 governed fields;
@@ -136,9 +133,9 @@ The exact-head run proved:
 - 6 normalized lineage sources;
 - zero unclassified lineage sources.
 
-Final exact-head seed report SHA-256: `538eef1abc7a02d1a0bcc939a51195831e78e8e6cb161400fbc3abf223f5f3b1`.
+Historical seed report SHA-256: `538eef1abc7a02d1a0bcc939a51195831e78e8e6cb161400fbc3abf223f5f3b1`.
 
-Final exact-head spike report SHA-256: `6f295f0c399474834d66413353b5218af5c098fdb6f9875088b43011bcd6f292`.
+Historical spike report SHA-256: `6f295f0c399474834d66413353b5218af5c098fdb6f9875088b43011bcd6f292`.
 
 See [`datahub-live.md`](datahub-live.md), [`datahub-live-seed.json`](datahub-live-seed.json), and [`datahub-live-spike.json`](datahub-live-spike.json).
 
@@ -159,11 +156,31 @@ Run `30137303763`: PASS.
 - no patient rows in sanitized evidence;
 - report SHA-256 `beb02e39ad2fe4838f78def0c8d0e5d8d396876845c29a758223d87464ff2cf9`.
 
-This is retained as frozen external validation of the earlier deep-security baseline. The final security head has separate exact-head CI, semantic/security regression, Live DataHub, and black-box evidence above; we do not relabel the historical external run as if it were regenerated.
+This remains frozen external validation of an earlier deep-security baseline. It is deliberately not regenerated or relabeled as current-main evidence.
 
-## Supply-chain posture
+## Hosted replay relationship after Phase 0 revalidation
 
-The release lineage retains:
+The public browser experience at `https://toxicjoin-replay.vercel.app/` remains explicitly labeled **Deterministic Replay**. It does not claim live DuckDB execution or live DataHub mutation.
+
+Phase 0 revalidated the live deployment against exact repository state `25a18b872d21ed91abdec3ad1893c07b5f424621` in validation-only PR #100 and classified it as:
+
+```text
+HISTORICAL_VERIFIED_DIVERGED_LINEAGE_WITH_PROVENANCE_SHAPE_DRIFT
+```
+
+The live replay's critical source identity fields remain consistent with the retained replay provenance, and its two immutable jsDelivr asset bytes exactly match the replay assets retained by the validated repository state. However:
+
+- source commit `bd8085c300a0065cc714d6e86f62f657df2d84c9` is on a Git lineage diverged from the validation target;
+- materialized asset commit `183571534a35be6a5ae85ed9d75308ada6eba41e` is also on a diverged lineage;
+- live provenance drops `artifact_name` and adds `materialized_commit` relative to the committed provenance representation.
+
+See [`hosted-replay.md`](hosted-replay.md) for the exact Phase 0 run, artifact digests, merge bases, unique-commit counts, browser checks, and asset hashes.
+
+The public replay therefore remains useful historical deterministic evidence, but it must not be described as a build of current `main`.
+
+## Historical supply-chain posture
+
+The historical release lineage retained:
 
 - committed Python and npm lockfiles consumed by CI/Docker;
 - Python and npm dependency audits;
@@ -174,16 +191,20 @@ The release lineage retains:
 - digest-pinned Docker base images;
 - Dependabot.
 
-One narrow machine-validated upstream-constrained exception remains documented under `docs/security/`: the current DataHub dependency profile constrains `setuptools` below the upstream fixed version. The exception is temporary, scoped, non-runtime-applicability justified, and expiring; it is not described as a full fix.
+A narrow machine-validated upstream-constrained `setuptools` exception remains documented under `docs/security/`. Its current validity and expiry must be evaluated from the machine-readable exception and current dependency audits, not inferred from this historical file.
 
-## Honest deployment modes
+## Current-repository claim boundary
 
-The hosted browser experience at `https://toxicjoin-replay.vercel.app/` is intentionally labeled **Deterministic Replay**. It is not represented as live DuckDB execution or a live DataHub mutation.
+This file is intentionally **not** the current release authority.
 
-The Docker/FastAPI package is the executable product path. Real DataHub OSS/MCP behavior is proven independently by the exact-head gate above.
+It supports statements about exact historical SHAs, runs, artifacts, and the bounded Phase 0 replay revalidation recorded above. It does not support statements that:
 
-## Claim boundaries
+- `e1192edc…` is current `main`;
+- `536c37c…` is the current runtime head;
+- historical CI/DataHub/black-box runs validate later vNext source changes;
+- the hosted replay is generated from current `main`;
+- historical release freeze remains active.
 
-ToxicJoin does not claim differential privacy, universal SQL repair, universal re-identification detection, formal verification, or legal-compliance certification. Unsupported SQL, unresolved/ambiguous lineage, missing/stale governance, failed rewrite, failed verification, integrity failure, or incomplete evidence fail closed.
+Current release identity should be derived from exact repository state and machine-generated release evidence. Manual documentation is downstream explanatory material, not the source of revision truth.
 
-Devpost remains **NOT SUBMITTED** until the final public demo video and explicit owner review/approval are complete.
+ToxicJoin continues not to claim differential privacy, universal SQL repair, universal re-identification detection, formal verification, or legal-compliance certification. Unsupported SQL, unresolved/ambiguous lineage, missing/stale governance, failed rewrite, failed verification, integrity failure, or incomplete evidence fail closed.
