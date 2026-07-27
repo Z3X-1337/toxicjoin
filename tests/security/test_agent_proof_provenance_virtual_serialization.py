@@ -12,6 +12,7 @@ from toxicjoin.proofs import (
 )
 from toxicjoin.proofs.agent_provenance import (
     AgentProofProvenanceError,
+    compute_agent_bound_proof_core_sha256,
     require_agent_ppmc_provenance,
 )
 from toxicjoin.prospective.ppmc import build_ppmc_search_config
@@ -58,6 +59,7 @@ def _binding_payload(proof: PreExecutionPrivacyProof) -> dict[str, object]:
         "agent_evaluation_sha256": "7" * 64,
         "agent_ppmc_evaluation_sha256": "8" * 64,
         "f6_clearance_sha256": "9" * 64,
+        "proof_core_sha256": compute_agent_bound_proof_core_sha256(proof),
         "request_identity_sha256": proof.request_identity_sha256,
         "sql_sha256": proof.sql_sha256,
         "query_plan_sha256": proof.query_plan_sha256,
@@ -140,5 +142,27 @@ def test_agent_provenance_rejects_subclass_virtual_serialization_spoof() -> None
     ):
         require_agent_ppmc_provenance(
             forged_proof,
+            integrity_key=PROVENANCE_KEY,
+        )
+
+
+def test_agent_provenance_rejects_privacy_proof_subclass_virtual_serialization() -> None:
+    base = _proof()
+    genuine = base.model_copy(update={"agent_ppmc_provenance": _genuine_binding(base)})
+
+    class _SpoofedProof(PreExecutionPrivacyProof):
+        def model_dump(self, *args, **kwargs):
+            return genuine.model_dump(*args, **kwargs)
+
+    attacker = _SpoofedProof.model_construct(
+        **genuine.model_dump(),
+    )
+
+    with pytest.raises(
+        AgentProofProvenanceError,
+        match="AUTH_PRIVACY_PROOF_AGENT_PROVENANCE_INVALID",
+    ):
+        require_agent_ppmc_provenance(
+            attacker,
             integrity_key=PROVENANCE_KEY,
         )
