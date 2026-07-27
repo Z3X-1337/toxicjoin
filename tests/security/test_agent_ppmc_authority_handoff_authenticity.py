@@ -46,13 +46,14 @@ def _forge_ppmc_transcript(
 def test_proof_authority_rejects_self_reconstructed_ppmc_authority_artifact(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _, proposal, evaluation, ppmc_evaluation, state, grammar = _upstream(monkeypatch)
-    forged_ppmc = _forge_ppmc_transcript(ppmc_evaluation)
+    _, proposal, evaluation, authenticated_ppmc, state, grammar = _upstream(monkeypatch)
+    original_ppmc = authenticated_ppmc.evaluation
+    forged_ppmc = _forge_ppmc_transcript(original_ppmc)
 
-    assert forged_ppmc.ppmc_result_sha256 != ppmc_evaluation.ppmc_result_sha256
+    assert forged_ppmc.ppmc_result_sha256 != original_ppmc.ppmc_result_sha256
     assert (
         forged_ppmc.ppmc_result.search_transcript_sha256
-        != ppmc_evaluation.ppmc_result.search_transcript_sha256
+        != original_ppmc.ppmc_result.search_transcript_sha256
     )
 
     with bind_request_identity(IDENTITY):
