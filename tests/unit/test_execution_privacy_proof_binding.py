@@ -22,6 +22,7 @@ from toxicjoin.proofs import (
     compute_preexecution_privacy_proof_hmac,
     compute_preexecution_privacy_proof_sha256,
 )
+from toxicjoin.prospective.ppmc import build_ppmc_search_config
 from toxicjoin.sql import analyze_sql
 
 AUTH_KEY = b"proof-bound-execution-auth-key-32-bytes!!"
@@ -119,7 +120,10 @@ def _sealed_proof(*, transcript_sha256: str = DUMMY) -> PreExecutionPrivacyProof
             decision.model_dump(mode="json")
         ),
         grammar_sha256=DUMMY,
-        ppmc_config_sha256=DUMMY,
+        ppmc_config_sha256=build_ppmc_search_config(
+            bound=3,
+            max_states=100,
+        ).config_sha256,
         ppmc_forbidden_policy_sha256=DUMMY,
         ppmc_governance_binding_sha256=DUMMY,
         ppmc_search_transcript_sha256=transcript_sha256,
