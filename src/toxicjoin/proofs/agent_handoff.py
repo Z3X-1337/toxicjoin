@@ -22,7 +22,7 @@ from toxicjoin.proofs.agent_provenance import (
     AgentProofProvenanceError,
     require_agent_ppmc_provenance,
 )
-from toxicjoin.proofs.models import PreExecutionPrivacyProof
+from toxicjoin.proofs.models import AgentPpmcProofBinding, PreExecutionPrivacyProof
 from toxicjoin.proofs.preexec import compute_preexecution_privacy_proof_sha256
 
 _CAPSULE_HMAC_DOMAIN = b"toxicjoin:agent-preexecution-proof-handoff:v1\x00"
@@ -105,8 +105,7 @@ def compute_agent_preexecution_proof_capsule_sha256(
 ) -> str:
     """Commit the exact handoff content without introducing a hash/MAC cycle."""
 
-    if type(capsule) is not AgentPreExecutionProofCapsule:
-        raise TypeError("Agent proof capsule must use the exact model type")
+    _require_exact_capsule_types(capsule)
     return canonical_json_sha256(
         capsule.model_dump(
             mode="json",
@@ -123,8 +122,7 @@ def compute_agent_preexecution_proof_capsule_hmac(
     """Authenticate the exact capsule, including its content commitment."""
 
     key = _validated_key(integrity_key)
-    if type(capsule) is not AgentPreExecutionProofCapsule:
-        raise TypeError("Agent proof capsule must use the exact model type")
+    _require_exact_capsule_types(capsule)
     payload = capsule.model_dump(mode="json", exclude={"authority_hmac_sha256"})
     encoded = json.dumps(
         payload,
@@ -184,6 +182,16 @@ def require_agent_preexecution_proof_capsule(
     if capsule.issued_at != proof.issued_at or capsule.expires_at != proof.expires_at:
         raise AgentPreExecutionProofCapsuleError("AGENT_PROOF_CAPSULE_INVALID")
     return proof
+
+
+def _require_exact_capsule_types(capsule: AgentPreExecutionProofCapsule) -> None:
+    if type(capsule) is not AgentPreExecutionProofCapsule:
+        raise TypeError("Agent proof capsule must use the exact model type")
+    proof = capsule.proof
+    if type(proof) is not PreExecutionPrivacyProof:
+        raise TypeError("Agent proof capsule must contain the exact proof model type")
+    if type(proof.agent_ppmc_provenance) is not AgentPpmcProofBinding:
+        raise TypeError("Agent proof capsule must contain the exact provenance model type")
 
 
 def _validated_key(integrity_key: bytes) -> bytes:
