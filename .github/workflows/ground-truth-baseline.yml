@@ -63,14 +63,22 @@ jobs:
         run: uv run --frozen toxicjoin-benchmark --output-dir artifacts/benchmark
 
       - name: Generate ground-truth manifest
-        run: >-
-          uv run --frozen python scripts/generate_baseline_manifest.py
-          --source-sha "$TOXICJOIN_SOURCE_SHA"
-          --pytest-log pytest-3.11.log
-          --benchmark-json artifacts/benchmark/benchmark.json
-          --output artifacts/baseline/baseline.json
+        id: generate_manifest
+        shell: bash
+        run: |
+          set +e
+          uv run --frozen python scripts/generate_baseline_manifest.py \
+            --source-sha "$TOXICJOIN_SOURCE_SHA" \
+            --pytest-log pytest-3.11.log \
+            --benchmark-json artifacts/benchmark/benchmark.json \
+            --output artifacts/baseline/baseline.json \
+            > baseline-generation.log 2>&1
+          status=$?
+          cat baseline-generation.log
+          exit "$status"
 
       - name: Upload ground-truth evidence bundle
+        if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: toxicjoin-ground-truth-baseline
@@ -81,3 +89,16 @@ jobs:
             pytest-3.11.log
           if-no-files-found: error
           retention-days: 30
+
+      - name: Upload baseline diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: toxicjoin-ground-truth-diagnostics
+          path: |
+            baseline-generation.log
+            artifacts/benchmark/benchmark.json
+            artifacts/benchmark/benchmark.md
+            pytest-3.11.log
+          if-no-files-found: warn
+          retention-days: 14
