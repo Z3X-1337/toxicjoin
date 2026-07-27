@@ -1,14 +1,16 @@
 """Security-owned Governed-Agent entry point into prospective privacy checking.
 
 The generic PPMC API deliberately remains a rollback-safe primitive that accepts a legacy
-prospective ``GovernanceTrustBinding`` as trusted caller input.  The Governed-Agent path must
-not expose that parameter.  Instead, this authority consumes the exact ``F6GovernanceClearance``
-issued by the Day-13 governance bridge, rebinds it to the exact DisclosureState and grammar
-context, runs PPMC, and emits a canonical artifact that commits the clearance and PPMC result.
+prospective ``GovernanceTrustBinding`` as trusted caller input. The Governed-Agent path must
+not expose that parameter or accept a caller-supplied F6 clearance. Instead, this authority
+revalidates the exact Agent evaluation, DataHub governance-trust artifact, DisclosureState,
+and PPMC model inputs; it then asks the security-owned Day-13 F6 authority to issue a fresh
+clearance for those exact artifacts and passes only that clearance-owned legacy binding into
+PPMC.
 
 A successful call means only that PPMC produced a canonical bounded-search result under the
-clearance-owned F6 binding.  The result status still determines whether the search found a
-counterexample, completed without one inside the declared bound, or failed closed.  Nothing in
+fresh state-bound F6 clearance. The result status still determines whether the search found a
+counterexample, completed without one inside the declared bound, or failed closed. Nothing in
 this module authorizes execution.
 """
 
@@ -20,7 +22,15 @@ from typing import Literal
 
 from pydantic import Field, ValidationError, field_validator, model_validator
 
-from toxicjoin.agent.f6_governance import F6GovernanceClearance
+from toxicjoin.agent.f6_governance import (
+    DataHubF6GovernanceAuthority,
+    F6GovernanceClearance,
+    F6GovernanceClearanceError,
+)
+from toxicjoin.agent.governance_trust import (
+    GovernanceTrustBinding as DataHubGovernanceTrustBinding,
+)
+from toxicjoin.agent.proposal_authority import TrustedAgentProposalEvaluation
 from toxicjoin.evidence.canonical import canonical_json_sha256
 from toxicjoin.models import StrictModel
 from toxicjoin.prospective.forbidden import ForbiddenPredicatePolicy
@@ -47,13 +57,15 @@ class AgentPpmcAuthorityError(RuntimeError):
 
 
 class TrustedAgentPpmcEvaluation(StrictModel):
-    """Canonical binding between one F6 clearance and one exact PPMC result.
+    """Canonical binding between one Agent evaluation, full F6 clearance, and PPMC result.
 
     ``prospective_privacy_checked=True`` means that the bounded checker returned a canonical
-    result.  It does not mean the result is safe; callers must inspect ``ppmc_result.status``.
+    result. It does not mean the result is safe; callers must inspect ``ppmc_result.status``.
     """
 
     schema_version: Literal["1.0"] = "1.0"
+    agent_evaluation_sha256: str = Field(pattern=_HASH_PATTERN)
+    f6_clearance: F6GovernanceClearance
     f6_clearance_sha256: str = Field(pattern=_HASH_PATTERN)
     disclosure_state_sha256: str = Field(pattern=_HASH_PATTERN)
     governance_binding_sha256: str = Field(pattern=_HASH_PATTERN)
@@ -76,6 +88,18 @@ class TrustedAgentPpmcEvaluation(StrictModel):
     def validate_evaluation(self) -> "TrustedAgentPpmcEvaluation":
         if self.ppmc_started_at >= self.evidence_expires_at:
             raise ValueError("Agent PPMC evaluation cannot start from expired evidence")
+        if self.f6_clearance_sha256 != self.f6_clearance.clearance_sha256:
+            raise ValueError("Agent PPMC F6 clearance commitment mismatch")
+        if self.f6_clearance.evaluation_sha256 != self.agent_evaluation_sha256:
+            raise ValueError("Agent PPMC Agent-evaluation commitment mismatch")
+        if self.f6_clearance.disclosure_state_sha256 != self.disclosure_state_sha256:
+            raise ValueError("Agent PPMC F6/state commitment mismatch")
+        if self.f6_clearance.f6_binding.binding_sha256 != self.governance_binding_sha256:
+            raise ValueError("Agent PPMC F6 governance-binding commitment mismatch")
+        if self.f6_clearance.evidence_expires_at != self.evidence_expires_at:
+            raise ValueError("Agent PPMC evidence-expiry commitment mismatch")
+        if self.ppmc_started_at < self.f6_clearance.verified_at:
+            raise ValueError("Agent PPMC cannot precede F6 clearance verification")
         if self.ppmc_result_sha256 != self.ppmc_result.result_sha256:
             raise ValueError("Agent PPMC result commitment mismatch")
         if self.ppmc_result.initial_state_sha256 != self.disclosure_state_sha256:
@@ -88,30 +112,34 @@ class TrustedAgentPpmcEvaluation(StrictModel):
 
 
 class DataHubAgentPpmcAuthority:
-    """Run PPMC only through an exact state-bound F6 governance clearance."""
+    """Issue F6 governance internally, then run PPMC for the exact Governed-Agent state."""
 
     def __init__(self, *, clock=None) -> None:
-        self._clock = (lambda: datetime.now(timezone.utc)) if clock is None else clock
+        selected_clock = (lambda: datetime.now(timezone.utc)) if clock is None else clock
+        self._clock = selected_clock
         self._clock_lock = threading.Lock()
         self._last_clock_sample: datetime | None = None
+        self._f6_authority = DataHubF6GovernanceAuthority(clock=selected_clock)
 
     def check(
         self,
         *,
+        evaluation: TrustedAgentProposalEvaluation,
+        governance_trust: DataHubGovernanceTrustBinding,
         initial_state: DisclosureState,
-        f6_clearance: F6GovernanceClearance,
         grammar: FutureActionGrammar,
         forbidden_policy: ForbiddenPredicatePolicy,
         local_oracle: LocalAdmissibilityOracle,
         config: PpmcSearchConfig | None = None,
     ) -> TrustedAgentPpmcEvaluation:
-        """Return one clearance-bound PPMC evaluation or a stable fail-closed error code."""
+        """Return one internally cleared PPMC evaluation or a stable fail-closed error code."""
 
         stable_code = "AGENT_PPMC_INTERNAL_FAILED"
         try:
             return self._check_impl(
+                evaluation=evaluation,
+                governance_trust=governance_trust,
                 initial_state=initial_state,
-                f6_clearance=f6_clearance,
                 grammar=grammar,
                 forbidden_policy=forbidden_policy,
                 local_oracle=local_oracle,
@@ -123,8 +151,9 @@ class DataHubAgentPpmcAuthority:
         except Exception as error:
             _detach_exception(error)
 
+        evaluation = None  # type: ignore[assignment]
+        governance_trust = None  # type: ignore[assignment]
         initial_state = None  # type: ignore[assignment]
-        f6_clearance = None  # type: ignore[assignment]
         grammar = None  # type: ignore[assignment]
         forbidden_policy = None  # type: ignore[assignment]
         local_oracle = None  # type: ignore[assignment]
@@ -135,16 +164,18 @@ class DataHubAgentPpmcAuthority:
     def _check_impl(
         self,
         *,
+        evaluation: TrustedAgentProposalEvaluation,
+        governance_trust: DataHubGovernanceTrustBinding,
         initial_state: DisclosureState,
-        f6_clearance: F6GovernanceClearance,
         grammar: FutureActionGrammar,
         forbidden_policy: ForbiddenPredicatePolicy,
         local_oracle: LocalAdmissibilityOracle,
         config: PpmcSearchConfig | None,
     ) -> TrustedAgentPpmcEvaluation:
         if (
-            type(initial_state) is not DisclosureState
-            or type(f6_clearance) is not F6GovernanceClearance
+            type(evaluation) is not TrustedAgentProposalEvaluation
+            or type(governance_trust) is not DataHubGovernanceTrustBinding
+            or type(initial_state) is not DisclosureState
             or type(grammar) is not FutureActionGrammar
             or type(forbidden_policy) is not ForbiddenPredicatePolicy
             or (config is not None and type(config) is not PpmcSearchConfig)
@@ -153,10 +184,13 @@ class DataHubAgentPpmcAuthority:
             raise AgentPpmcAuthorityError("AGENT_PPMC_INPUT_INVALID")
 
         try:
-            trusted_state = DisclosureState.model_validate(initial_state.model_dump(mode="json"))
-            trusted_clearance = F6GovernanceClearance.model_validate(
-                f6_clearance.model_dump(mode="json")
+            trusted_evaluation = TrustedAgentProposalEvaluation.model_validate(
+                evaluation.model_dump(mode="json")
             )
+            trusted_governance = DataHubGovernanceTrustBinding.model_validate(
+                governance_trust.model_dump(mode="json")
+            )
+            trusted_state = DisclosureState.model_validate(initial_state.model_dump(mode="json"))
             trusted_grammar = FutureActionGrammar.model_validate(grammar.model_dump(mode="json"))
             trusted_policy = ForbiddenPredicatePolicy.model_validate(
                 forbidden_policy.model_dump(mode="json")
@@ -169,6 +203,24 @@ class DataHubAgentPpmcAuthority:
         except (ValidationError, ValueError):
             raise AgentPpmcAuthorityError("AGENT_PPMC_INPUT_INVALID") from None
 
+        try:
+            clearance = self._f6_authority.clear(
+                evaluation=trusted_evaluation,
+                governance_trust=trusted_governance,
+                state=trusted_state,
+            )
+            if type(clearance) is not F6GovernanceClearance:
+                raise ValueError("unexpected F6 clearance type")
+            trusted_clearance = F6GovernanceClearance.model_validate(
+                clearance.model_dump(mode="json")
+            )
+        except F6GovernanceClearanceError:
+            raise AgentPpmcAuthorityError("AGENT_PPMC_F6_CLEARANCE_FAILED") from None
+        except (ValidationError, ValueError):
+            raise AgentPpmcAuthorityError("AGENT_PPMC_F6_CLEARANCE_INVALID") from None
+
+        if trusted_clearance.evaluation_sha256 != trusted_evaluation.evaluation_sha256:
+            raise AgentPpmcAuthorityError("AGENT_PPMC_F6_EVALUATION_MISMATCH")
         if trusted_clearance.disclosure_state_sha256 != trusted_state.state_sha256:
             raise AgentPpmcAuthorityError("AGENT_PPMC_STATE_MISMATCH")
         if trusted_clearance.purpose_commitment_sha256 != trusted_state.purpose_commitment_sha256:
@@ -228,6 +280,8 @@ class DataHubAgentPpmcAuthority:
             raise AgentPpmcAuthorityError("AGENT_PPMC_RESULT_GOVERNANCE_MISMATCH")
 
         payload = {
+            "agent_evaluation_sha256": trusted_evaluation.evaluation_sha256,
+            "f6_clearance": trusted_clearance,
             "f6_clearance_sha256": trusted_clearance.clearance_sha256,
             "disclosure_state_sha256": trusted_state.state_sha256,
             "governance_binding_sha256": trusted_clearance.f6_binding.binding_sha256,
