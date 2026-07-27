@@ -176,12 +176,13 @@ def _upstream(monkeypatch: pytest.MonkeyPatch):
         ),
         config=build_ppmc_search_config(bound=3, max_states=128),
     )
-    return snapshot, evaluation, ppmc_evaluation, state, grammar
+    return snapshot, proposal, evaluation, ppmc_evaluation, state, grammar
 
 
 def test_agent_proof_authority_surface_does_not_accept_legacy_ppmc_authority_inputs() -> None:
     parameters = inspect.signature(DataHubAgentPreExecutionProofAuthority.build).parameters
 
+    assert "proposal" in parameters
     assert "evaluation" in parameters
     assert "ppmc_evaluation" in parameters
     assert "identity" in parameters
@@ -198,7 +199,7 @@ def test_agent_proof_authority_surface_does_not_accept_legacy_ppmc_authority_inp
 def test_agent_ppmc_provenance_mints_proof_accepted_by_strict_execution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    snapshot, evaluation, ppmc_evaluation, state, grammar = _upstream(monkeypatch)
+    snapshot, proposal, evaluation, ppmc_evaluation, state, grammar = _upstream(monkeypatch)
     assert ppmc_evaluation.ppmc_result.status == PpmcStatus.NO_COUNTEREXAMPLE_WITHIN_BOUND
     assert ppmc_evaluation.ppmc_result.bound == 3
 
@@ -206,6 +207,7 @@ def test_agent_ppmc_provenance_mints_proof_accepted_by_strict_execution(
         integrity_key=PROOF_KEY,
         clock=lambda: NOW + timedelta(seconds=5),
     ).build(
+        proposal=proposal,
         evaluation=evaluation,
         ppmc_evaluation=ppmc_evaluation,
         identity=IDENTITY,
@@ -253,16 +255,17 @@ def test_agent_ppmc_provenance_mints_proof_accepted_by_strict_execution(
 def test_agent_proof_authority_rejects_sql_plan_rebinding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _, evaluation, ppmc_evaluation, state, grammar = _upstream(monkeypatch)
+    _, proposal, evaluation, ppmc_evaluation, state, grammar = _upstream(monkeypatch)
 
     with pytest.raises(
         AgentPreExecutionProofAuthorityError,
-        match="AGENT_PROOF_QUERY_PLAN_MISMATCH",
+        match="AGENT_PROOF_SQL_BINDING_MISMATCH",
     ):
         DataHubAgentPreExecutionProofAuthority(
             integrity_key=PROOF_KEY,
             clock=lambda: NOW + timedelta(seconds=5),
         ).build(
+            proposal=proposal,
             evaluation=evaluation,
             ppmc_evaluation=ppmc_evaluation,
             identity=IDENTITY,
@@ -275,7 +278,7 @@ def test_agent_proof_authority_rejects_sql_plan_rebinding(
 def test_agent_proof_authority_rejects_same_plan_different_proposal_sql(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _, evaluation, ppmc_evaluation, state, grammar = _upstream(monkeypatch)
+    _, proposal, evaluation, ppmc_evaluation, state, grammar = _upstream(monkeypatch)
     same_plan_different_sql = SQL + " "
 
     with pytest.raises(
@@ -286,6 +289,7 @@ def test_agent_proof_authority_rejects_same_plan_different_proposal_sql(
             integrity_key=PROOF_KEY,
             clock=lambda: NOW + timedelta(seconds=5),
         ).build(
+            proposal=proposal,
             evaluation=evaluation,
             ppmc_evaluation=ppmc_evaluation,
             identity=IDENTITY,
