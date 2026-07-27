@@ -30,12 +30,16 @@ from toxicjoin.integrations.datahub_authority import read_only_settings_from_env
 from toxicjoin.models import ColumnRef, SensitivityCategory
 from toxicjoin.policy import PolicyEngine, load_policy
 from toxicjoin.proofs import compute_agent_ppmc_provenance_hmac
+from toxicjoin.proofs.ppmc_profile import (
+    PREEXECUTION_PPMC_BOUND,
+    PREEXECUTION_PPMC_MAX_STATES,
+)
 from toxicjoin.prospective.forbidden import build_forbidden_predicate_policy
 from toxicjoin.prospective.grammar import (
     build_future_action_grammar_context,
     instantiate_future_action_grammar,
 )
-from toxicjoin.prospective.ppmc import PpmcStatus, build_ppmc_search_config
+from toxicjoin.prospective.ppmc import PpmcStatus
 from toxicjoin.prospective.twin import build_disclosure_state
 
 NOW = datetime(2026, 7, 27, 7, 0, tzinfo=timezone.utc)
@@ -180,7 +184,6 @@ def _upstream(monkeypatch: pytest.MonkeyPatch):
         forbidden_policy=build_forbidden_predicate_policy(
             minimum_group_size=package_policy.minimum_group_size
         ),
-        config=build_ppmc_search_config(bound=3, max_states=128),
     )
     return snapshot, proposal, evaluation, ppmc_evaluation, state, grammar
 
@@ -235,7 +238,8 @@ def test_agent_ppmc_provenance_mints_proof_accepted_by_strict_execution(
 ) -> None:
     snapshot, proposal, evaluation, ppmc_evaluation, state, grammar = _upstream(monkeypatch)
     assert ppmc_evaluation.ppmc_result.status == PpmcStatus.NO_COUNTEREXAMPLE_WITHIN_BOUND
-    assert ppmc_evaluation.ppmc_result.bound == 3
+    assert ppmc_evaluation.ppmc_result.bound == PREEXECUTION_PPMC_BOUND
+    assert ppmc_evaluation.ppmc_result.max_states == PREEXECUTION_PPMC_MAX_STATES
 
     with bind_request_identity(IDENTITY):
         proof = _proof_authority().build(

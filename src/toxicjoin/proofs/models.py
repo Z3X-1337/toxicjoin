@@ -78,7 +78,7 @@ class AgentPpmcProofBinding(StrictModel):
     policy_decision_sha256: Sha256
     disclosure_state_sha256: Sha256
     grammar_sha256: Sha256
-    ppmc_execution_profile: Literal["p0-preexec-v1"] = PREEXECUTION_PPMC_PROFILE
+    ppmc_execution_profile: Literal["p0-preexec-v2"] = PREEXECUTION_PPMC_PROFILE
     ppmc_config_sha256: Sha256
     ppmc_forbidden_policy_sha256: Sha256
     ppmc_governance_binding_sha256: Sha256
@@ -138,7 +138,7 @@ class PreExecutionPrivacyProof(StrictModel):
     policy_sha256: Sha256
     policy_decision_sha256: Sha256
     grammar_sha256: Sha256
-    ppmc_execution_profile: Literal["p0-preexec-v1"] = PREEXECUTION_PPMC_PROFILE
+    ppmc_execution_profile: Literal["p0-preexec-v2"] = PREEXECUTION_PPMC_PROFILE
     ppmc_config_sha256: Sha256
     ppmc_forbidden_policy_sha256: Sha256
     ppmc_governance_binding_sha256: Sha256

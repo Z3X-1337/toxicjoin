@@ -154,13 +154,13 @@ def _reseal_outer_proof(
     )
 
 
-def test_proof_key_cannot_rebind_genuine_agent_result_to_stronger_ppmc_profile() -> None:
+def test_proof_key_cannot_rebind_genuine_agent_result_to_different_approved_ppmc_budget() -> None:
     genuine = _seal_with_agent_provenance()
-    stronger_config = build_ppmc_search_config(bound=4, max_states=100)
+    alternate_config = build_ppmc_search_config(bound=3, max_states=128)
     forged = _reseal_outer_proof(
         genuine,
-        ppmc_bound=4,
-        ppmc_config_sha256=stronger_config.config_sha256,
+        ppmc_max_states=128,
+        ppmc_config_sha256=alternate_config.config_sha256,
     )
 
     generic_verification = verify_preexecution_privacy_proof(
