@@ -18,7 +18,6 @@ from pydantic import ValidationError
 from toxicjoin.agent.ppmc_authority import TrustedAgentPpmcEvaluation
 from toxicjoin.agent.proposal_authority import TrustedAgentProposalEvaluation
 from toxicjoin.auth import RequestIdentity
-from toxicjoin.disclosure.twin import DisclosureState
 from toxicjoin.evidence.canonical import canonical_json_sha256
 from toxicjoin.policy import PolicyEngine, load_policy
 from toxicjoin.proofs.models import (
@@ -34,6 +33,7 @@ from toxicjoin.proofs.preexec import (
 )
 from toxicjoin.prospective.grammar import FutureActionGrammar
 from toxicjoin.prospective.ppmc import PpmcStatus
+from toxicjoin.prospective.twin import DisclosureState
 from toxicjoin.sql import analyze_sql
 
 
