@@ -21,6 +21,7 @@ from toxicjoin.proofs import (
     AgentPpmcProofBinding,
     PreExecutionPrivacyProof,
     compute_agent_ppmc_proof_binding_sha256,
+    compute_agent_ppmc_provenance_hmac,
     compute_preexecution_privacy_proof_hmac,
     compute_preexecution_privacy_proof_sha256,
 )
@@ -29,6 +30,7 @@ from toxicjoin.sql import analyze_sql
 
 AUTH_KEY = b"proof-bound-execution-auth-key-32-bytes!!"
 PROOF_KEY = b"proof-bound-proof-integrity-key-32-bytes!!"
+PROVENANCE_KEY = b"proof-bound-agent-provenance-key-32-bytes!!"
 NOW = 1_800_000_000.0
 NOW_DT = datetime.fromtimestamp(NOW, tz=timezone.utc)
 URN = "urn:li:dataset:(urn:li:dataPlatform:duckdb,toxicjoin.proof_auth,PROD)"
@@ -120,10 +122,21 @@ def _with_agent_provenance(proof: PreExecutionPrivacyProof) -> PreExecutionPriva
     provisional = AgentPpmcProofBinding.model_construct(
         **payload,
         binding_sha256="0" * 64,
+        authority_hmac_sha256="0" * 64,
+    )
+    binding_sha256 = compute_agent_ppmc_proof_binding_sha256(provisional)
+    unsigned = AgentPpmcProofBinding.model_construct(
+        **payload,
+        binding_sha256=binding_sha256,
+        authority_hmac_sha256="0" * 64,
     )
     provenance = AgentPpmcProofBinding(
         **payload,
-        binding_sha256=compute_agent_ppmc_proof_binding_sha256(provisional),
+        binding_sha256=binding_sha256,
+        authority_hmac_sha256=compute_agent_ppmc_provenance_hmac(
+            unsigned,
+            integrity_key=PROVENANCE_KEY,
+        ),
     )
     return proof.model_copy(update={"agent_ppmc_provenance": provenance})
 
@@ -188,6 +201,7 @@ def _authorizer() -> ProofBoundExecutionAuthorizer:
         context_resolver=resolver,
         policy_engine=engine,
         privacy_proof_integrity_key=PROOF_KEY,
+        agent_provenance_integrity_key=PROVENANCE_KEY,
         secret_key=AUTH_KEY,
         ttl_seconds=5,
         clock=lambda: NOW,
@@ -378,6 +392,20 @@ def test_proof_bound_authorizer_rejects_short_proof_key() -> None:
             context_resolver=resolver,
             policy_engine=engine,
             privacy_proof_integrity_key=b"too-short",
+            agent_provenance_integrity_key=PROVENANCE_KEY,
+            secret_key=AUTH_KEY,
+            clock=lambda: NOW,
+        )
+
+
+def test_proof_bound_authorizer_rejects_reused_agent_provenance_key() -> None:
+    resolver, engine, *_ = _runtime()
+    with pytest.raises(ValueError, match="must differ from privacy proof integrity key"):
+        ProofBoundExecutionAuthorizer(
+            context_resolver=resolver,
+            policy_engine=engine,
+            privacy_proof_integrity_key=PROOF_KEY,
+            agent_provenance_integrity_key=PROOF_KEY,
             secret_key=AUTH_KEY,
             clock=lambda: NOW,
         )
