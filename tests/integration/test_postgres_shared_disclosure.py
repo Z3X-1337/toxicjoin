@@ -7,7 +7,12 @@ import pytest
 
 from toxicjoin.auth import RequestIdentity
 from toxicjoin.demo import default_fixture_catalog
-from toxicjoin.disclosure import CompositionRule, DisclosureStateTopology, build_disclosure_event
+from toxicjoin.disclosure import (
+    CompositionRule,
+    DisclosureLedgerIntegrityError,
+    DisclosureStateTopology,
+    build_disclosure_event,
+)
 from toxicjoin.disclosure.postgres_ledger import PostgresDisclosureLedger
 from toxicjoin.models import ColumnRef
 from toxicjoin.sql import analyze_sql
@@ -62,10 +67,10 @@ def _sensitive_sql(literal: str) -> str:
     )
 
 
-def _ledger() -> PostgresDisclosureLedger:
+def _ledger(*, cohort_hmac_key: bytes = _COHORT_KEY) -> PostgresDisclosureLedger:
     return PostgresDisclosureLedger(
         _dsn(),
-        cohort_hmac_key=_COHORT_KEY,
+        cohort_hmac_key=cohort_hmac_key,
         schema=_SCHEMA,
         deployment_replica_count=2,
     )
@@ -126,3 +131,58 @@ def test_concurrent_postgres_replicas_serialize_same_privacy_scope() -> None:
     blocked = [decision for decision in results if not decision.allowed]
     assert len(blocked) == 1
     assert blocked[0].rule == CompositionRule.CUMULATIVE_VARIATION_BLOCK
+
+
+def test_commitment_claim_and_release_are_shared_across_replicas() -> None:
+    _reset_database()
+    replica_a = _ledger()
+    replica_b = _ledger()
+    sql = _sensitive_sql("alpha")
+    event = _event(sql, 21)
+
+    decision = replica_a.evaluate_and_commit(event, sql=sql)
+    assert decision.allowed is True
+    assert decision.commitment is not None
+    commitment = decision.commitment
+
+    verified = replica_b.verify_commitment(commitment, event, sql=sql)
+    assert verified.record_id == commitment.record_id
+
+    authorization_id = "tj_auth_" + "a" * 32
+    replica_b.claim_commitment(commitment, authorization_id)
+    replica_a.verify_authorization_claim(commitment, authorization_id)
+    replica_a.mark_released(commitment)
+
+    assert replica_b.release_state(commitment) == "RELEASED"
+    assert replica_b.verify_all() == 1
+
+
+def test_aborted_reservation_is_excluded_from_future_global_composition() -> None:
+    _reset_database()
+    replica_a = _ledger()
+    replica_b = _ledger()
+    sql_a = _sensitive_sql("alpha")
+    event_a = _event(sql_a, 31)
+
+    decision_a = replica_a.evaluate_and_commit(event_a, sql=sql_a)
+    assert decision_a.allowed is True
+    assert decision_a.commitment is not None
+    replica_b.mark_aborted(decision_a.commitment)
+
+    sql_b = _sensitive_sql("beta")
+    decision_b = replica_b.evaluate_and_commit(_event(sql_b, 32), sql=sql_b)
+
+    assert decision_b.allowed is True
+    assert decision_b.rule == CompositionRule.FIRST_PROTECTED_RELEASE
+    assert decision_b.prior_protected_count == 0
+
+
+def test_postgres_state_rejects_mismatched_cohort_key_across_replicas() -> None:
+    _reset_database()
+    _ledger()
+
+    with pytest.raises(
+        DisclosureLedgerIntegrityError,
+        match="cohort key does not match authoritative state",
+    ):
+        _ledger(cohort_hmac_key=b"x" * 32)
