@@ -48,9 +48,11 @@ def check_prospective_privacy(
     local_oracle: LocalAdmissibilityOracle,
     config: PpmcSearchConfig | None = None,
 ) -> PpmcSearchResult:
-    """Run PPMC only after the Future Action Grammar passes the exact-type trust gate."""
+    """Run PPMC only after state, governance, and grammar exact-type gates pass."""
 
     try:
+        _require_exact_disclosure_state_type(initial_state)
+        _require_exact_governance_binding_type(governance_binding)
         _require_exact_future_action_grammar_types(grammar)
     except (TypeError, ValueError, AttributeError):
         raise PpmcError("PPMC trusted input failed canonical revalidation") from None
@@ -62,6 +64,16 @@ def check_prospective_privacy(
         local_oracle=local_oracle,
         config=config,
     )
+
+
+def _require_exact_disclosure_state_type(state: DisclosureState) -> None:
+    if type(state) is not DisclosureState:
+        raise TypeError("PPMC initial state must use the exact DisclosureState type")
+
+
+def _require_exact_governance_binding_type(binding: GovernanceTrustBinding | None) -> None:
+    if binding is not None and type(binding) is not GovernanceTrustBinding:
+        raise TypeError("PPMC governance binding must use the exact GovernanceTrustBinding type")
 
 
 def _require_exact_future_action_grammar_types(grammar: FutureActionGrammar) -> None:
