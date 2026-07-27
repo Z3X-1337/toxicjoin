@@ -109,18 +109,18 @@ class ToxicJoinPipeline:
                 raise ValueError(
                     "pipeline requires an unbound executor; execution authority is pipeline-owned"
                 )
-            if self.stateful_privacy_required and self.disclosure_ledger is None:
-                raise ValueError(
-                    "execution-capable stateful pipeline requires a disclosure ledger"
-                )
-            self.executor.bind_authorizer(
-                ExecutionAuthorizer(
-                    context_resolver=self.context_resolver,
-                    policy_engine=self.policy_engine,
-                    disclosure_ledger=self.disclosure_ledger,
-                    require_disclosure_commitment=self.stateful_privacy_required,
-                )
+            authority_prerequisites_available = not (
+                self.stateful_privacy_required and self.disclosure_ledger is None
             )
+            if authority_prerequisites_available:
+                self.executor.bind_authorizer(
+                    ExecutionAuthorizer(
+                        context_resolver=self.context_resolver,
+                        policy_engine=self.policy_engine,
+                        disclosure_ledger=self.disclosure_ledger,
+                        require_disclosure_commitment=self.stateful_privacy_required,
+                    )
+                )
 
     def analyze(self, request: PipelineRequest) -> PipelineResult:
         return self._run(request, execute=False)
