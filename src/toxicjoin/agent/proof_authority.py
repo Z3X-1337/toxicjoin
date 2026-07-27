@@ -248,6 +248,7 @@ class DataHubAgentPreExecutionProofAuthority:
             "agent_evaluation_sha256": trusted_evaluation.evaluation_sha256,
             "agent_ppmc_evaluation_sha256": trusted_ppmc.evaluation_sha256,
             "f6_clearance_sha256": trusted_ppmc.f6_clearance_sha256,
+            "request_identity_sha256": base_proof.request_identity_sha256,
             "sql_sha256": base_proof.sql_sha256,
             "query_plan_sha256": base_proof.query_plan_sha256,
             "task_purpose_sha256": base_proof.task_purpose_sha256,
