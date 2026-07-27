@@ -265,8 +265,15 @@ class DataHubAgentPreExecutionProofAuthority:
             "policy_decision_sha256": base_proof.policy_decision_sha256,
             "disclosure_state_sha256": base_proof.disclosure_state_sha256,
             "grammar_sha256": base_proof.grammar_sha256,
+            "ppmc_execution_profile": base_proof.ppmc_execution_profile,
+            "ppmc_config_sha256": base_proof.ppmc_config_sha256,
+            "ppmc_forbidden_policy_sha256": base_proof.ppmc_forbidden_policy_sha256,
             "ppmc_governance_binding_sha256": base_proof.ppmc_governance_binding_sha256,
+            "ppmc_search_transcript_sha256": base_proof.ppmc_search_transcript_sha256,
             "ppmc_result_sha256": base_proof.ppmc_result_sha256,
+            "ppmc_status": base_proof.ppmc_status,
+            "ppmc_bound": base_proof.ppmc_bound,
+            "ppmc_max_states": base_proof.ppmc_max_states,
             "evidence_expires_at": trusted_ppmc.evidence_expires_at,
         }
         provisional_binding = AgentPpmcProofBinding.model_construct(
