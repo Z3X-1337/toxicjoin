@@ -15,6 +15,7 @@ from toxicjoin.proofs import (
 )
 from toxicjoin.proofs.agent_provenance import (
     AgentProofProvenanceError,
+    compute_agent_bound_proof_core_sha256,
     require_agent_ppmc_provenance,
 )
 from toxicjoin.prospective.ppmc import build_ppmc_search_config
@@ -31,6 +32,7 @@ def _binding_payload(proof: PreExecutionPrivacyProof) -> dict:
         "agent_evaluation_sha256": "2" * 64,
         "agent_ppmc_evaluation_sha256": "3" * 64,
         "f6_clearance_sha256": "4" * 64,
+        "proof_core_sha256": compute_agent_bound_proof_core_sha256(proof),
         "request_identity_sha256": proof.request_identity_sha256,
         "sql_sha256": proof.sql_sha256,
         "query_plan_sha256": proof.query_plan_sha256,
@@ -54,7 +56,7 @@ def _binding_payload(proof: PreExecutionPrivacyProof) -> dict:
         "ppmc_status": proof.ppmc_status,
         "ppmc_bound": proof.ppmc_bound,
         "ppmc_max_states": proof.ppmc_max_states,
-        "evidence_expires_at": proof.expires_at,
+        "evidence_expires_at": proof.expires_at + timedelta(seconds=20),
     }
 
 
@@ -128,13 +130,13 @@ def _seal_with_agent_provenance() -> PreExecutionPrivacyProof:
     )
 
 
-def test_proof_key_cannot_rebind_genuine_agent_result_to_stronger_ppmc_profile() -> None:
-    genuine = _seal_with_agent_provenance()
-    stronger_config = build_ppmc_search_config(bound=4, max_states=100)
-    unsigned = genuine.model_copy(
+def _reseal_outer_proof(
+    proof: PreExecutionPrivacyProof,
+    **updates,
+) -> PreExecutionPrivacyProof:
+    unsigned = proof.model_copy(
         update={
-            "ppmc_bound": 4,
-            "ppmc_config_sha256": stronger_config.config_sha256,
+            **updates,
             "privacy_proof_sha256": "0" * 64,
             "integrity_hmac_sha256": "0" * 64,
         }
@@ -142,13 +144,47 @@ def test_proof_key_cannot_rebind_genuine_agent_result_to_stronger_ppmc_profile()
     committed = unsigned.model_copy(
         update={"privacy_proof_sha256": compute_preexecution_privacy_proof_sha256(unsigned)}
     )
-    forged = committed.model_copy(
+    return committed.model_copy(
         update={
             "integrity_hmac_sha256": compute_preexecution_privacy_proof_hmac(
                 committed,
                 integrity_key=PROOF_KEY,
             )
         }
+    )
+
+
+def test_proof_key_cannot_rebind_genuine_agent_result_to_stronger_ppmc_profile() -> None:
+    genuine = _seal_with_agent_provenance()
+    stronger_config = build_ppmc_search_config(bound=4, max_states=100)
+    forged = _reseal_outer_proof(
+        genuine,
+        ppmc_bound=4,
+        ppmc_config_sha256=stronger_config.config_sha256,
+    )
+
+    generic_verification = verify_preexecution_privacy_proof(
+        forged,
+        integrity_key=PROOF_KEY,
+        now=NOW,
+    )
+    assert generic_verification.valid is True
+
+    with pytest.raises(
+        AgentProofProvenanceError,
+        match="AUTH_PRIVACY_PROOF_AGENT_PROVENANCE_INVALID",
+    ):
+        require_agent_ppmc_provenance(
+            forged,
+            integrity_key=PROVENANCE_KEY,
+        )
+
+
+def test_proof_key_cannot_extend_genuine_agent_proof_lifetime() -> None:
+    genuine = _seal_with_agent_provenance()
+    forged = _reseal_outer_proof(
+        genuine,
+        expires_at=genuine.expires_at + timedelta(seconds=5),
     )
 
     generic_verification = verify_preexecution_privacy_proof(
