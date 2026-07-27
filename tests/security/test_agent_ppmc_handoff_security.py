@@ -118,6 +118,7 @@ def test_ppmc_handoff_authority_exposes_security_owned_check_not_raw_result_buil
     assert "initial_state" in parameters
     assert "grammar" in parameters
     assert "forbidden_policy" in parameters
+    assert "config" not in parameters
     assert "provenance_integrity_key" not in parameters
     assert not hasattr(authority, "build")
 
