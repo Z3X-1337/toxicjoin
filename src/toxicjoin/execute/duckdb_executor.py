@@ -81,7 +81,7 @@ class DuckDBExecutor:
         return self._authorizer is not None
 
     def bind_authorizer(self, authorizer: ExecutionAuthorizer) -> None:
-        """Bind one execution authority; rebinding to a different authority is forbidden."""
+        """Bind one bootstrap execution authority; later rebinding is forbidden."""
 
         with self._authority_lock:
             if self._authorizer is not None and self._authorizer is not authorizer:
@@ -98,17 +98,16 @@ class DuckDBExecutor:
         disclosure_ledger: DisclosureLedger | None = None,
         require_disclosure_commitment: bool = False,
     ) -> None:
-        """Bind verifier authority once and reject later authority substitution."""
+        """Validate the pre-bound authority and reject execution-time authority creation.
+
+        The historical method name is retained for verifier compatibility, but this method
+        no longer creates an ``ExecutionAuthorizer``. Runtime construction must bind exactly
+        one authorizer through ``bind_authorizer`` before verification begins.
+        """
 
         with self._authority_lock:
             if self._authorizer is None:
-                self._authorizer = ExecutionAuthorizer(
-                    context_resolver=context_resolver,
-                    policy_engine=policy_engine,
-                    disclosure_ledger=disclosure_ledger,
-                    require_disclosure_commitment=require_disclosure_commitment,
-                )
-                return
+                raise ValueError("executor has no execution authorizer bound")
             if (
                 self._authorizer.context_resolver is not context_resolver
                 or self._authorizer.policy_engine is not policy_engine

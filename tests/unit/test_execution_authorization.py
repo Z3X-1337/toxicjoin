@@ -192,10 +192,20 @@ def test_policy_drift_invalidates_authorization() -> None:
         )
 
 
-def test_executor_rejects_authority_substitution() -> None:
+def test_executor_requires_prebound_authority_and_rejects_substitution() -> None:
     executor = DuckDBExecutor("unused.duckdb")
     resolver = _resolver()
     engine = _engine()
+
+    with pytest.raises(ValueError, match="no execution authorizer bound"):
+        executor.bind_authority(context_resolver=resolver, policy_engine=engine)
+
+    authorizer = ExecutionAuthorizer(
+        context_resolver=resolver,
+        policy_engine=engine,
+        secret_key=SECRET,
+    )
+    executor.bind_authorizer(authorizer)
     executor.bind_authority(context_resolver=resolver, policy_engine=engine)
 
     with pytest.raises(ValueError, match="does not match verifier authority"):

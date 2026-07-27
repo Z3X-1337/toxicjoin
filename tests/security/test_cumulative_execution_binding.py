@@ -316,6 +316,15 @@ def test_executor_rejects_disclosure_authority_substitution(tmp_path: Path) -> N
     first_ledger = DisclosureLedger(tmp_path / "first.sqlite3")
     second_ledger = DisclosureLedger(tmp_path / "second.sqlite3")
     executor = DuckDBExecutor(database)
+    executor.bind_authorizer(
+        ExecutionAuthorizer(
+            context_resolver=resolver,
+            policy_engine=policy,
+            disclosure_ledger=first_ledger,
+            require_disclosure_commitment=True,
+            secret_key=b"disclosure-authority-binding-test-key!!",
+        )
+    )
 
     executor.bind_authority(
         context_resolver=resolver,
