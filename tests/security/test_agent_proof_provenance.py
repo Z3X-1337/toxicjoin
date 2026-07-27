@@ -128,8 +128,8 @@ def _generic_sealed_proof() -> PreExecutionPrivacyProof:
     )
 
 
-def _resigned_with_rebound_provenance(proof: PreExecutionPrivacyProof) -> PreExecutionPrivacyProof:
-    binding_payload = {
+def _binding_payload(proof: PreExecutionPrivacyProof, *, ppmc_result_sha256: str) -> dict:
+    return {
         "agent_proposal_sha256": "1" * 64,
         "agent_evaluation_sha256": "2" * 64,
         "agent_ppmc_evaluation_sha256": "3" * 64,
@@ -148,16 +148,27 @@ def _resigned_with_rebound_provenance(proof: PreExecutionPrivacyProof) -> PreExe
         "disclosure_state_sha256": proof.disclosure_state_sha256,
         "grammar_sha256": proof.grammar_sha256,
         "ppmc_governance_binding_sha256": proof.ppmc_governance_binding_sha256,
-        "ppmc_result_sha256": "e" * 64,
+        "ppmc_result_sha256": ppmc_result_sha256,
         "evidence_expires_at": proof.expires_at,
     }
+
+
+def _reseal_with_provenance(
+    proof: PreExecutionPrivacyProof,
+    *,
+    ppmc_result_sha256: str,
+    authority_hmac_sha256: str = "f" * 64,
+) -> PreExecutionPrivacyProof:
+    binding_payload = _binding_payload(proof, ppmc_result_sha256=ppmc_result_sha256)
     provisional = AgentPpmcProofBinding.model_construct(
         **binding_payload,
         binding_sha256="0" * 64,
+        authority_hmac_sha256=authority_hmac_sha256,
     )
-    provenance = AgentPpmcProofBinding(
+    provenance = AgentPpmcProofBinding.model_construct(
         **binding_payload,
         binding_sha256=compute_agent_ppmc_proof_binding_sha256(provisional),
+        authority_hmac_sha256=authority_hmac_sha256,
     )
     unsigned = proof.model_copy(
         update={
@@ -214,7 +225,7 @@ def test_public_proof_bound_authorizer_rejects_generic_proof_without_agent_prove
 def test_public_proof_bound_authorizer_rejects_hmac_valid_rebound_agent_provenance() -> None:
     authorizer = _authorizer()
     generic = _generic_sealed_proof()
-    forged = _resigned_with_rebound_provenance(generic)
+    forged = _reseal_with_provenance(generic, ppmc_result_sha256="e" * 64)
 
     assert forged.integrity_hmac_sha256 != generic.integrity_hmac_sha256
     assert forged.agent_ppmc_provenance is not None
@@ -224,6 +235,32 @@ def test_public_proof_bound_authorizer_rejects_hmac_valid_rebound_agent_provenan
         with pytest.raises(
             ExecutionAuthorizationError,
             match="AUTH_PRIVACY_PROOF_AGENT_PROVENANCE_INVALID",
+        ):
+            authorizer.issue(
+                SQL,
+                task_purpose=TASK,
+                subject_key=SUBJECT,
+                privacy_proof=forged,
+                expected_governance_binding=authorizer.context_resolver.current_governance_binding(),
+            )
+
+
+def test_generic_proof_key_cannot_self_mint_agent_provenance() -> None:
+    authorizer = _authorizer()
+    generic = _generic_sealed_proof()
+    forged = _reseal_with_provenance(
+        generic,
+        ppmc_result_sha256=generic.ppmc_result_sha256,
+        authority_hmac_sha256="f" * 64,
+    )
+
+    assert forged.agent_ppmc_provenance is not None
+    assert forged.agent_ppmc_provenance.ppmc_result_sha256 == forged.ppmc_result_sha256
+
+    with bind_request_identity(IDENTITY):
+        with pytest.raises(
+            ExecutionAuthorizationError,
+            match="AUTH_PRIVACY_PROOF_AGENT_PROVENANCE_UNTRUSTED",
         ):
             authorizer.issue(
                 SQL,
