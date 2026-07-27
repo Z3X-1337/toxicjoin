@@ -25,6 +25,7 @@ from toxicjoin.proofs import (
     compute_preexecution_privacy_proof_hmac,
     compute_preexecution_privacy_proof_sha256,
 )
+from toxicjoin.proofs.agent_provenance import compute_agent_bound_proof_core_sha256
 from toxicjoin.prospective.ppmc import build_ppmc_search_config
 from toxicjoin.sql import analyze_sql
 
@@ -102,6 +103,7 @@ def _with_agent_provenance(proof: PreExecutionPrivacyProof) -> PreExecutionPriva
         "agent_evaluation_sha256": "2" * 64,
         "agent_ppmc_evaluation_sha256": "3" * 64,
         "f6_clearance_sha256": "4" * 64,
+        "proof_core_sha256": compute_agent_bound_proof_core_sha256(proof),
         "request_identity_sha256": proof.request_identity_sha256,
         "sql_sha256": proof.sql_sha256,
         "query_plan_sha256": proof.query_plan_sha256,
@@ -116,8 +118,15 @@ def _with_agent_provenance(proof: PreExecutionPrivacyProof) -> PreExecutionPriva
         "policy_decision_sha256": proof.policy_decision_sha256,
         "disclosure_state_sha256": proof.disclosure_state_sha256,
         "grammar_sha256": proof.grammar_sha256,
+        "ppmc_execution_profile": proof.ppmc_execution_profile,
+        "ppmc_config_sha256": proof.ppmc_config_sha256,
+        "ppmc_forbidden_policy_sha256": proof.ppmc_forbidden_policy_sha256,
         "ppmc_governance_binding_sha256": proof.ppmc_governance_binding_sha256,
+        "ppmc_search_transcript_sha256": proof.ppmc_search_transcript_sha256,
         "ppmc_result_sha256": proof.ppmc_result_sha256,
+        "ppmc_status": proof.ppmc_status,
+        "ppmc_bound": proof.ppmc_bound,
+        "ppmc_max_states": proof.ppmc_max_states,
         "evidence_expires_at": proof.expires_at,
     }
     provisional = AgentPpmcProofBinding.model_construct(
