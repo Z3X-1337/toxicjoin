@@ -20,7 +20,11 @@ from pydantic import Field
 
 from toxicjoin.agent.f6_governance import F6GovernanceClearance
 from toxicjoin.agent.governance_trust import GovernanceTrustBinding as DataHubGovernanceTrustBinding
-from toxicjoin.agent.ppmc_authority import DataHubAgentPpmcAuthority, TrustedAgentPpmcEvaluation
+from toxicjoin.agent.ppmc_authority import (
+    AgentPpmcAuthorityError,
+    DataHubAgentPpmcAuthority,
+    TrustedAgentPpmcEvaluation,
+)
 from toxicjoin.agent.proposal_authority import TrustedAgentProposalEvaluation
 from toxicjoin.evidence.canonical import canonical_json_sha256
 from toxicjoin.models import StrictModel
@@ -129,6 +133,9 @@ class DataHubAgentPpmcHandoffAuthority:
                 ppmc_evaluation,
                 integrity_key=self._integrity_key,
             )
+        except AgentPpmcAuthorityError as error:
+            stable_code = error.code
+            _detach_exception(error)
         except AgentPpmcEvaluationCapsuleError as error:
             stable_code = error.code
             _detach_exception(error)
@@ -190,10 +197,9 @@ def require_agent_ppmc_evaluation_capsule(
     """Return the exact PPMC evaluation only after full handoff authentication/alignment."""
 
     key = _validated_key(integrity_key)
-    _require_exact_capsule_types(capsule)
-    evaluation = capsule.evaluation
-
     try:
+        _require_exact_capsule_types(capsule)
+        evaluation = capsule.evaluation
         expected_evaluation_sha256 = canonical_json_sha256(
             evaluation.model_dump(mode="json", exclude={"evaluation_sha256"})
         )
@@ -202,7 +208,7 @@ def require_agent_ppmc_evaluation_capsule(
             capsule,
             integrity_key=key,
         )
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, AttributeError):
         raise AgentPpmcEvaluationCapsuleError("AGENT_PPMC_HANDOFF_INVALID") from None
 
     if not hmac.compare_digest(expected_evaluation_sha256, evaluation.evaluation_sha256):
