@@ -5,8 +5,8 @@ This evaluation is intentionally deterministic. It uses the same normalized
 separate live DataHub evidence proves that real DataHub metadata is normalized
 into that contract.
 
-The SQL, warehouse data, policy, executor, and subject key stay fixed. Only the
-governance state changes. Complete governance must permit the flagship
+The SQL, warehouse data, policy, executor configuration, and subject key stay fixed.
+Only the governance state changes. Complete governance must permit the flagship
 REWRITE -> ALLOW flow; missing or unclassified governance must fail closed
 before execution.
 """
@@ -85,12 +85,11 @@ def run_governance_dependency_evaluation(
         root = Path(temporary)
         database = root / "governance-proof.duckdb"
         seed_summary = seed_database(database)
-        executor = DuckDBExecutor(database, max_preview_rows=100, timeout_seconds=5.0)
 
         cases = (
             _run_case(
                 root=root,
-                executor=executor,
+                database=database,
                 case_id="complete-governance",
                 governance_change="none; canonical governed context",
                 catalog=_catalog_variant("complete"),
@@ -101,7 +100,7 @@ def run_governance_dependency_evaluation(
             ),
             _run_case(
                 root=root,
-                executor=executor,
+                database=database,
                 case_id="unclassified-sensitive-field",
                 governance_change=(
                     "retention_scores.churn_score has no governed sensitivity classification"
@@ -114,7 +113,7 @@ def run_governance_dependency_evaluation(
             ),
             _run_case(
                 root=root,
-                executor=executor,
+                database=database,
                 case_id="missing-sensitive-field",
                 governance_change=(
                     "retention_scores.churn_score is absent from governed schema metadata"
@@ -127,7 +126,7 @@ def run_governance_dependency_evaluation(
             ),
             _run_case(
                 root=root,
-                executor=executor,
+                database=database,
                 case_id="missing-governed-dataset",
                 governance_change=(
                     "retention_scores is absent from governed dataset metadata"
@@ -177,7 +176,7 @@ def run_governance_dependency_evaluation(
 def _run_case(
     *,
     root: Path,
-    executor: DuckDBExecutor,
+    database: Path,
     case_id: str,
     governance_change: str,
     catalog: FixtureCatalog,
@@ -191,7 +190,7 @@ def _run_case(
         policy_engine=PolicyEngine(load_policy()),
         receipt_store=ReceiptStore(root / "receipts" / case_id),
         mode=ReceiptMode.FIXTURE,
-        executor=executor,
+        executor=DuckDBExecutor(database, max_preview_rows=100, timeout_seconds=5.0),
         include_sanitized_sql=False,
     )
     result = pipeline.execute_safe(
@@ -312,7 +311,7 @@ def _markdown(report: GovernanceDependencyReport) -> str:
         f"**Policy version:** `{report.policy_version}`",
         f"**Unsafe effective allows under degraded governance:** {report.unsafe_effective_allow_count}",
         "",
-        "The SQL, synthetic warehouse, subject key, policy, and executor are fixed. Only the normalized governance state changes.",
+        "The SQL, synthetic warehouse, subject key, policy, and executor configuration are fixed. Only the normalized governance state changes.",
         "",
         "| Governance state | Initial | Effective | Executed? | Result |",
         "|---|---:|---:|---:|---:|",
