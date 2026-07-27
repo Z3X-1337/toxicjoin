@@ -2,65 +2,111 @@
 
 > DataHub-grounded compositional privacy firewall for AI data agents.
 
-ToxicJoin evaluates proposed analytical SQL **before execution**, resolves governed metadata and physical lineage from DataHub, and returns one deterministic outcome:
+ToxicJoin evaluates proposed analytical SQL **before execution**, resolves governed metadata and physical lineage, and returns one deterministic outcome:
 
 - **ALLOW** — execute through the hardened read-only path.
 - **REWRITE** — generate one constrained safer query, then parse, ground, and evaluate it again.
 - **BLOCK** — stop before DuckDB is called.
 
-The LLM/agent never owns the authorization decision. Released receipts exclude raw result rows and are protected by both a canonical content SHA-256 and keyed HMAC-SHA256 authenticity.
+The LLM/agent never owns the authorization decision. Released receipts exclude raw result rows and are protected by a canonical content SHA-256 and keyed HMAC-SHA256 authenticity.
 
 ToxicJoin was built for **Build with DataHub: The Agent Hackathon**, targeting **Agents That Do Real Work**.
 
+## Evidence status
+
+The repository has resumed vNext development after the earlier submission-candidate freeze. Current repository identity is determined by Git and, in the release workflow, by machine-generated evidence; this README intentionally does **not** hard-code a mutable `main` HEAD as current release authority.
+
+The evidence set is split into two classes:
+
+- **Current hardening evidence** — exact-revision validation produced during the reopened vNext hardening work.
+- **Historical pre-vNext evidence** — retained release, DataHub, benchmark, and black-box artifacts from the earlier PR #68/#70 candidate. Those artifacts remain useful provenance, but their historical SHAs are not current repository identity.
+
+The public Vercel site remains a clearly labeled **Deterministic Replay**. Phase 0 revalidated it as available and functional, while also proving that its source/materialization commits are diverged historical lineages rather than current-`main` release provenance. See [`docs/evidence/hosted-replay.md`](docs/evidence/hosted-replay.md).
+
 ## Judge quick path
 
-1. **See the product immediately:** https://toxicjoin-replay.vercel.app/
+1. **See the interface immediately:** https://toxicjoin-replay.vercel.app/
    - Explicitly labeled **Deterministic Replay**.
-   - It is not represented as live DuckDB execution or a live DataHub mutation.
+   - It is not represented as live DuckDB execution, live DataHub mutation, or current-`main` release evidence.
 2. **Run the executable path:** [`docs/judge-testing.md`](docs/judge-testing.md).
 3. **Inspect sample outputs:** [`examples/`](examples/README.md).
-4. **Inspect the authoritative final release index:** [`docs/evidence/release-candidate.md`](docs/evidence/release-candidate.md).
-5. **Inspect the final exact-head black-box validation:** [`docs/evidence/final-security-blackbox.md`](docs/evidence/final-security-blackbox.md).
-6. **Inspect the final real DataHub OSS + MCP proof:** [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md).
+4. **Inspect retained historical release evidence:** [`docs/evidence/release-candidate.md`](docs/evidence/release-candidate.md).
+5. **Inspect the retained historical exact-image black-box evidence:** [`docs/evidence/final-security-blackbox.md`](docs/evidence/final-security-blackbox.md).
+6. **Inspect the retained real DataHub OSS + MCP proof:** [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md).
 
 The shortest proof chain is:
 
 ```text
 proposed SQL
-  -> DataHub-governed context + physical lineage
+  -> governed context + physical lineage
   -> deterministic ALLOW / REWRITE / BLOCK
   -> safe execution only after effective ALLOW
   -> independent verification
   -> sanitized SHA-256 + HMAC-authenticated receipt
-  -> DataHub Decision write-back
-  -> fresh MCP process reads the Decision back
+  -> bounded DataHub Decision write-back path
+  -> fresh read-side verification
 ```
 
-## Final release identity
+## Current hardening evidence
 
-Current judge-facing `main` HEAD after the documentation/evidence synchronization in PR #70:
+Phase 0 established fresh evidence against exact repository state `25a18b872d21ed91abdec3ad1893c07b5f424621` before Phase 1 documentation cleanup began.
+
+### Exact-current-main security validation
+
+Validation-only PR #99 built the production image from an isolated checkout of that exact candidate revision. Validation-branch code was not copied into the candidate image.
+
+Result:
+
+- **24/24 external HTTP/Docker security probes PASS**;
+- **34/34 candidate-internal vNext security tests PASS**;
+- zero external probe failures;
+- zero credential hits in the sanitized log scan;
+- zero traceback hits;
+- zero internal source-path leakage hits.
+
+The external coverage includes container hardening, restricted HTTP surface, TrustedHost enforcement, authentication and session validation, scope separation, request limits, fail-closed mutation and sensitive composition, legitimate safe execution, receipt ownership/integrity/file permissions, rate limiting, and HTTP leakage checks.
+
+The vNext proof/provenance tests are deliberately classified as **candidate-internal**, not HTTP black-box evidence. The current product HTTP surface does not expose a separate Agent proof/provenance endpoint, and the default executor authority path has not yet been represented as a completed strict proof-bound runtime migration.
+
+### Full-history secret scan
+
+The Phase 0 full-history Gitleaks gate scanned the repository's complete Git history and refs with a pinned scanner/archive digest. The accepted run covered **1,371 commits** and **96 refs** with **0 findings**. Raw scanner output was not uploaded; only sanitized machine-readable evidence was retained.
+
+### Hosted replay freshness
+
+Validation-only PR #100 independently audited the deployed replay without redeploying it. The replay remained functional on desktop and mobile, and its immutable JavaScript/CSS bytes matched retained repository assets, but its provenance was classified as:
+
+```text
+HISTORICAL_VERIFIED_DIVERGED_LINEAGE_WITH_PROVENANCE_SHAPE_DRIFT
+```
+
+That classification is intentional: the public replay is useful judge-facing historical evidence, not current-`main` release identity.
+
+## Historical pre-vNext release provenance
+
+The earlier submission-candidate evidence is preserved, not discarded.
+
+Historical documentation/evidence synchronization head from PR #70:
 
 ```text
 e1192edc2deb961ad9d85187ba2985f82296ed53
 ```
 
-Frozen runtime merge from PR #68:
+Historical runtime merge from PR #68:
 
 ```text
 ee4991a93070c148e41dd158c952d5f1e9a6ed2c
 ```
 
-Exact final security-remediation runtime head validated before landing:
+Historical security-remediation runtime head validated before that landing:
 
 ```text
 536c37c34de7b36495d33f63095585f72e5f4b46
 ```
 
-PR #68 merged the exact validated runtime head into `main`; its merge commit introduced no file-tree difference relative to that runtime head. PR #70 landed afterward and changed only judge-facing README/documentation/evidence. It did **not** change runtime source, policy, parser, rewriter, executor, verifier, authentication, disclosure implementation, dependencies, Docker runtime, or workflow definitions. Therefore `e1192edc…` is the current judge-facing repository HEAD, while `536c37c…` remains the exact security-tested runtime provenance.
+These SHAs identify the retained pre-vNext evidence chain only. They must not be interpreted as the repository's current HEAD.
 
-Deterministic policy version: `0.2.0`.
-
-The repository is under **technical freeze**: no feature, refactor, dependency, or policy change is authorized before submission unless a proven release blocker requires reopening the candidate.
+Deterministic policy version remains `0.2.0`.
 
 ## What problem ToxicJoin solves
 
@@ -99,17 +145,15 @@ A separate individual-level composition of pseudonymous identity, quasi-identifi
 
 ToxicJoin also protects against disclosure that appears across multiple requests rather than inside one query.
 
-Without a trusted warehouse snapshot/version identity, the final policy permits at most one new protected release in a privacy scope. A later protected release fails closed even when it appears semantically identical, because the underlying warehouse state may have changed and enabled differencing. Same-receipt idempotency is handled separately.
+Without a trusted warehouse snapshot/version identity, the policy permits at most one new protected release in a privacy scope. A later protected release fails closed even when it appears semantically identical, because the underlying warehouse state may have changed and enabled differencing. Same-receipt idempotency is handled separately.
 
 This is intentionally conservative. A production evolution can bind disclosure history to a trusted warehouse snapshot identity so legitimate same-snapshot replays can be distinguished from releases against changed data.
 
-## Real DataHub integration — final security head
+## Retained real DataHub integration evidence
 
-DataHub is on the authorization path; it is not decorative metadata.
+DataHub is on the governed authorization path; it is not decorative metadata.
 
-The exact final security head `536c37c…` passed a real DataHub OSS + official MCP gate in GitHub Actions run `30143510876`.
-
-The verified graph contains:
+The historical security head `536c37c…` passed a real DataHub OSS + official MCP gate in GitHub Actions run `30143510876`. That exact historical graph contained:
 
 - **5 datasets**;
 - **19 governed fields**;
@@ -117,7 +161,7 @@ The verified graph contains:
 - **7 glossary terms**;
 - **4 lineage writes**.
 
-The MCP proof uses three separated processes:
+The retained MCP proof uses separated processes:
 
 ```text
 read-only MCP child
@@ -132,9 +176,7 @@ fresh read-only MCP child
   -> persisted Decision independently read back
 ```
 
-The official MCP server is pinned as `mcp-server-datahub==0.6.0`. In that version, `save_document` is registered inside a broader upstream mutation path. ToxicJoin therefore records the raw server inventory and places a mandatory allowlist transport in front of the writer. A broad raw upstream inventory is documented dependency behavior; a broad **effective ToxicJoin writer inventory** is treated as a security failure.
-
-The final exact-head spike reports three upstream lineage relationships, two lineage-bound fields, six normalized lineage sources, zero unclassified lineage sources, and independent Decision read-back.
+The historical evidence pinned `mcp-server-datahub==0.6.0`. In that version, `save_document` is registered inside a broader upstream mutation path. ToxicJoin records the raw server inventory and places a mandatory allowlist transport in front of the writer. A broad raw upstream inventory is documented dependency behavior; a broad **effective ToxicJoin writer inventory** is treated as a security failure.
 
 See [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md).
 
@@ -144,11 +186,11 @@ The repository includes a git-backed **Compositional Risk Review** DataHub Agent
 
 [`skills/compositional-risk-review/SKILL.md`](skills/compositional-risk-review/SKILL.md)
 
-A separate development-channel Agent Registry proof verifies the relationship between the ToxicJoin agent, the reusable skill, DataHub MCP tool API entities, and the five governed ToxicJoin datasets. The registry preview is deliberately isolated from the stable enforcement path.
+A separate Agent Registry proof verifies the relationship between the ToxicJoin agent, the reusable skill, DataHub MCP tool API entities, and the governed ToxicJoin datasets. The registry path remains deliberately separated from the stable enforcement path.
 
-## Final measured evidence
+## Retained historical measured evidence
 
-The exact security-remediation head passed the full release/security gate set:
+The historical security-remediation head passed the release/security gate set recorded in the retained evidence:
 
 | Gate | Run | Result |
 |---|---:|---:|
@@ -160,13 +202,13 @@ The exact security-remediation head passed the full release/security gate set:
 | Compositional Ablation Evidence | `30143510871` | PASS |
 | Disclosure Sequence Evidence | `30143510867` | PASS |
 | Live DataHub Evidence | `30143510876` | PASS |
-| Independent final security-head black-box pentest | `30145592349` | **24/24 PASS** |
+| Independent historical security-head black-box pentest | `30145592349` | **24/24 PASS** |
 
-Python 3.12 pytest artifact: **309 passed**, with one upstream framework deprecation warning only.
+The historical Python 3.12 pytest artifact recorded **309 passed**, with one upstream framework deprecation warning only.
 
 ### Balanced 30-case benchmark
 
-Final exact-head artifact:
+The retained deterministic regression corpus contains:
 
 - 30 cases: 10 ALLOW / 10 REWRITE / 10 BLOCK;
 - 30/30 expected initial decisions;
@@ -178,21 +220,21 @@ Final exact-head artifact:
 - four rewrite paths failed closed;
 - 16 verified executions.
 
-This is explicitly a deterministic regression corpus for the supported SQL/policy profile, not a universal accuracy claim.
+This is a deterministic regression corpus for the supported SQL/policy profile, not a universal accuracy claim.
 
 See [`docs/evidence/benchmark.md`](docs/evidence/benchmark.md).
 
 ### Adversarial and causal evidence
 
-The adversarial mutation gate covers 144 valid SQL mutations across known-unsafe composition families. The final exact-head run remained fully fail-closed with zero unsafe executions.
+The retained adversarial mutation gate covers 144 valid SQL mutations across known-unsafe composition families. The recorded exact-head run remained fully fail-closed with zero unsafe executions.
 
 The compositional ablation gate removes only the targeted cross-column interaction while preserving controls, isolating the causal contribution of the compositional rule instead of presenting a competitor benchmark.
 
 See [`docs/evidence/adversarial-mutations.md`](docs/evidence/adversarial-mutations.md) and [`docs/evidence/compositional-ablation.md`](docs/evidence/compositional-ablation.md).
 
-### Final exact-image black-box pentest
+### Historical exact-image black-box pentest
 
-Validation-only PR #69 built the production Docker image from the **exact final security head** `536c37c…` and interacted with it externally through HTTP and container inspection. The validation branch was closed without merge.
+Validation-only PR #69 built the production Docker image from historical security head `536c37c…` and interacted with it externally through HTTP and container inspection. The validation branch was closed without merge.
 
 Run `30145592349`: **24/24 PASS**.
 
@@ -200,9 +242,9 @@ Coverage includes authentication and scope separation, request limits, rate limi
 
 See [`docs/evidence/final-security-blackbox.md`](docs/evidence/final-security-blackbox.md).
 
-## Final security hardening
+## Historical security hardening
 
-The final audit before submission found and closed concrete release-integrity and compositional-privacy issues rather than only performing cosmetic review. PR #68 added or strengthened:
+The pre-vNext audit before the earlier submission candidate found and closed concrete release-integrity and compositional-privacy issues. PR #68 added or strengthened:
 
 - conditional `COUNT(CASE...)` and `COUNT(...) FILTER (WHERE ...)` exposure handling;
 - root SELECT predicate/threshold/target binding in keyed cohort identity;
@@ -233,6 +275,7 @@ Windows PowerShell:
 ```
 
 After startup:
+
 - API docs: `http://127.0.0.1:8000/docs`
 - liveness: `GET /api/health`
 - detailed readiness: `GET /api/ready`
@@ -268,7 +311,7 @@ toxicjoin-datahub-spike --verify
 
 ## Security and supply-chain posture
 
-The frozen release includes:
+The repository includes:
 
 - single-use governed execution authorization;
 - post-execution quarantine until independent verification;
@@ -293,14 +336,16 @@ See [`SECURITY.md`](SECURITY.md), [`docs/threat-model.md`](docs/threat-model.md)
 
 ```text
 src/toxicjoin/
+  agent/         governed Agent boundaries and proof authority
   api/           FastAPI boundary and curated judge scenarios
   benchmark/     benchmark and evidence summaries
   context/       fixture and normalized DataHub context
   demo/          deterministic synthetic warehouse
-  disclosure/    append-only cumulative disclosure state
+  disclosure/    cumulative disclosure state
   execute/       authorization-gated read-only DuckDB execution
   integrations/  DataHub SDK/MCP/Agent Registry integrations
   policy/        deterministic policy v0.2
+  proofs/        pre-execution privacy/provenance proof models
   receipts/      sanitized SHA + HMAC authenticated receipts
   rewrite/       constrained SQL remediation
   sql/           AST and physical/semantic lineage analysis
@@ -309,7 +354,7 @@ src/toxicjoin/
 
 apps/web/         React/Vite judge interface
 config/           policy and DataHub asset configuration
-docs/evidence/    retained evidence and authoritative release index
+docs/evidence/    retained current and historical evidence
 examples/         judge-facing sample outputs
 skills/           reusable DataHub Agent Skill
 tests/            unit, integration, security regressions
