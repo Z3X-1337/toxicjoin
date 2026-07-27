@@ -40,14 +40,20 @@ _reconstruct_with_forged_authorized_purpose = _AUTHENTICITY_HELPERS[
 
 
 def _valid_state_with_different_snapshot(state: DisclosureState) -> DisclosureState:
-    payload = state.model_dump(mode="json")
-    payload["warehouse_snapshot_sha256"] = canonical_json_sha256(
+    alternate_snapshot = canonical_json_sha256(
         {"warehouse": "phase-9-chain-closure-alternate"}
     )
-    payload["state_sha256"] = "0" * 64
-    provisional = DisclosureState.model_construct(**payload)
-    payload["state_sha256"] = compute_disclosure_state_sha256(provisional)
-    return DisclosureState.model_validate(payload)
+    provisional = state.model_copy(
+        update={
+            "warehouse_snapshot_sha256": alternate_snapshot,
+            "state_sha256": "0" * 64,
+        }
+    )
+    return DisclosureState.model_validate(
+        provisional.model_copy(
+            update={"state_sha256": compute_disclosure_state_sha256(provisional)}
+        ).model_dump(mode="json")
+    )
 
 
 def test_ppmc_authority_does_not_accept_caller_supplied_f6_clearance_or_oracle() -> None:
