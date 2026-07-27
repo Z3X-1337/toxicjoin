@@ -1,12 +1,11 @@
 """Security-owned Governed-Agent entry point into prospective privacy checking.
 
 The generic PPMC API deliberately remains a rollback-safe primitive that accepts a legacy
-prospective ``GovernanceTrustBinding`` as trusted caller input. The Governed-Agent path must
-not expose that parameter or accept a caller-supplied F6 clearance. Instead, this authority
-revalidates the exact Agent evaluation, DataHub governance-trust artifact, DisclosureState,
-and PPMC model inputs; it then asks the security-owned Day-13 F6 authority to issue a fresh
-clearance for those exact artifacts and passes only that clearance-owned legacy binding into
-PPMC.
+prospective ``GovernanceTrustBinding`` and local oracle as trusted caller inputs. The
+Governed-Agent path exposes neither authority. Instead, this module revalidates the exact Agent
+evaluation, DataHub governance-trust artifact, DisclosureState, and declared PPMC model inputs;
+it then issues a fresh F6 clearance and constructs the PolicyEngine local-admissibility oracle
+inside the security-owned boundary before invoking PPMC.
 
 A successful call means only that PPMC produced a canonical bounded-search result under the
 fresh state-bound F6 clearance. The result status still determines whether the search found a
@@ -37,10 +36,15 @@ from toxicjoin.disclosure.semantic import (
 )
 from toxicjoin.evidence.canonical import canonical_json_sha256
 from toxicjoin.models import ColumnContext, ColumnRef, SensitivityCategory, StrictModel
+from toxicjoin.policy import PolicyEngine, load_policy
 from toxicjoin.prospective.forbidden import ForbiddenPredicatePolicy
 from toxicjoin.prospective.grammar import FutureActionGrammar
+from toxicjoin.prospective.policy_oracle import (
+    PolicyEngineLocalOracle,
+    PolicyOracleSemanticError,
+    build_policy_oracle_governance_context,
+)
 from toxicjoin.prospective.ppmc import (
-    LocalAdmissibilityOracle,
     PpmcError,
     PpmcSearchConfig,
     PpmcSearchResult,
@@ -116,7 +120,7 @@ class TrustedAgentPpmcEvaluation(StrictModel):
 
 
 class DataHubAgentPpmcAuthority:
-    """Issue F6 governance internally, then run PPMC for the exact Governed-Agent state."""
+    """Issue F6 governance and the PolicyEngine oracle before running Agent PPMC."""
 
     def __init__(self, *, clock=None) -> None:
         selected_clock = (lambda: datetime.now(timezone.utc)) if clock is None else clock
@@ -133,7 +137,6 @@ class DataHubAgentPpmcAuthority:
         initial_state: DisclosureState,
         grammar: FutureActionGrammar,
         forbidden_policy: ForbiddenPredicatePolicy,
-        local_oracle: LocalAdmissibilityOracle,
         config: PpmcSearchConfig | None = None,
     ) -> TrustedAgentPpmcEvaluation:
         """Return one internally cleared PPMC evaluation or a stable fail-closed error code."""
@@ -146,7 +149,6 @@ class DataHubAgentPpmcAuthority:
                 initial_state=initial_state,
                 grammar=grammar,
                 forbidden_policy=forbidden_policy,
-                local_oracle=local_oracle,
                 config=config,
             )
         except AgentPpmcAuthorityError as error:
@@ -160,7 +162,6 @@ class DataHubAgentPpmcAuthority:
         initial_state = None  # type: ignore[assignment]
         grammar = None  # type: ignore[assignment]
         forbidden_policy = None  # type: ignore[assignment]
-        local_oracle = None  # type: ignore[assignment]
         config = None
         self = None  # type: ignore[assignment]
         raise AgentPpmcAuthorityError(stable_code) from None
@@ -173,7 +174,6 @@ class DataHubAgentPpmcAuthority:
         initial_state: DisclosureState,
         grammar: FutureActionGrammar,
         forbidden_policy: ForbiddenPredicatePolicy,
-        local_oracle: LocalAdmissibilityOracle,
         config: PpmcSearchConfig | None,
     ) -> TrustedAgentPpmcEvaluation:
         if (
@@ -183,7 +183,6 @@ class DataHubAgentPpmcAuthority:
             or type(grammar) is not FutureActionGrammar
             or type(forbidden_policy) is not ForbiddenPredicatePolicy
             or (config is not None and type(config) is not PpmcSearchConfig)
-            or not callable(local_oracle)
         ):
             raise AgentPpmcAuthorityError("AGENT_PPMC_INPUT_INVALID")
 
@@ -259,6 +258,11 @@ class DataHubAgentPpmcAuthority:
         state_atom_sha256s = {atom.atom_sha256 for atom in trusted_state.released_atoms}
         if not set(context.base_release_atom_sha256s).issubset(state_atom_sha256s):
             raise AgentPpmcAuthorityError("AGENT_PPMC_GRAMMAR_RELEASE_MISMATCH")
+
+        local_oracle = _build_policy_engine_oracle(
+            trusted_evaluation,
+            trusted_grammar,
+        )
 
         started_at = self._sample_clock()
         if started_at < trusted_clearance.verified_at:
@@ -340,6 +344,40 @@ def compute_trusted_agent_ppmc_evaluation_sha256(
     return canonical_json_sha256(
         evaluation.model_dump(mode="json", exclude={"evaluation_sha256"})
     )
+
+
+def _build_policy_engine_oracle(
+    evaluation: TrustedAgentProposalEvaluation,
+    grammar: FutureActionGrammar,
+) -> PolicyEngineLocalOracle:
+    package_policy = load_policy()
+    package_policy_sha256 = canonical_json_sha256(package_policy.model_dump(mode="json"))
+    if (
+        evaluation.policy_version != package_policy.version
+        or evaluation.policy_config_sha256 != package_policy_sha256
+    ):
+        raise AgentPpmcAuthorityError("AGENT_PPMC_POLICY_MISMATCH")
+
+    try:
+        governance = build_policy_oracle_governance_context(
+            (
+                *evaluation.resolution.projected_context,
+                *evaluation.resolution.all_referenced_context,
+            )
+        )
+        oracle = PolicyEngineLocalOracle(
+            PolicyEngine(package_policy),
+            grammar,
+            governance,
+        )
+    except (PolicyOracleSemanticError, ValidationError, ValueError):
+        raise AgentPpmcAuthorityError("AGENT_PPMC_ORACLE_GOVERNANCE_INVALID") from None
+
+    if oracle.policy_config_sha256 != package_policy_sha256:
+        raise AgentPpmcAuthorityError("AGENT_PPMC_ORACLE_POLICY_MISMATCH")
+    if oracle.grammar_sha256 != grammar.grammar_sha256:
+        raise AgentPpmcAuthorityError("AGENT_PPMC_ORACLE_GRAMMAR_MISMATCH")
+    return oracle
 
 
 def _build_expected_agent_semantic(
