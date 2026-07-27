@@ -20,7 +20,7 @@ _REQUIRED_INPUTS = (
     "package-lock.json",
     "apps/web/package-lock.json",
     "Dockerfile",
-    "src/toxicjoin/policy/default_policy.yaml",
+    "src/toxicjoin/policy/policy.yaml",
 )
 
 
