@@ -8,7 +8,9 @@ and consumption. The exact proof commitment is covered by the existing capabilit
 
 from __future__ import annotations
 
+import hashlib
 import hmac
+import json
 import secrets
 from typing import Callable
 
@@ -42,6 +44,8 @@ from toxicjoin.execute.proof_binding import (
 from toxicjoin.models import ColumnRef, Decision, QueryPlan
 from toxicjoin.proofs import PreExecutionPrivacyProof
 
+_PROOF_BOUND_EXECUTION_HMAC_DOMAIN = b"toxicjoin:proof-bound-execution-authorization:v1\x00"
+
 
 class ProofBoundExecutionAuthorization(ExecutionAuthorization):
     """Existing single-use capability plus the exact authenticated privacy-proof commitment."""
@@ -53,7 +57,10 @@ class ProofBoundExecutionAuthorizer(ExecutionAuthorizer):
     """Issue and consume capabilities only when the exact privacy proof remains valid.
 
     The proof integrity key is intentionally separate from the execution-authorization HMAC key.
-    Possession of one key therefore does not let a caller forge the other artifact class.
+    Possession of one key therefore does not let a caller forge the other artifact class. The
+    proof-bound capability MAC also has a protocol domain distinct from legacy execution
+    authorization, so accidental reuse of the execution key cannot downgrade a proof-bound
+    capability into the legacy verifier protocol.
     """
 
     def __init__(
@@ -89,6 +96,23 @@ class ProofBoundExecutionAuthorizer(ExecutionAuthorizer):
                 "privacy proof integrity key must differ from execution authorization key"
             )
         self._privacy_proof_integrity_key = proof_key
+
+    def _mac(self, authorization: ExecutionAuthorization) -> str:
+        """Authenticate proof-bound capabilities under their own protocol domain."""
+
+        payload = authorization.model_dump(mode="json")
+        payload["mac_sha256"] = ""
+        canonical = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+        return hmac.new(
+            self._secret_key,
+            _PROOF_BOUND_EXECUTION_HMAC_DOMAIN + canonical,
+            hashlib.sha256,
+        ).hexdigest()
 
     def issue(
         self,
