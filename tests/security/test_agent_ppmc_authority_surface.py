@@ -23,6 +23,12 @@ def test_agent_ppmc_authority_does_not_accept_caller_supplied_f6_authority() -> 
     assert "trusted" not in parameters
 
 
+def test_agent_ppmc_authority_does_not_accept_caller_supplied_local_oracle() -> None:
+    parameters = inspect.signature(DataHubAgentPpmcAuthority.check).parameters
+
+    assert "local_oracle" not in parameters
+
+
 def test_f6_and_ppmc_share_one_monotonic_clock_guard() -> None:
     samples = iter(
         (
