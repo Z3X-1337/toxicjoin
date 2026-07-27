@@ -28,7 +28,7 @@ class ProofBoundExecutionAuthorizer(_ProofBoundExecutionAuthorizerBase):
         policy_engine,
         privacy_proof_integrity_key: bytes,
         agent_provenance_integrity_key: bytes,
-        warehouse_snapshot_provider: Callable[[], str | None],
+        warehouse_snapshot_provider: Callable[[], str | None] | None = None,
         disclosure_ledger=None,
         require_disclosure_commitment: bool = False,
         secret_key: bytes | None = None,
@@ -43,7 +43,7 @@ class ProofBoundExecutionAuthorizer(_ProofBoundExecutionAuthorizerBase):
             agent_provenance_integrity_key,
             name="Agent provenance integrity key",
         )
-        if not callable(warehouse_snapshot_provider):
+        if warehouse_snapshot_provider is not None and not callable(warehouse_snapshot_provider):
             raise ValueError("warehouse snapshot provider must be callable")
         execution_key = (
             None
@@ -99,8 +99,11 @@ class ProofBoundExecutionAuthorizer(_ProofBoundExecutionAuthorizerBase):
         return verified
 
     def _require_current_warehouse_snapshot(self, expected_snapshot_sha256: str | None) -> None:
+        provider = self._warehouse_snapshot_provider
+        if provider is None:
+            raise ExecutionAuthorizationError("AUTH_WAREHOUSE_SNAPSHOT_UNAVAILABLE")
         try:
-            current_snapshot_sha256 = self._warehouse_snapshot_provider()
+            current_snapshot_sha256 = provider()
         except Exception:
             raise ExecutionAuthorizationError("AUTH_WAREHOUSE_SNAPSHOT_UNAVAILABLE") from None
 
