@@ -62,6 +62,8 @@ def verify_execution_privacy_proof(
             raise ExecutionPrivacyProofBindingError("AUTH_PRIVACY_PROOF_EXPIRED")
         if ProofVerificationFailure.NOT_YET_VALID in failures:
             raise ExecutionPrivacyProofBindingError("AUTH_PRIVACY_PROOF_NOT_YET_VALID")
+        if ProofVerificationFailure.PPMC_PROFILE_INVALID in failures:
+            raise ExecutionPrivacyProofBindingError("AUTH_PRIVACY_PROOF_PROFILE_INVALID")
         raise ExecutionPrivacyProofBindingError("AUTH_PRIVACY_PROOF_INVALID")
 
     if governance_binding is None:
