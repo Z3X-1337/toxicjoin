@@ -119,7 +119,7 @@ class DataHubAgentPpmcAuthority:
         self._clock = selected_clock
         self._clock_lock = threading.Lock()
         self._last_clock_sample: datetime | None = None
-        self._f6_authority = DataHubF6GovernanceAuthority(clock=selected_clock)
+        self._f6_authority = DataHubF6GovernanceAuthority(clock=self._sample_clock)
 
     def check(
         self,
