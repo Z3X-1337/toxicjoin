@@ -51,9 +51,9 @@ class AgentPpmcProofBinding(StrictModel):
 
     ``binding_sha256`` commits the provenance payload itself. ``authority_hmac_sha256`` is a
     second, domain-separated authenticator produced with a key that is distinct from both the
-    generic proof HMAC key and the execution-authorization key.  This prevents a generic proof
-    issuer from self-asserting or transplanting Agent provenance merely because it can sign
-    ordinary proof content.
+    generic proof HMAC key and the execution-authorization key. The binding commits not only the
+    Agent PPMC result hash but also the exact proof-facing PPMC profile metadata, preventing a
+    generic proof issuer from relabeling a genuine bounded result as a stronger search.
     """
 
     schema_version: Literal["1.0"] = "1.0"
@@ -75,8 +75,17 @@ class AgentPpmcProofBinding(StrictModel):
     policy_decision_sha256: Sha256
     disclosure_state_sha256: Sha256
     grammar_sha256: Sha256
+    ppmc_execution_profile: Literal["p0-preexec-v1"] = PREEXECUTION_PPMC_PROFILE
+    ppmc_config_sha256: Sha256
+    ppmc_forbidden_policy_sha256: Sha256
     ppmc_governance_binding_sha256: Sha256
+    ppmc_search_transcript_sha256: Sha256
     ppmc_result_sha256: Sha256
+    ppmc_status: Literal["NO_COUNTEREXAMPLE_WITHIN_BOUND"] = (
+        "NO_COUNTEREXAMPLE_WITHIN_BOUND"
+    )
+    ppmc_bound: int = Field(ge=0, le=5)
+    ppmc_max_states: int = Field(ge=1, le=50_000)
     evidence_expires_at: datetime
     binding_sha256: Sha256
     authority_hmac_sha256: Sha256
@@ -90,6 +99,8 @@ class AgentPpmcProofBinding(StrictModel):
 
     @model_validator(mode="after")
     def validate_binding(self) -> "AgentPpmcProofBinding":
+        if type(self) is not AgentPpmcProofBinding:
+            raise ValueError("Agent PPMC proof provenance must use the exact model type")
         if self.binding_sha256 != compute_agent_ppmc_proof_binding_sha256(self):
             raise ValueError("Agent PPMC proof provenance hash mismatch")
         return self
@@ -189,6 +200,8 @@ def compute_repair_proof_binding_sha256(binding: RepairProofBinding) -> str:
 
 
 def compute_agent_ppmc_proof_binding_sha256(binding: AgentPpmcProofBinding) -> str:
+    if type(binding) is not AgentPpmcProofBinding:
+        raise TypeError("Agent PPMC proof provenance must use the exact model type")
     return canonical_json_sha256(
         binding.model_dump(
             mode="json",
