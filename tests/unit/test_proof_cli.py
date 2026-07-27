@@ -9,6 +9,7 @@ from toxicjoin.proofs.preexec import (
     compute_preexecution_privacy_proof_hmac,
     compute_preexecution_privacy_proof_sha256,
 )
+from toxicjoin.prospective.ppmc import build_ppmc_search_config
 
 KEY_TEXT = "proof-cli-integrity-key-at-least-32-bytes"
 KEY = KEY_TEXT.encode("utf-8")
@@ -35,7 +36,10 @@ def _sealed_proof() -> PreExecutionPrivacyProof:
         policy_sha256=H,
         policy_decision_sha256=H,
         grammar_sha256=H,
-        ppmc_config_sha256=H,
+        ppmc_config_sha256=build_ppmc_search_config(
+            bound=3,
+            max_states=100,
+        ).config_sha256,
         ppmc_forbidden_policy_sha256=H,
         ppmc_governance_binding_sha256=H,
         ppmc_search_transcript_sha256=H,
