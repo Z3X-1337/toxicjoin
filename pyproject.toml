@@ -34,6 +34,9 @@ datahub = [
 agent-registry = [
   "acryl-datahub==1.6.0.16rc3",
 ]
+postgres = [
+  "psycopg[binary]==3.3.4",
+]
 dev = [
   "pytest>=9.1.1,<10",
   "pytest-cov>=5,<6",
