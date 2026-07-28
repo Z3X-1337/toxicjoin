@@ -186,3 +186,33 @@ def test_postgres_state_rejects_mismatched_cohort_key_across_replicas() -> None:
         match="cohort key does not match authoritative state",
     ):
         _ledger(cohort_hmac_key=b"x" * 32)
+
+
+def test_verify_all_detects_released_record_missing_authorization_claim() -> None:
+    _reset_database()
+    replica_a = _ledger()
+    replica_b = _ledger()
+    sql = _sensitive_sql("alpha")
+    event = _event(sql, 41)
+
+    decision = replica_a.evaluate_and_commit(event, sql=sql)
+    assert decision.allowed is True
+    assert decision.commitment is not None
+    commitment = decision.commitment
+    authorization_id = "tj_auth_" + "b" * 32
+    replica_b.claim_commitment(commitment, authorization_id)
+    replica_a.mark_released(commitment)
+    assert replica_b.verify_all() == 1
+
+    psycopg = _psycopg()
+    with psycopg.connect(_dsn(), autocommit=True) as connection:
+        connection.execute(
+            f'DELETE FROM "{_SCHEMA}".disclosure_authorization_claims WHERE record_id = %s',
+            (commitment.record_id,),
+        )
+
+    with pytest.raises(
+        DisclosureLedgerIntegrityError,
+        match="released disclosure is missing execution authorization claim",
+    ):
+        replica_a.verify_all()
