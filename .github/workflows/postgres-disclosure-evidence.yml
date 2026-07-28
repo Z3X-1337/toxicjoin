@@ -7,6 +7,8 @@ on:
       - "uv.lock"
       - "src/toxicjoin/disclosure/**"
       - "tests/integration/test_postgres_shared_disclosure.py"
+      - "scripts/validate_dependency_audit.py"
+      - "docs/security/p4-dependency-risk-exceptions.json"
       - ".github/workflows/postgres-disclosure-evidence.yml"
   workflow_dispatch:
 
@@ -58,14 +60,29 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Bootstrap exact PostgreSQL extra lock
+      - name: Sync exact locked PostgreSQL evidence profile
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install --disable-pip-version-check 'uv==0.8.4'
-          uv sync --extra dev --extra postgres
-          cp uv.lock artifacts/uv.lock.generated
+          uv sync --frozen --extra dev --extra security --extra postgres
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Audit exact locked PostgreSQL dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv export --frozen --no-emit-project --no-hashes \
+            --extra postgres --extra security \
+            --output-file artifacts/requirements-postgres.txt
+          set +e
+          .venv/bin/pip-audit -r artifacts/requirements-postgres.txt \
+            --format json --output artifacts/pip-audit-postgres.json
+          AUDIT_RC=$?
+          set -e
+          echo "postgres pip-audit exit code: $AUDIT_RC"
+          .venv/bin/python scripts/validate_dependency_audit.py python \
+            --profile postgres --audit-json artifacts/pip-audit-postgres.json
 
       - name: Verify PostgreSQL shared-authoritative disclosure semantics
         shell: bash
