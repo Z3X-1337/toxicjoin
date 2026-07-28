@@ -3,6 +3,8 @@ name: PostgreSQL Disclosure Evidence
 on:
   pull_request:
     paths:
+      - "pyproject.toml"
+      - "uv.lock"
       - "src/toxicjoin/disclosure/**"
       - "tests/integration/test_postgres_shared_disclosure.py"
       - ".github/workflows/postgres-disclosure-evidence.yml"
@@ -56,13 +58,13 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install locked ToxicJoin environment and pinned PostgreSQL driver
+      - name: Bootstrap exact PostgreSQL extra lock
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install --disable-pip-version-check 'uv==0.8.4'
-          uv sync --frozen --extra dev
-          uv pip install 'psycopg[binary]==3.3.4'
+          uv sync --extra dev --extra postgres
+          cp uv.lock artifacts/uv.lock.generated
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Verify PostgreSQL shared-authoritative disclosure semantics
