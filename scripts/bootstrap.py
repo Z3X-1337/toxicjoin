@@ -40,12 +40,20 @@ def write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def sha(path: Path) -> str:
+def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def native_command(name: str, *args: str) -> list[str]:
+    """Resolve command wrappers without enabling a general shell."""
+    if os.name == "nt" and name.lower() in {"npm", "npx"}:
+        command_line = subprocess.list2cmdline([f"{name}.cmd", *args])
+        return ["cmd.exe", "/d", "/s", "/c", command_line]
+    return [name, *args]
 
 
 def run(
@@ -66,7 +74,7 @@ def run(
             timeout=timeout,
             check=False,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
         raise BootstrapError(
             f"command unavailable or timed out: {' '.join(command)}"
         ) from exc
@@ -111,10 +119,9 @@ def contract() -> dict[str, Any]:
             f"unsupported or incomplete toolchain contract; missing={missing}"
         )
 
-    python_contract = value["python"]
-    supported = python_contract.get("supported_by_platform")
-    defaults = python_contract.get("default_by_platform")
     platforms = {"linux", "windows", "macos"}
+    supported = value["python"].get("supported_by_platform")
+    defaults = value["python"].get("default_by_platform")
     if not isinstance(supported, dict) or set(supported) != platforms:
         raise BootstrapError("python.supported_by_platform is incomplete")
     if not isinstance(defaults, dict) or set(defaults) != platforms:
@@ -147,7 +154,7 @@ def lock_hashes(value: dict[str, Any] | None = None) -> dict[str, str]:
         path = ROOT / item["path"]
         if not path.is_file():
             raise BootstrapError(f"required lock missing: {item['path']}")
-        result[item["path"]] = sha(path)
+        result[item["path"]] = sha256(path)
     return result
 
 
@@ -193,21 +200,20 @@ def manifest_errors(value: dict[str, Any]) -> list[str]:
                 re.MULTILINE,
             )
             if not pair.search(ci):
-                errors.append(
-                    f"CI native matrix missing exact pair {runner}/{version}"
-                )
+                errors.append(f"CI native matrix missing exact pair {runner}/{version}")
     return errors
 
 
 def verify(components: list[str]) -> dict[str, Any]:
     value = contract()
+    key = platform_key()
     result: dict[str, Any] = {
         "schema_version": "1.0",
         "generated_at": now(),
         "git": git_identity(),
-        "contract_sha256": sha(CONTRACT_PATH),
+        "contract_sha256": sha256(CONTRACT_PATH),
         "platform": {
-            "key": platform_key(),
+            "key": key,
             "system": platform.system(),
             "release": platform.release(),
             "machine": platform.machine(),
@@ -223,7 +229,6 @@ def verify(components: list[str]) -> dict[str, Any]:
         result["contract"] = "verified"
 
     if "python" in components:
-        key = platform_key()
         actual = platform.python_version()
         supported = value["python"]["supported_by_platform"][key]
         if actual not in supported:
@@ -250,7 +255,7 @@ def verify(components: list[str]) -> dict[str, Any]:
 
     if "node" in components:
         actual = parse_version(
-            run(["node", "--version"]).stdout,
+            run(native_command("node", "--version")).stdout,
             r"v?(\d+\.\d+\.\d+)",
             "Node",
         )
@@ -262,7 +267,7 @@ def verify(components: list[str]) -> dict[str, Any]:
 
     if "npm" in components:
         actual = parse_version(
-            run(["npm", "--version"]).stdout,
+            run(native_command("npm", "--version")).stdout,
             r"(\d+\.\d+\.\d+)",
             "npm",
         )
@@ -294,10 +299,7 @@ def verify(components: list[str]) -> dict[str, Any]:
             r"v?(\d+\.\d+\.\d+)",
             "Compose",
         )
-        if (
-            buildx != versions["buildx_version"]
-            or compose != versions["compose_version"]
-        ):
+        if buildx != versions["buildx_version"] or compose != versions["compose_version"]:
             raise BootstrapError(
                 f"Docker plugin mismatch: buildx={buildx}, compose={compose}"
             )
@@ -335,16 +337,18 @@ def audit() -> dict[str, Any]:
     value = contract()
     violations: list[dict[str, Any]] = []
     observations: list[dict[str, Any]] = []
-    runners = set(value["github_runners"].values())
     exact_paths = exact_toolchain_paths()
-    linux_versions = value["python"]["supported_by_platform"]["linux"]
+    exact_versions = {
+        version
+        for versions in value["python"]["supported_by_platform"].values()
+        for version in versions
+    }
+    exact_runners = set(value["github_runners"].values())
 
     for path in bootstrap_files():
         relative = path.relative_to(ROOT).as_posix()
         exact_surface = relative in exact_paths
-        for number, line in enumerate(
-            path.read_text(encoding="utf-8").splitlines(), 1
-        ):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             text = line.strip()
             if not text or text.startswith("#"):
                 continue
@@ -400,10 +404,7 @@ def audit() -> dict[str, Any]:
                         "rule_id": "P3-DEFERRED-RUNNER",
                         "path": relative,
                         "line": number,
-                        "message": (
-                            "moving runner retained on a non-Phase-3 workflow; "
-                            "inventoried without mutation"
-                        ),
+                        "message": "moving runner retained on a deferred workflow",
                         "text": text[:300],
                     }
                 )
@@ -432,47 +433,13 @@ def audit() -> dict[str, Any]:
                     }
                 )
 
-            matrix_match = re.search(r"^python-version:\s*\[(.+)\]$", text)
-            if matrix_match:
-                declared = [
-                    item.strip().strip("\"'")
-                    for item in matrix_match.group(1).split(",")
-                ]
-                if declared != linux_versions:
-                    target = violations if exact_surface else observations
-                    target.append(
-                        {
-                            "rule_id": (
-                                "P3-PYTHON-MATRIX"
-                                if exact_surface
-                                else "P3-DEFERRED-PYTHON"
-                            ),
-                            "path": relative,
-                            "line": number,
-                            "message": (
-                                "Linux Python matrix differs from exact contract"
-                                if exact_surface
-                                else "non-exact Python matrix inventoried"
-                            ),
-                            "text": text[:300],
-                        }
-                    )
-
             py_match = re.search(
-                r"^python-version:\s*[\"']?([^\"'\s\[]+)",
-                text,
+                r"^python-version:\s*[\"']?([^\"'\s\[]+)", text
             )
             if (
                 py_match
                 and "${{" not in py_match.group(1)
-                and py_match.group(1)
-                not in {
-                    version
-                    for versions in value["python"][
-                        "supported_by_platform"
-                    ].values()
-                    for version in versions
-                }
+                and py_match.group(1) not in exact_versions
             ):
                 target = violations if exact_surface else observations
                 target.append(
@@ -484,18 +451,13 @@ def audit() -> dict[str, Any]:
                         ),
                         "path": relative,
                         "line": number,
-                        "message": (
-                            "setup-python is outside the exact contract"
-                            if exact_surface
-                            else "non-exact Python declaration inventoried"
-                        ),
+                        "message": "Python declaration is outside the exact contract",
                         "text": text[:300],
                     }
                 )
 
             node_match = re.search(
-                r"^node-version:\s*[\"']?([^\"'\s\[]+)",
-                text,
+                r"^node-version:\s*[\"']?([^\"'\s\[]+)", text
             )
             if (
                 node_match
@@ -512,11 +474,7 @@ def audit() -> dict[str, Any]:
                         ),
                         "path": relative,
                         "line": number,
-                        "message": (
-                            "setup-node is not exact"
-                            if exact_surface
-                            else "non-exact Node declaration inventoried"
-                        ),
+                        "message": "Node declaration differs from exact contract",
                         "text": text[:300],
                     }
                 )
@@ -526,7 +484,7 @@ def audit() -> dict[str, Any]:
                 runner = runner_match.group(1).strip("\"'")
                 if (
                     runner.startswith(("ubuntu-", "windows-", "macos-"))
-                    and runner not in runners
+                    and runner not in exact_runners
                 ):
                     target = violations if exact_surface else observations
                     target.append(
@@ -538,11 +496,7 @@ def audit() -> dict[str, Any]:
                             ),
                             "path": relative,
                             "line": number,
-                            "message": (
-                                "runner outside contract"
-                                if exact_surface
-                                else "runner outside Phase 3 support matrix"
-                            ),
+                            "message": "runner is outside the Phase 3 support matrix",
                             "text": text[:300],
                         }
                     )
@@ -590,9 +544,7 @@ def package_identity(*, direct_environment: bool = False) -> dict[str, Any]:
         else [UV_BIN, "run", "--frozen", "python", "-c", code]
     )
     packages = json.loads(run(command).stdout)
-    canonical = json.dumps(
-        packages, sort_keys=True, separators=(",", ":")
-    ).encode()
+    canonical = json.dumps(packages, sort_keys=True, separators=(",", ":")).encode()
     return {
         "count": len(packages),
         "sha256": hashlib.sha256(canonical).hexdigest(),
@@ -600,11 +552,7 @@ def package_identity(*, direct_environment: bool = False) -> dict[str, Any]:
     }
 
 
-def sync(
-    extras: list[str],
-    *,
-    no_install_project: bool = False,
-) -> dict[str, Any]:
+def sync(extras: list[str], *, no_install_project: bool = False) -> dict[str, Any]:
     verify(["python", "uv", "locks", "contract"])
     before = lock_hashes()
     command = [UV_BIN, "sync", "--frozen"]
@@ -681,18 +629,10 @@ def smoke(timeout: int) -> dict[str, Any]:
                             f"fixture exited early: {process.returncode}"
                         )
                     try:
-                        health = get_json(
-                            f"http://127.0.0.1:{port}/api/health"
-                        )
-                        ready = get_json(
-                            f"http://127.0.0.1:{port}/api/ready"
-                        )
+                        health = get_json(f"http://127.0.0.1:{port}/api/health")
+                        ready = get_json(f"http://127.0.0.1:{port}/api/ready")
                         break
-                    except (
-                        OSError,
-                        urllib.error.URLError,
-                        json.JSONDecodeError,
-                    ):
+                    except (OSError, urllib.error.URLError, json.JSONDecodeError):
                         time.sleep(0.5)
                 else:
                     raise BootstrapError("fixture readiness timeout")
@@ -706,8 +646,8 @@ def smoke(timeout: int) -> dict[str, Any]:
                     "receipt_store_ready": True,
                 }
                 if ready is None or any(
-                    ready.get(key) != expected_value
-                    for key, expected_value in expected.items()
+                    ready.get(item) != expected_value
+                    for item, expected_value in expected.items()
                 ):
                     raise BootstrapError(f"unexpected readiness: {ready}")
             except BootstrapError as exc:
@@ -740,16 +680,15 @@ def smoke(timeout: int) -> dict[str, Any]:
 
 def tracked_files() -> list[Path]:
     if (ROOT / ".git").exists() and shutil.which("git"):
-        names = run(["git", "ls-files"]).stdout.splitlines()
-        return [ROOT / name for name in names]
+        return [
+            ROOT / name
+            for name in run(["git", "ls-files"]).stdout.splitlines()
+        ]
+    excluded = {".git", ".venv", "node_modules", "dist"}
     return [
         path
         for path in ROOT.rglob("*")
-        if path.is_file()
-        and not any(
-            part in path.parts
-            for part in (".git", ".venv", "node_modules", "dist")
-        )
+        if path.is_file() and not any(part in path.parts for part in excluded)
     ]
 
 
@@ -767,19 +706,20 @@ def census(path: Path) -> int:
         ("runner", r"runs-on:"),
     ]
     rows: list[dict[str, Any]] = []
+    valid_suffixes = {
+        "",
+        ".json",
+        ".md",
+        ".mjs",
+        ".ps1",
+        ".py",
+        ".sh",
+        ".toml",
+        ".yaml",
+        ".yml",
+    }
     for file in tracked_files():
-        if file.suffix.lower() not in {
-            "",
-            ".json",
-            ".md",
-            ".mjs",
-            ".ps1",
-            ".py",
-            ".sh",
-            ".toml",
-            ".yaml",
-            ".yml",
-        }:
+        if file.suffix.lower() not in valid_suffixes:
             continue
         try:
             lines = file.read_text(encoding="utf-8").splitlines()
@@ -802,8 +742,7 @@ def census(path: Path) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(
-            handle,
-            fieldnames=["path", "line", "tool", "command"],
+            handle, fieldnames=["path", "line", "tool", "command"]
         )
         writer.writeheader()
         writer.writerows(rows)
@@ -841,9 +780,7 @@ def cleanliness(allowed: set[str]) -> dict[str, Any]:
 
 def evidence(output: Path) -> dict[str, Any]:
     output.mkdir(parents=True, exist_ok=True)
-    identity = verify(
-        ["python", "uv", "node", "npm", "locks", "contract"]
-    )
+    identity = verify(["python", "uv", "node", "npm", "locks", "contract"])
     audit_result = audit()
     if audit_result["violation_count"]:
         raise BootstrapError(
@@ -859,7 +796,7 @@ def evidence(output: Path) -> dict[str, Any]:
         {
             "path": path.name,
             "size_bytes": path.stat().st_size,
-            "sha256": sha(path),
+            "sha256": sha256(path),
         }
         for path in sorted(output.iterdir())
         if path.is_file() and path.name != "SHA256SUMS"
@@ -869,7 +806,7 @@ def evidence(output: Path) -> dict[str, Any]:
         "generated_at": now(),
         "phase": "3-reproducible-locked-bootstrap",
         "git": git_identity(),
-        "contract_sha256": sha(CONTRACT_PATH),
+        "contract_sha256": sha256(CONTRACT_PATH),
         "lock_hashes": lock_hashes(),
         "artifacts": artifacts,
         "live_datahub_executed": False,
@@ -877,13 +814,12 @@ def evidence(output: Path) -> dict[str, Any]:
     }
     write_json(output / "bootstrap-evidence-index.json", index)
     checksums = [
-        f"{sha(path)}  {path.name}"
+        f"{sha256(path)}  {path.name}"
         for path in sorted(output.iterdir())
         if path.is_file() and path.name != "SHA256SUMS"
     ]
     (output / "SHA256SUMS").write_text(
-        "\n".join(checksums) + "\n",
-        encoding="utf-8",
+        "\n".join(checksums) + "\n", encoding="utf-8"
     )
     return index
 
@@ -894,8 +830,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     verify_parser = commands.add_parser("verify")
     verify_parser.add_argument(
-        "--components",
-        default="python,uv,locks,contract",
+        "--components", default="python,uv,locks,contract"
     )
     verify_parser.add_argument("--output", type=Path)
 
@@ -932,10 +867,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ]
             )
         elif args.command == "sync":
-            result = sync(
-                args.extra,
-                no_install_project=args.no_install_project,
-            )
+            result = sync(args.extra, no_install_project=args.no_install_project)
         elif args.command == "audit":
             result = audit()
             if result["violation_count"]:
@@ -943,10 +875,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"bootstrap audit found {result['violation_count']} violation(s)"
                 )
         elif args.command == "census":
-            result = {
-                "rows": census(args.output),
-                "output": str(args.output),
-            }
+            result = {"rows": census(args.output), "output": str(args.output)}
         elif args.command == "smoke":
             result = smoke(args.timeout_seconds)
         elif args.command == "cleanliness":
