@@ -2,3 +2,5 @@ config/toolchain.json text eol=lf
 uv.lock text eol=lf
 package-lock.json text eol=lf
 apps/web/package-lock.json text eol=lf
+config/phase8-evidence-retention.json text eol=lf
+evidence/retained/**/*.json text eol=lf

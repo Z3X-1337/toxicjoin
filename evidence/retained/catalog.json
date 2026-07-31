@@ -1,0 +1,153 @@
+{
+  "baseline_main_sha": "64d4fbbb59f954e66e0e2bdcceb7dc08e2a1a6f2",
+  "catalog_sha256": "c86ed7654cada7f181cee3f3c71c0d7c581f2e649e3fc820cb777a90e542373f",
+  "classification_taxonomy": {
+    "lifecycle": [
+      "current",
+      "historical"
+    ],
+    "purpose": [
+      "operational",
+      "preview",
+      "replay-only",
+      "submission"
+    ]
+  },
+  "created_at": "2026-07-31T21:02:00Z",
+  "entries": [
+    {
+      "id": "current-retention-state",
+      "lifecycle": "current",
+      "media_type": "application/json",
+      "path": "evidence/retained/objects/sha256/10/10bebe4d3584f68b64116dc94dae96382750950611ed5116ed18043558897cb8.json",
+      "provenance": {
+        "commands": [
+          "git rev-parse refs/heads/main",
+          "git show --no-patch --format=%H refs/heads/main"
+        ],
+        "environment": {
+          "authority": "TOXICJOIN_MASTER_CONTINUITY_POST_PHASE2_2026-07-31.md",
+          "repository": "Z3X-1337/toxicjoin"
+        },
+        "timestamps": {
+          "observed_at": "2026-07-31T21:02:00Z",
+          "retained_at": "2026-07-31T21:02:00Z"
+        },
+        "tool_versions": {
+          "git_identity": "sha1-40",
+          "retention_schema": "1.0"
+        }
+      },
+      "purpose": "operational",
+      "related_main_sha": "64d4fbbb59f954e66e0e2bdcceb7dc08e2a1a6f2",
+      "sha256": "10bebe4d3584f68b64116dc94dae96382750950611ed5116ed18043558897cb8",
+      "size_bytes": 450,
+      "source_sha": "64d4fbbb59f954e66e0e2bdcceb7dc08e2a1a6f2",
+      "status": "verified"
+    },
+    {
+      "id": "phase7-candidate-release-manifest-anchor",
+      "lifecycle": "historical",
+      "media_type": "application/json",
+      "path": "evidence/retained/objects/sha256/24/247f78fdc2bbb4373eebb578b96b6c048044141eb5177a72c75a7d87a16e6f09.json",
+      "provenance": {
+        "commands": [
+          "verify Phase 7 candidate manifest self-hash and GitHub artifact SHA-256",
+          "retain compact machine-readable Phase 7 evidence anchor"
+        ],
+        "environment": {
+          "github_run_id": "30663174048",
+          "github_workflow": "Generated Release Manifest",
+          "runner_os": "ubuntu-24.04"
+        },
+        "timestamps": {
+          "created_at": "2026-07-31T20:50:15Z",
+          "retained_at": "2026-07-31T21:02:00Z"
+        },
+        "tool_versions": {
+          "manifest_schema": "2.0",
+          "python": "3.12.13",
+          "uv": "0.8.4"
+        },
+        "upstream_artifact_sha256": "76126213fa80f03ee34084ccc77640bc97a135140053bdf5c3d708c0258d6a43"
+      },
+      "purpose": "preview",
+      "related_main_sha": "64d4fbbb59f954e66e0e2bdcceb7dc08e2a1a6f2",
+      "sha256": "247f78fdc2bbb4373eebb578b96b6c048044141eb5177a72c75a7d87a16e6f09",
+      "size_bytes": 1199,
+      "source_sha": "cee507e865238b5cafe68e5af18eda930fdca888",
+      "status": "verified"
+    },
+    {
+      "id": "replay-claim-boundary",
+      "lifecycle": "current",
+      "media_type": "application/json",
+      "path": "evidence/retained/objects/sha256/b1/b146d9c023f17afbfacc6b8eb353fba6f4ad1c4a8e91a1b7e62ce8b61290495a.json",
+      "provenance": {
+        "commands": [
+          "git show 64d4fbbb:docs/release-manifest.md",
+          "git show 64d4fbbb:README.md"
+        ],
+        "environment": {
+          "hosting_mode": "historical-deterministic-replay",
+          "network_mutation": "none"
+        },
+        "timestamps": {
+          "observed_at": "2026-07-31T21:02:00Z",
+          "retained_at": "2026-07-31T21:02:00Z"
+        },
+        "tool_versions": {
+          "retention_schema": "1.0"
+        }
+      },
+      "purpose": "replay-only",
+      "related_main_sha": "64d4fbbb59f954e66e0e2bdcceb7dc08e2a1a6f2",
+      "sha256": "b146d9c023f17afbfacc6b8eb353fba6f4ad1c4a8e91a1b7e62ce8b61290495a",
+      "size_bytes": 371,
+      "source_sha": "64d4fbbb59f954e66e0e2bdcceb7dc08e2a1a6f2",
+      "status": "verified-boundary"
+    },
+    {
+      "id": "submission-readiness-boundary",
+      "lifecycle": "current",
+      "media_type": "application/json",
+      "path": "evidence/retained/objects/sha256/5e/5e5f69602d278d5e3cce13483ef0797e4b52fd1af73d36c8ed056a4d2140f1f1.json",
+      "provenance": {
+        "commands": [
+          "git show 64d4fbbb:docs/release-manifest.md",
+          "verify Devpost submission state remains false"
+        ],
+        "environment": {
+          "mutation_authorized": "false",
+          "submission_platform": "Devpost"
+        },
+        "timestamps": {
+          "observed_at": "2026-07-31T21:02:00Z",
+          "retained_at": "2026-07-31T21:02:00Z"
+        },
+        "tool_versions": {
+          "retention_schema": "1.0"
+        }
+      },
+      "purpose": "submission",
+      "related_main_sha": "64d4fbbb59f954e66e0e2bdcceb7dc08e2a1a6f2",
+      "sha256": "5e5f69602d278d5e3cce13483ef0797e4b52fd1af73d36c8ed056a4d2140f1f1",
+      "size_bytes": 433,
+      "source_sha": "64d4fbbb59f954e66e0e2bdcceb7dc08e2a1a6f2",
+      "status": "prepared-not-submitted"
+    }
+  ],
+  "primary_retrieval_sha256": "247f78fdc2bbb4373eebb578b96b6c048044141eb5177a72c75a7d87a16e6f09",
+  "project": "ToxicJoin",
+  "repository": "Z3X-1337/toxicjoin",
+  "schema_version": "1.0",
+  "store": {
+    "algorithm": "sha256",
+    "independent_of_actions_expiry": true,
+    "large_binary_policy": "digest-indexed-release-asset-in-phase9",
+    "maximum_committed_object_bytes": 1048576,
+    "object_root": "evidence/retained/objects/sha256",
+    "path_template": "evidence/retained/objects/sha256/{prefix}/{sha256}.json",
+    "storage_backend": "git-content-addressed"
+  }
+}

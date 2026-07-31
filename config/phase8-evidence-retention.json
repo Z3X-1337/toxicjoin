@@ -1,0 +1,21 @@
+{
+  "algorithm": "sha256",
+  "catalog_path": "evidence/retained/catalog.json",
+  "immutable_release_phase": 9,
+  "independent_of_actions_expiry": true,
+  "large_binary_policy": "digest-indexed-release-asset-in-phase9",
+  "maximum_committed_object_bytes": 1048576,
+  "object_root": "evidence/retained/objects/sha256",
+  "required_lifecycle_classes": [
+    "current",
+    "historical"
+  ],
+  "required_purpose_classes": [
+    "operational",
+    "preview",
+    "replay-only",
+    "submission"
+  ],
+  "schema_version": "1.0",
+  "storage_backend": "git-content-addressed"
+}

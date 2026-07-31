@@ -1,0 +1,35 @@
+{
+  "base_main_sha": "e11c724fb8bf723f4d767d38d2bc51d2951b1b50",
+  "blockers": {
+    "inapplicable": [],
+    "missing": [],
+    "skipped": [],
+    "stale": []
+  },
+  "candidate_is_not_release_identity": true,
+  "evidence_type": "phase7-candidate-release-manifest-anchor",
+  "github_artifact_sha256": "76126213fa80f03ee34084ccc77640bc97a135140053bdf5c3d708c0258d6a43",
+  "immutable_release_created": false,
+  "manifest_schema_version": "2.0",
+  "manifest_sha256": "f79c768e36834c69ef9aed194915357e4013616960d1fd555e22fd5c9286f6e5",
+  "merged_main_sha": "64d4fbbb59f954e66e0e2bdcceb7dc08e2a1a6f2",
+  "required_artifacts": 19,
+  "required_workflows": 11,
+  "schema_version": "1.0",
+  "source_sha": "cee507e865238b5cafe68e5af18eda930fdca888",
+  "successful_workflows": 11,
+  "verified_claims": {
+    "benchmark_false_allow_count": 0,
+    "benchmark_total_cases": 30,
+    "browser_matrix_cells": 6,
+    "browser_screenshots": 20,
+    "credential_reflections": 0,
+    "live_datahub_verified": true,
+    "multi_replica_supported": false,
+    "portability_native_cells": 4,
+    "postgresql_canonical": false,
+    "ppmc_gate_passed": true,
+    "pytest_passed": 867,
+    "state_topology": "SINGLE_NODE"
+  }
+}
