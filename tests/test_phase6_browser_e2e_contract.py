@@ -5,7 +5,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "phase6-browser-e2e.yml"
-SCRIPT = ROOT / "scripts" / "phase6_browser_e2e.mjs"
+SCRIPT_FILES = (
+    ROOT / "scripts" / "phase6_browser_common.mjs",
+    ROOT / "scripts" / "phase6_browser_assertions.mjs",
+    ROOT / "scripts" / "phase6_browser_paths.mjs",
+    ROOT / "scripts" / "phase6_browser_e2e.mjs",
+)
 ACCEPTANCE = ROOT / "docs" / "phase6-acceptance.md"
 
 
@@ -40,10 +45,11 @@ def test_phase6_workflow_uses_exact_source_and_production_container() -> None:
     assert "npm run dev" not in workflow
     assert "playwright-real-production-browser" not in workflow
     assert "phase6-browser-e2e-evidence" in workflow
+    assert 'scripts/phase6_browser_*.mjs' in workflow
 
 
 def test_phase6_script_covers_required_browser_and_product_paths() -> None:
-    script = _read(SCRIPT)
+    script = "\n".join(_read(path) for path in SCRIPT_FILES)
 
     for browser in ("chromium", "firefox", "webkit"):
         assert browser in script
