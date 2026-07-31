@@ -227,10 +227,12 @@ def package_identity() -> dict[str, Any]:
     return {"count": len(packages), "sha256": hashlib.sha256(canonical).hexdigest(), "packages": packages}
 
 
-def sync(extras: list[str]) -> dict[str, Any]:
+def sync(extras: list[str], *, no_install_project: bool = False) -> dict[str, Any]:
     verify(["python", "uv", "locks", "contract"])
     before = lock_hashes()
     command = [UV_BIN, "sync", "--frozen"]
+    if no_install_project:
+        command.append("--no-install-project")
     for extra in extras:
         command += ["--extra", extra]
     started = time.monotonic()
@@ -363,7 +365,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     p = commands.add_parser("verify"); p.add_argument("--components", default="python,uv,locks,contract"); p.add_argument("--output", type=Path)
-    p = commands.add_parser("sync"); p.add_argument("--extra", action="append", default=[]); p.add_argument("--output", type=Path)
+    p = commands.add_parser("sync"); p.add_argument("--extra", action="append", default=[]); p.add_argument("--no-install-project", action="store_true"); p.add_argument("--output", type=Path)
     p = commands.add_parser("audit"); p.add_argument("--output", type=Path)
     p = commands.add_parser("census"); p.add_argument("--output", type=Path, required=True)
     p = commands.add_parser("smoke"); p.add_argument("--output", type=Path); p.add_argument("--timeout-seconds", type=int, default=75)
@@ -372,7 +374,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "verify": result = verify([x.strip() for x in args.components.split(",") if x.strip()])
-        elif args.command == "sync": result = sync(args.extra)
+        elif args.command == "sync": result = sync(args.extra, no_install_project=args.no_install_project)
         elif args.command == "audit":
             result = audit()
             if result["violation_count"]: raise BootstrapError(f"bootstrap audit found {result['violation_count']} violation(s)")
