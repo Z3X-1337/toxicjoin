@@ -1,6 +1,6 @@
 import { chromium, firefox, webkit } from "playwright-core";
 import { SCENARIOS, VIEWPORTS, auditAccessibilityAndLayout, captureScreenshot, requireCondition } from "./phase6_browser_common.mjs";
-import { assertUiMatchesPayload, isExecuteResponse, readReceiptId, verifyHeaders, verifyMissingReceipt, verifyReceiptLookup } from "./phase6_browser_assertions.mjs";
+import { assertUiMatchesPayload, isExecuteResponse, readReceiptId, verifyHeaders, verifyMissingReceipt, verifyReceiptLookup, verifySourceModeIndicator } from "./phase6_browser_assertions.mjs";
 
 const BROWSERS = Object.freeze([["chromium", chromium], ["firefox", firefox], ["webkit", webkit]]);
 
@@ -34,7 +34,11 @@ async function runProductionCell(browserName, browserType, viewport, options, sh
   const readyPayload = await readyResponse.json();
   requireCondition(readyPayload.status === "ok" && readyPayload.mode === "fixture", "production E2E readiness drift");
   requireCondition(readyPayload.database_ready === true && readyPayload.receipt_store_ready === true, "production state not ready");
-  await page.locator('[aria-label="System status"]').getByText("Fixture execution", { exact: true }).waitFor();
+  const sourceModeIndicator = await verifySourceModeIndicator(
+    page,
+    "Fixture execution",
+    viewport.width > 900,
+  );
   requireCondition((await page.locator(".mode-notice").count()) === 0, "unexpected replay notice on API path");
 
   const scenarioResults = [];
@@ -79,6 +83,7 @@ async function runProductionCell(browserName, browserType, viewport, options, sh
     browser_version: browserVersion,
     viewport: { name: viewport.name, width: viewport.width, height: viewport.height, device_scale_factor: viewport.deviceScaleFactor },
     source_mode: "api",
+    source_mode_indicator: sourceModeIndicator,
     readiness: {
       status: readyPayload.status,
       mode: readyPayload.mode,
@@ -119,13 +124,13 @@ export async function runFailureDisclosure(options) {
   await alert.waitFor({ state: "visible", timeout: 30_000 });
   const text = (await alert.textContent())?.replace(/\s+/g, " ").trim() ?? "";
   requireCondition(text.includes("Protected execution did not complete") && text.includes("Request failed: 503"), "failure disclosure drift");
-  await page.locator('[aria-label="System status"]').getByText("Fixture execution", { exact: true }).waitFor();
+  const sourceModeIndicator = await verifySourceModeIndicator(page, "Fixture execution", true);
   requireCondition((await page.locator(".mode-notice").count()) === 0, "failure disclosure incorrectly claimed replay");
   requireCondition(intercepted === 1, `expected one intercepted execute request, got ${intercepted}`);
   const screenshot = await captureScreenshot(page, options.outputDir, "negative-failure-disclosure.png");
   await context.close();
   await browser.close();
-  return { browser: "chromium", browser_version: browserVersion, source_mode: "api", intercepted_execute_requests: intercepted, alert_text: text, retry_control_present: true, screenshot };
+  return { browser: "chromium", browser_version: browserVersion, source_mode: "api", source_mode_indicator: sourceModeIndicator, intercepted_execute_requests: intercepted, alert_text: text, retry_control_present: true, screenshot };
 }
 
 export async function runReplayTruthfulness(options) {
@@ -142,7 +147,11 @@ export async function runReplayTruthfulness(options) {
     await route.abort("failed");
   });
   await page.goto(options.origin, { waitUntil: "domcontentloaded" });
-  await page.locator('[aria-label="System status"]').getByText("Historical deterministic replay", { exact: true }).waitFor();
+  const sourceModeIndicator = await verifySourceModeIndicator(
+    page,
+    "Historical deterministic replay",
+    false,
+  );
   const notice = page.locator(".mode-notice");
   await notice.waitFor({ state: "visible" });
   const noticeText = (await notice.textContent())?.replace(/\s+/g, " ").trim() ?? "";
@@ -161,6 +170,7 @@ export async function runReplayTruthfulness(options) {
     browser_version: browserVersion,
     viewport: VIEWPORTS[1],
     source_mode: "replay",
+    source_mode_indicator: sourceModeIndicator,
     bootstrap_requests_failed: bootstrapRequests,
     execute_safe_requests: executeSafeRequests,
     notice_text: noticeText,
