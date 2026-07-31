@@ -1,0 +1,219 @@
+name: Phase 5 Exact-SHA Live DataHub Evidence
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/phase5-live-datahub.yml"
+      - "config/datahub-assets.json"
+      - "config/toolchain.json"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "scripts/phase5*.py"
+      - "src/toxicjoin/agent/**"
+      - "src/toxicjoin/context/**"
+      - "src/toxicjoin/integrations/**"
+      - "src/toxicjoin/models.py"
+      - "src/toxicjoin/policy/**"
+      - "src/toxicjoin/sql/**"
+      - "tests/integration/test_datahub_spike.py"
+      - "tests/test_phase5_live_datahub.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase5-live-datahub-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exact-source-live-datahub:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      PHASE5_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      PHASE5_EVIDENCE_DIR: .toxicjoin/phase5
+      DATAHUB_GMS_URL: http://127.0.0.1:8080
+      DATAHUB_GMS_TOKEN: phase5-sdk-local-auth-disabled
+      DATAHUB_GMS_READ_TOKEN: phase5-reader-local-auth-disabled
+      DATAHUB_GMS_WRITE_TOKEN: phase5-writer-local-auth-disabled
+      DATAHUB_MCP_COMMAND: uvx
+      DATAHUB_MCP_ARGS: --from mcp-server-datahub==0.6.0 mcp-server-datahub
+      DATAHUB_MCP_TIMEOUT_SECONDS: "90"
+
+    steps:
+      - name: Check out exact pull-request head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.PHASE5_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Free runner disk space
+        shell: bash
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc || true
+          docker system prune --all --force || true
+          df -h
+
+      - name: Set up exact Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11.15"
+          cache: pip
+
+      - name: Install exact locked Live DataHub profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check "uv==0.8.4"
+          python scripts/bootstrap.py verify --components python,uv,locks,contract
+          python scripts/bootstrap.py sync --extra datahub
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          mkdir -p "$PHASE5_EVIDENCE_DIR"
+
+      - name: Verify exact source, toolchain, and credential separation
+        shell: bash
+        run: >-
+          uv run --frozen python scripts/phase5_live_datahub.py preflight
+          --expected-sha "$PHASE5_SOURCE_SHA"
+          --output "$PHASE5_EVIDENCE_DIR/preflight.json"
+
+      - name: Capture exact tool versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python --version > "$PHASE5_EVIDENCE_DIR/python-version.txt" 2>&1
+          uv --version > "$PHASE5_EVIDENCE_DIR/uv-version.txt" 2>&1
+          .venv/bin/datahub version > "$PHASE5_EVIDENCE_DIR/datahub-version.txt" 2>&1
+          uvx --from mcp-server-datahub==0.6.0 mcp-server-datahub --help \
+            > "$PHASE5_EVIDENCE_DIR/mcp-server-help.txt" 2>&1 || true
+
+      - name: Start real DataHub OSS quickstart
+        shell: bash
+        run: |
+          set -o pipefail
+          datahub docker quickstart 2>&1 | tee "$PHASE5_EVIDENCE_DIR/datahub-quickstart.log"
+
+      - name: Verify real DataHub services
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent --show-error \
+              http://127.0.0.1:8080/health \
+              > "$PHASE5_EVIDENCE_DIR/datahub-gms-health.txt"; then
+              break
+            fi
+            sleep 5
+          done
+          curl --fail --silent --show-error http://127.0.0.1:8080/health
+          curl --fail --silent --show-error --output /dev/null \
+            --write-out '%{http_code}\n' http://127.0.0.1:9002/ \
+            > "$PHASE5_EVIDENCE_DIR/datahub-ui-status.txt"
+
+      - name: Create deterministic synthetic warehouse
+        run: toxicjoin-seed
+
+      - name: Seed governed DataHub metadata with the pinned SDK
+        shell: bash
+        run: |
+          set -o pipefail
+          toxicjoin-datahub-seed \
+            --yes \
+            --output "$PHASE5_EVIDENCE_DIR/datahub-seed.json" \
+            2>&1 | tee "$PHASE5_EVIDENCE_DIR/datahub-seed.log"
+
+      - name: Bootstrap and index official MCP document tools
+        shell: bash
+        run: >-
+          uv run --frozen python scripts/phase5_bootstrap_document.py
+          --output "$PHASE5_EVIDENCE_DIR/document-bootstrap.json"
+
+      - name: Execute read-only, isolated writer, fresh readback protocol
+        shell: bash
+        run: |
+          set -o pipefail
+          toxicjoin-datahub-spike \
+            --verify \
+            --output "$PHASE5_EVIDENCE_DIR/datahub-spike.json" \
+            2>&1 | tee "$PHASE5_EVIDENCE_DIR/datahub-spike.log"
+
+      - name: Verify live tags, glossary terms, schema, and Agent discovery
+        shell: bash
+        run: >-
+          uv run --frozen python scripts/phase5_agent_discovery.py
+          --output "$PHASE5_EVIDENCE_DIR/agent-discovery.json"
+
+      - name: Verify live semantic policy decision through read-only MCP
+        shell: bash
+        run: >-
+          uv run --frozen python scripts/phase5_policy_decision.py
+          --output "$PHASE5_EVIDENCE_DIR/live-policy-decision.json"
+
+      - name: Capture sanitized runtime identity and raw diagnostics
+        if: always()
+        shell: bash
+        run: |
+          docker ps --format '{{.Image}}|{{.ID}}|{{.Names}}|{{.Status}}' \
+            > "$PHASE5_EVIDENCE_DIR/datahub-docker-ps.txt" 2>&1 || true
+          docker compose ls \
+            > "$PHASE5_EVIDENCE_DIR/datahub-compose-ls.txt" 2>&1 || true
+          docker image ls --digests \
+            --format '{{.Repository}}:{{.Tag}}|{{.Digest}}|{{.ID}}' \
+            > "$PHASE5_EVIDENCE_DIR/datahub-image-inventory.txt" 2>&1 || true
+          df -h > "$PHASE5_EVIDENCE_DIR/disk-usage.txt" 2>&1 || true
+
+      - name: Bind all live artifacts to the exact candidate SHA
+        shell: bash
+        run: >-
+          uv run --frozen python scripts/phase5_live_datahub.py finalize
+          --expected-sha "$PHASE5_SOURCE_SHA"
+          --preflight "$PHASE5_EVIDENCE_DIR/preflight.json"
+          --bootstrap "$PHASE5_EVIDENCE_DIR/document-bootstrap.json"
+          --seed "$PHASE5_EVIDENCE_DIR/datahub-seed.json"
+          --spike "$PHASE5_EVIDENCE_DIR/datahub-spike.json"
+          --agent "$PHASE5_EVIDENCE_DIR/agent-discovery.json"
+          --policy "$PHASE5_EVIDENCE_DIR/live-policy-decision.json"
+          --raw-evidence "$PHASE5_EVIDENCE_DIR/python-version.txt"
+          --raw-evidence "$PHASE5_EVIDENCE_DIR/uv-version.txt"
+          --raw-evidence "$PHASE5_EVIDENCE_DIR/datahub-version.txt"
+          --raw-evidence "$PHASE5_EVIDENCE_DIR/mcp-server-help.txt"
+          --raw-evidence "$PHASE5_EVIDENCE_DIR/datahub-quickstart.log"
+          --raw-evidence "$PHASE5_EVIDENCE_DIR/datahub-gms-health.txt"
+          --raw-evidence "$PHASE5_EVIDENCE_DIR/datahub-ui-status.txt"
+          --raw-evidence "$PHASE5_EVIDENCE_DIR/datahub-seed.log"
+          --raw-evidence "$PHASE5_EVIDENCE_DIR/datahub-spike.log"
+          --raw-evidence "$PHASE5_EVIDENCE_DIR/datahub-docker-ps.txt"
+          --raw-evidence "$PHASE5_EVIDENCE_DIR/datahub-compose-ls.txt"
+          --raw-evidence "$PHASE5_EVIDENCE_DIR/datahub-image-inventory.txt"
+          --raw-evidence "$PHASE5_EVIDENCE_DIR/disk-usage.txt"
+          --output-dir "$PHASE5_EVIDENCE_DIR"
+
+      - name: Verify repository source remains unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PHASE5_SOURCE_SHA"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=no)"
+
+      - name: Upload exact-source verified Live DataHub evidence
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: phase5-exact-sha-live-datahub-evidence
+          path: ${{ env.PHASE5_EVIDENCE_DIR }}/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 30
+
+      - name: Upload Live DataHub failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: phase5-live-datahub-failure-diagnostics
+          path: ${{ env.PHASE5_EVIDENCE_DIR }}/
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 14
