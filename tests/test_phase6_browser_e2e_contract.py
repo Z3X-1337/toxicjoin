@@ -48,6 +48,16 @@ def test_phase6_workflow_uses_exact_source_and_production_container() -> None:
     assert 'scripts/phase6_browser_*.mjs' in workflow
 
 
+def test_phase6_workflow_verifies_report_hash_with_generator_canonicalization() -> None:
+    workflow = _read(WORKFLOW)
+
+    assert 'import { canonicalJson, sha256Bytes } from "./scripts/phase6_browser_common.mjs";' in workflow
+    assert 'sha256Bytes(Buffer.from(canonicalJson(report), "utf8"))' in workflow
+    assert "report_sha256 mismatch" in workflow
+    assert "json.dumps(" not in workflow
+    assert "ensure_ascii=" not in workflow
+
+
 def test_phase6_script_covers_required_browser_and_product_paths() -> None:
     script = "\n".join(_read(path) for path in SCRIPT_FILES)
 
