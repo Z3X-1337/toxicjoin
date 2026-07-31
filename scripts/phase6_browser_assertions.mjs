@@ -9,6 +9,52 @@ export function isExecuteResponse(response) {
   }
 }
 
+export async function verifySourceModeIndicator(page, expectedText, expectedVisible) {
+  const selector = '[aria-label="System status"]';
+  const indicator = page.locator(selector);
+  await indicator.waitFor({ state: "attached", timeout: 30_000 });
+  await page.waitForFunction(
+    ({ selector: targetSelector, expected, visibleExpected }) => {
+      const element = document.querySelector(targetSelector);
+      if (!(element instanceof HTMLElement)) return false;
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      const visible =
+        style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        Number(style.opacity || "1") > 0 &&
+        rect.width > 0 &&
+        rect.height > 0;
+      return (
+        (element.textContent ?? "").replace(/\s+/g, " ").includes(expected) &&
+        visible === visibleExpected
+      );
+    },
+    { selector, expected: expectedText, visibleExpected: expectedVisible },
+    { timeout: 30_000 },
+  );
+  const state = await indicator.evaluate((element) => {
+    const style = window.getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return {
+      text: (element.textContent ?? "").replace(/\s+/g, " ").trim(),
+      visible:
+        style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        Number(style.opacity || "1") > 0 &&
+        rect.width > 0 &&
+        rect.height > 0,
+      display: style.display,
+      visibility: style.visibility,
+      width: rect.width,
+      height: rect.height,
+    };
+  });
+  requireCondition(state.text.includes(expectedText), `source-mode indicator missing ${expectedText}`);
+  requireCondition(state.visible === expectedVisible, `source-mode indicator visibility drift for ${expectedText}`);
+  return { ...state, expected_visible: expectedVisible };
+}
+
 async function waitForReceipt(page, expectedReceiptId) {
   await page.waitForFunction(
     ({ expected, pattern }) => {
