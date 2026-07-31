@@ -12,7 +12,7 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - "src/**"
-      - "scripts/phase6_browser_e2e.mjs"
+      - "scripts/phase6_browser_*.mjs"
       - "tests/test_phase6_browser_e2e_contract.py"
       - "docs/phase6-acceptance.md"
       - "docs/phase6-browser-e2e.md"
