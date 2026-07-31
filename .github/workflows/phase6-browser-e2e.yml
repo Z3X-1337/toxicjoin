@@ -139,6 +139,20 @@ jobs:
           test "$(git rev-parse HEAD)" = "$PHASE6_SOURCE_SHA"
           git diff --exit-code
           git diff --cached --exit-code
+          node --input-type=module - <<'NODE'
+          import { readFile } from "node:fs/promises";
+          import path from "node:path";
+          import { canonicalJson, sha256Bytes } from "./scripts/phase6_browser_common.mjs";
+
+          const root = path.resolve(process.env.PHASE6_EVIDENCE_DIR);
+          const report = JSON.parse(await readFile(path.join(root, "browser-e2e-report.json"), "utf8"));
+          const claimedReportHash = report.report_sha256;
+          delete report.report_sha256;
+          const actualReportHash = sha256Bytes(Buffer.from(canonicalJson(report), "utf8"));
+          if (actualReportHash !== claimedReportHash) {
+            throw new Error(`report_sha256 mismatch: claimed=${claimedReportHash} actual=${actualReportHash}`);
+          }
+          NODE
           python - <<'PY'
           import hashlib
           import json
@@ -152,15 +166,6 @@ jobs:
           assert len(report["matrix"]) == 6
           assert report["coverage"]["fake_or_generated_ui_used"] is False
           assert report["coverage"]["real_browser_screenshots"] is True
-
-          claimed_report_hash = report.pop("report_sha256")
-          canonical = json.dumps(
-              report,
-              sort_keys=True,
-              separators=(",", ":"),
-              ensure_ascii=True,
-          ).encode("utf-8")
-          assert hashlib.sha256(canonical).hexdigest() == claimed_report_hash
 
           manifest = (root / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
           assert manifest
