@@ -1,19 +1,28 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node@sha256:41e4389f3d988d2ed55392df4db1420ad048ae53324a8e2b7c6d19508288107e AS web-builder
+FROM node:22.16.0-alpine@sha256:41e4389f3d988d2ed55392df4db1420ad048ae53324a8e2b7c6d19508288107e AS web-builder
 WORKDIR /build/apps/web
+RUN test "$(node --version)" = "v22.16.0" \
+    && test "$(npm --version)" = "10.9.2"
 COPY apps/web/package.json apps/web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY apps/web/ ./
 RUN npm run build
 
-FROM python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS python-deps
+FROM python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS python-deps
 WORKDIR /app
-COPY pyproject.toml uv.lock README.md LICENSE ./
-RUN python -m pip install --no-cache-dir 'uv==0.8.4' \
-    && uv sync --frozen --no-dev --no-install-project
+COPY config/toolchain.json ./config/toolchain.json
+COPY scripts/bootstrap.py ./scripts/bootstrap.py
+COPY .github/workflows/ci.yml ./.github/workflows/ci.yml
+COPY pyproject.toml uv.lock README.md LICENSE package.json package-lock.json vercel.json Dockerfile ./
+COPY apps/web/package.json apps/web/package-lock.json ./apps/web/
+RUN python scripts/bootstrap.py verify --components python,locks \
+    && python -m pip install --no-cache-dir 'uv==0.8.4' \
+    && python scripts/bootstrap.py verify --components python,uv,locks,contract \
+    && python scripts/bootstrap.py sync --no-install-project \
+    && rm -rf /root/.cache/pip /root/.cache/uv
 
-FROM python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS runtime
+FROM python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
