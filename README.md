@@ -12,15 +12,21 @@ The LLM/agent never owns the authorization decision. Unsupported SQL, unresolved
 
 ToxicJoin was built for **Build with DataHub: The Agent Hackathon**, targeting **Agents That Do Real Work**.
 
+## Architecture authority
+
+[`docs/architecture.md`](docs/architecture.md) is the normative product-architecture and claim-boundary authority. Security, threat-model, deployment, judge, evidence, replay, vNext, and submission documents are subordinate or revision-bound views and may not upgrade a fixture, historical, replay-only, staged, off-main, or roadmap capability into a current product claim.
+
 ## Judge quick path
 
 1. **See the interface immediately:** https://toxicjoin-replay.vercel.app/
-   - Explicitly labeled **Deterministic Replay**.
+   - Explicitly labeled **Historical Deterministic Replay**.
+   - The retained public replay has policy identity `0.1.0`; it is not current-main policy `0.2.0` evidence.
    - It is not represented as live DuckDB execution, live DataHub mutation, or current-source release evidence.
 2. **Run the executable product path:** [`docs/judge-testing.md`](docs/judge-testing.md).
 3. **Inspect the submission freeze and current claim boundary:** [`docs/evidence/submission-freeze.md`](docs/evidence/submission-freeze.md).
 4. **Inspect sample outputs:** [`examples/`](examples/README.md).
 5. **Inspect retained real DataHub OSS + official MCP evidence:** [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md).
+   - This evidence is exact-revision evidence and was not rerun on final `main` `1aead67c339c218f5858a9eb9de05868cdc3a0e5`.
 6. **Inspect retained production-image black-box evidence:** [`docs/evidence/final-security-blackbox.md`](docs/evidence/final-security-blackbox.md).
 
 The shortest product proof chain is:
@@ -72,7 +78,7 @@ read DataHub context
   -> fresh reader inherits the result
 ```
 
-See [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md) and [`docs/datahub-live-integration.md`](docs/datahub-live-integration.md).
+See [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md) and [`docs/datahub-live-integration.md`](docs/datahub-live-integration.md). The retained live run proves its recorded revision and environment; it is not an exact-final-SHA live rerun.
 
 ## Reusable DataHub Skill
 
@@ -149,6 +155,8 @@ PENDING -> RELEASED
 The public SQLite disclosure authority is explicitly **single-node**. Phase 16 proved that replica-local SQLite files partition cumulative privacy history, then added a fail-closed topology boundary: a deployment declaring more than one application replica cannot silently claim shared-authoritative cumulative privacy state.
 
 ToxicJoin does **not** currently claim a PostgreSQL/shared-authoritative disclosure backend, distributed transactions, cross-node replay state, or horizontally shared receipt/key custody.
+
+Draft PR #118 contains an off-main PostgreSQL shared-authoritative implementation and evidence workflow. It is staged work, not a capability present on `main`, not wired into the current HTTP runtime, and not a production-supported backend.
 
 ## vNext claim boundary
 

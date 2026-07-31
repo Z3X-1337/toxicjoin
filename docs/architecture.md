@@ -1,142 +1,153 @@
-# ToxicJoin Architecture and Trust Boundaries
+# ToxicJoin — Canonical Product Architecture
 
-ToxicJoin is an enforcement boundary between an AI data agent and analytical execution. The agent may propose work, but it never owns authorization.
+Status: **Normative product-architecture authority**  
+Baseline reviewed: `1aead67c339c218f5858a9eb9de05868cdc3a0e5`
 
-```mermaid
-flowchart LR
-    U[User / analytical task] --> A[AI Data Agent]
-    A -->|proposed SQL + purpose + subject key| TJ
+This document is the single normative authority for ToxicJoin product architecture and claim boundaries. It describes what is canonical, executable, staged, historical, replay-only, or off-main. It does not upgrade a capability merely because code, tests, roadmap material, or retained evidence exists for it.
 
-    subgraph UNTRUSTED[Untrusted proposal boundary]
-      A
-    end
+## 1. Document authority
 
-    subgraph TJ[ToxicJoin deterministic enforcement boundary]
-      P[SQLGlot parser\nphysical datasets, fields, aliases, CTEs]
-      C[Governed-context resolver]
-      E[Deterministic policy engine\nALLOW / REWRITE / BLOCK]
-      R[Constrained SQL rewriter]
-      X[Read-only DuckDB executor]
-      V[Independent result verifier]
-      Q[Sanitized content-hashed receipt]
+The repository documentation hierarchy is:
 
-      P --> C --> E
-      E -->|REWRITE| R -->|safe candidate SQL| P
-      E -->|ALLOW only| X --> V --> Q
-      E -->|BLOCK| Q
-      V -->|verification failure| Q
-    end
+1. `docs/architecture.md` — normative product architecture and surface map.
+2. `docs/security-architecture.md` — detailed security implementation and migration constraints, subordinate to this document.
+3. `docs/threat-model.md` — threats, controls, and residual risks.
+4. `docs/deployment.md` — deployment procedures and topology-specific claims.
+5. Judge, evidence, replay, vNext, and submission documents — revision-bound or audience-specific views that may not override this architecture.
 
-    DH[(DataHub OSS governance graph)]
-    MCP[Official DataHub MCP Server]
-    D[Persisted DataHub Decision]
-    MCP2[Fresh MCP process]
+When documents conflict, this product architecture controls. Evidence remains authoritative only for the exact revision, environment, commands, and outputs it records.
 
-    DH <--> MCP
-    MCP -->|entities, schema fields, tags, glossary terms, lineage| C
-    Q -->|sanitized decision evidence| MCP
-    MCP -->|save_document| D
-    D --> DH
-    DH --> MCP2
-    MCP2 -->|grep_documents independent read-back| Q
-
-    X --> W[(Synthetic / configured warehouse)]
-
-    A -. no authorization authority .-> E
-    A -. no raw sensitive rows .-> X
-```
-
-## Trust model
-
-### AI agent: proposal authority only
-
-The AI agent may formulate an analytical purpose and propose SQL. ToxicJoin treats that proposal as untrusted input. An LLM never decides whether the request is allowed, never weakens a policy to make a query run, and is not given raw sensitive result rows.
-
-### DataHub: governed source of context
-
-ToxicJoin resolves the physical fields referenced by the SQL and grounds them in governed DataHub context. The stable live integration uses DataHub OSS and the official DataHub MCP Server to read entities, schema fields, tags, glossary terms, and lineage.
-
-Missing, conflicting, unclassified, or structurally invalid governed context is uncertainty, not permission. ToxicJoin fails closed.
-
-The separate [governance-dependency evaluation](evidence/governance-dependency.md) holds the SQL, data, subject key, policy, and executor fixed while changing only normalized governance. Complete governance produces the intended `REWRITE → ALLOW` path; degraded governance blocks before execution.
-
-### Deterministic policy: authorization authority
-
-The policy engine is the only component that can produce an effective `ALLOW`. Its relevant interactions include:
-
-- direct identifier + sensitive attribute;
-- stable pseudonym + multiple quasi-identifiers + sensitive attribute;
-- sensitive grouped results without a trusted minimum distinct-subject threshold;
-- missing or ambiguous metadata and unsupported SQL.
-
-`BLOCK` outranks `REWRITE` and `ALLOW`.
-
-The [compositional ablation](evidence/compositional-ablation.md) isolates the cross-column interaction on the declared evaluation: the shipped policy blocks all 144 unsafe mutations, while the targeted interaction ablation allows those same 144 cases and preserves all 20 ALLOW/REWRITE controls.
-
-### Rewrite: candidate transformation, never trusted output
-
-A supported rewrite may add or strengthen a minimum distinct-subject condition to an already grouped analytical query. Generated SQL is not trusted because ToxicJoin created it.
-
-The rewritten SQL must pass the same boundary again:
-
-```text
-rewrite
-  → parse again
-  → resolve governed context again
-  → evaluate deterministic policy again
-  → require effective ALLOW
-```
-
-Only then can execution be attempted.
-
-### Execution and verification
-
-DuckDB runs through a hardened read-only path. `BLOCK` and unresolved `REWRITE` requests do not reach the executor.
-
-After execution, an independent verifier checks the accepted output contract, including required subject counts and forbidden output fields. Verification failure is fail-closed.
-
-The [144-case adversarial mutation suite](evidence/adversarial-mutations.md) additionally requires every unsafe mutation to reach the intended compositional-risk rule and verifies that none reaches database execution.
-
-### Receipts and DataHub institutional memory
-
-Every path produces a sanitized, content-hashed receipt. Result rows are deliberately excluded so the audit artifact does not become another privacy leak.
-
-When DataHub write-back is enabled, ToxicJoin persists a sanitized `Decision` through `save_document`. Persistence is not trusted from the write response alone: the writing MCP process is closed, a fresh MCP process is started, and `grep_documents` independently verifies the persisted decision marker.
-
-The real SDK/MCP proof is retained in [live DataHub evidence](evidence/datahub-live.md).
-
-## Agent and Skill representation in DataHub
-
-ToxicJoin also has a reusable git-backed [Compositional Risk Review Agent Skill](../skills/compositional-risk-review/SKILL.md). In isolated DataHub development-channel evidence, the project registered and independently read back:
-
-- 1 AI Agent;
-- 1 Agent Skill;
-- 5 API entities representing the required DataHub MCP tools;
-- Agent → Skill dependency;
-- Agent → five-tool dependencies;
-- Agent consumption lineage to all 5 governed ToxicJoin datasets.
-
-See [DataHub Agent Registry evidence](evidence/datahub-agent-registry.md).
-
-This Agent Registry proof is explicitly a **preview/development-channel capability** and is not a stable runtime dependency. ToxicJoin's stable enforcement and MCP evidence remain independent of it.
-
-## Deployment boundaries
-
-### Executable product path
-
-The Docker/FastAPI package is the executable ToxicJoin product. It owns the filesystem-backed synthetic DuckDB fixture and atomic receipt store used by the judge path.
-
-### Public Replay
-
-The hosted browser interface at `https://toxicjoin-replay.vercel.app/` is deliberately labeled **Deterministic Replay**. It is useful for immediate inspection but is not represented as live DuckDB execution or a live DataHub session.
-
-A serverless backend is intentionally not used as a substitute for the executable product because ToxicJoin's receipt integrity and later receipt lookup depend on durable runtime state. Preserving the enforcement guarantees takes priority over presenting an ephemeral deployment as equivalent.
-
-## Core invariant
+## 2. Core invariant
 
 ```text
 An agent may propose.
-DataHub supplies governed truth.
+DataHub supplies governed context.
 ToxicJoin alone authorizes execution.
 Uncertainty fails closed.
 ```
+
+The AI or Governed Agent is proposal-only. It does not own policy authority, disclosure state, authorization keys, database connections, result release, or DataHub mutation authority.
+
+## 3. Canonical HTTP runtime
+
+The current executable product path is:
+
+```text
+authenticated caller
+  -> FastAPI authentication and scope enforcement
+  -> request identity binding
+  -> SQL analysis
+  -> fixture or governed context resolution
+  -> deterministic PolicyEngine
+       -> BLOCK
+       -> ALLOW
+       -> constrained REWRITE
+            -> reparse
+            -> reground
+            -> reevaluate
+  -> pipeline-owned ExecutionAuthorizer
+  -> exact-state, short-lived, single-use execution capability
+  -> hardened read-only DuckDB
+  -> quarantined result
+  -> independent post-execution verification
+  -> disclosure state RELEASED or ABORTED when required
+  -> sanitized authenticated receipt without raw rows
+```
+
+The current HTTP pipeline does not supply the strict vNext privacy-proof capsule and has not completed migration to the strict proof-bound authorizer.
+
+## 4. Fixture mode
+
+Fixture mode is a current executable judge path. It uses deterministic synthetic governance, a real read-only DuckDB execution path, SQLite disclosure state when enabled, verification, and receipts.
+
+Fixture mode does not claim:
+
+- a live external DataHub session;
+- production multi-tenancy;
+- horizontally shared disclosure state;
+- distributed replay or rate-limit state.
+
+## 5. Live DataHub integration
+
+The stable DataHub path uses real DataHub OSS and the official MCP Server:
+
+```text
+SDK / read-only MCP
+  -> governed entities, fields, tags, glossary terms, and lineage
+isolated writer MCP
+  -> ToxicJoin allowlist exposes only save_document
+fresh read-only MCP
+  -> independent persisted Decision read-back
+```
+
+Credential roles are distinct:
+
+- SDK token;
+- MCP read token;
+- MCP write token;
+- fresh read-back uses read authority in a separate process.
+
+The retained tested launcher contract is pinned to `mcp-server-datahub==0.6.0`.
+
+The repository retains exact-revision live evidence. It does **not** currently possess Live DataHub evidence executed on final `main` `1aead67c339c218f5858a9eb9de05868cdc3a0e5`. Retained evidence proves its recorded revision; unchanged-source applicability arguments are not equivalent to an exact-final-SHA live rerun.
+
+## 6. Hosted deterministic replay
+
+The public site is a deterministic historical replay. It is useful for judge access but is not:
+
+- a live FastAPI backend;
+- DuckDB execution;
+- DataHub mutation;
+- current-main build identity;
+- current policy-version evidence.
+
+Generic Vercel build instructions describe how a new deployment may be built. They must not be confused with the provenance of the currently hosted site.
+
+The current product policy is `0.2.0`. The retained public replay identity is `0.1.0` and must be labeled historical unless a new deployment is generated and verified from exact current evidence.
+
+## 7. Replay source and materialization
+
+The current repository replay source stores the safe SQL in valid clause order, and `judgeReplay.ts` re-exports that source without an in-memory corrective transform.
+
+This source correction does not alter or redeploy the historical public Vercel assets. The hosted replay remains governed by its retained provenance and historical policy identity until separately rebuilt and verified.
+
+## 8. Historical evidence
+
+Evidence documents prove only their recorded revision, environment, commands, and outputs. Historical evidence may support provenance but cannot establish current repository identity.
+
+## 9. vNext staged architecture
+
+The repository contains implemented and tested staged components including:
+
+- Evidence Layer;
+- Disclosure Digital Twin;
+- Future Action Grammar;
+- bounded PPMC;
+- CPCC;
+- Privacy Proof Capsule;
+- authenticated proof and proposal handoffs;
+- Governed Agent authority separation;
+- strict proof-bound execution primitives.
+
+These are real staged components. They are not a claim that the canonical HTTP runtime has completed the entire vNext chain.
+
+## 10. PostgreSQL staged backend
+
+Draft PR #118 contains an off-main PostgreSQL shared-authoritative disclosure backend and dedicated evidence workflow.
+
+It is not:
+
+- present on current `main`;
+- a current HTTP runtime capability;
+- a production-supported backend;
+- evidence of distributed receipt, key, replay, or transaction topology.
+
+The current public disclosure authority remains SQLite and explicitly single-node.
+
+## 11. Future roadmap
+
+Roadmap and ADR material may describe intended migrations. A roadmap does not change current behavior or claimability. A capability becomes canonical only after implementation, integration into the product path, exact-head evidence, and an explicit architecture update.
+
+## 12. Claim-control rule
+
+No README text, UI label, deployment guide, Devpost answer, video narration, or evidence document may upgrade a fixture, historical, replay, staged, off-main, or roadmap surface into a current canonical capability.

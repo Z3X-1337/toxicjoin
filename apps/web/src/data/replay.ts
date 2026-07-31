@@ -24,8 +24,15 @@ JOIN retention_scores r ON c.customer_id = r.customer_id
 GROUP BY c.coarse_region
 ORDER BY c.coarse_region`;
 
-const SAFE_SQL = `${REWRITE_SQL}
-HAVING COUNT(DISTINCT c.customer_id) >= 20`;
+const SAFE_SQL = `SELECT
+  c.coarse_region,
+  AVG(r.churn_score) AS average_churn,
+  COUNT(DISTINCT c.customer_id) AS subject_count
+FROM customers c
+JOIN retention_scores r ON c.customer_id = r.customer_id
+GROUP BY c.coarse_region
+HAVING COUNT(DISTINCT c.customer_id) >= 20
+ORDER BY c.coarse_region`;
 
 const BLOCK_SQL = `SELECT c.customer_id, c.age_band, c.precise_area, s.case_category
 FROM customers c
