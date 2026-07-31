@@ -6,11 +6,25 @@
   "authority": "This file is the machine-readable authority for Phase 3 bootstrap tool versions and lock surfaces.",
   "python": {
     "requires_python": ">=3.11,<3.13",
-    "supported_exact": [
-      "3.11.15",
-      "3.12.13"
-    ],
-    "default_exact": "3.12.13"
+    "supported_by_platform": {
+      "linux": [
+        "3.11.15",
+        "3.12.13"
+      ],
+      "windows": [
+        "3.11.9",
+        "3.12.10"
+      ],
+      "macos": [
+        "3.11.9",
+        "3.12.10"
+      ]
+    },
+    "default_by_platform": {
+      "linux": "3.12.13",
+      "windows": "3.12.10",
+      "macos": "3.12.10"
+    }
   },
   "uv": {
     "version": "0.8.4",
@@ -52,7 +66,7 @@
     "excluded": [
       {
         "platform": "macos-arm64",
-        "reason": "actions/setup-python does not publish the exact Phase 3 Python 3.11.15 and 3.12.13 toolcache builds for the macos-15 ARM64 runner"
+        "reason": "actions/setup-python does not publish all exact Phase 3 Python 3.11 and 3.12 binary patches for the macos-15 ARM64 runner"
       }
     ],
     "status": "candidate-until-exact-head-phase3-evidence-passes",
