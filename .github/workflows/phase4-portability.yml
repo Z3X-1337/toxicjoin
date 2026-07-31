@@ -12,36 +12,35 @@ concurrency:
   group: phase4-portability-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  PHASE4_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
 jobs:
   portability-contract:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-
     steps:
       - name: Check out exact source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ env.PHASE4_SOURCE_SHA }}
           persist-credentials: false
-
       - name: Set up exact Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12.13"
           cache: pip
-
       - name: Install exact uv bootstrap and locked development profile
         run: |
           python -m pip install --disable-pip-version-check "uv==0.8.4"
           python scripts/bootstrap.py verify --components python,uv,locks,contract
           python scripts/bootstrap.py sync --extra dev
-
       - name: Lint Phase 4 authority
         run: >-
           uv run --frozen ruff check
           scripts/phase4_portability.py
           tests/test_phase4_portability.py
           tests/security/test_agent_proof_handoff_traceback.py
-
       - name: Validate Phase 4 contract and traceback selector
         run: >-
           uv run --frozen pytest -q
@@ -62,35 +61,30 @@ jobs:
             python: "3.11.9"
           - os: windows-2025
             python: "3.12.10"
-
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     env:
       PHASE4_EVIDENCE_DIR: .toxicjoin/phase4-evidence
-
     steps:
       - name: Check out exact source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ env.PHASE4_SOURCE_SHA }}
           persist-credentials: false
-
       - name: Set up exact Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-
       - name: Install exact uv bootstrap and locked development profile
         run: |
           python -m pip install --disable-pip-version-check "uv==0.8.4"
           python scripts/bootstrap.py verify --components python,uv,locks,contract
           python scripts/bootstrap.py sync --extra dev
-
       - name: Run complete locked suite and real-frame traceback proof
         run: >-
           uv run --frozen python scripts/phase4_portability.py run-suite
           --output-dir "${{ env.PHASE4_EVIDENCE_DIR }}"
-
       - name: Upload exact-platform Phase 4 evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -106,30 +100,26 @@ jobs:
     needs: portability-suite
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-
     steps:
       - name: Check out exact source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ env.PHASE4_SOURCE_SHA }}
           persist-credentials: false
-
       - name: Set up exact Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12.13"
-
       - name: Download all Phase 4 native evidence
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: phase4-portability-*
           path: .toxicjoin/phase4-collected
-
       - name: Compare Linux and Windows inventory, outcomes, and invariants
         run: >-
           python scripts/phase4_portability.py compare
           --input-dir .toxicjoin/phase4-collected
           --output-dir .toxicjoin/phase4-parity
-
       - name: Upload Phase 4 parity comparison
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
