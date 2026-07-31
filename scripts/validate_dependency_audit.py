@@ -8,7 +8,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EXCEPTIONS = ROOT / "docs/security/p4-dependency-risk-exceptions.json"
-_ALLOWED_PIP_BOOTSTRAP = "python -m pip install --disable-pip-version-check 'uv==0.8.4'"
+_ALLOWED_UV_VERSION = "0.8.4"
+_ALLOWED_UV_BOOTSTRAP_RE = re.compile(
+    r"^python -m pip install(?: --no-cache-dir)? --disable-pip-version-check "
+    r"[\"']uv==0\.8\.4[\"']$"
+)
 
 
 def load(path: str | Path) -> dict:
@@ -88,7 +92,7 @@ def _validate_workflow_installs(path: Path, text: str) -> None:
     for line in text.splitlines():
         stripped = line.strip()
         if re.search(r"\bpip\s+install\b", stripped):
-            if stripped != _ALLOWED_PIP_BOOTSTRAP:
+            if not _ALLOWED_UV_BOOTSTRAP_RE.fullmatch(stripped):
                 raise SystemExit(
                     f"Unapproved pip bootstrap/install remains in {path.relative_to(ROOT)}: {stripped}"
                 )
@@ -96,6 +100,13 @@ def _validate_workflow_installs(path: Path, text: str) -> None:
             raise SystemExit(
                 f"Floating npm install remains in workflow: {path.relative_to(ROOT)}: {stripped}"
             )
+
+
+def _consumes_frozen_python_lock(text: str) -> bool:
+    return (
+        "uv sync --frozen" in text
+        or "scripts/bootstrap.py sync" in text
+    )
 
 
 def validate_static() -> None:
@@ -108,12 +119,18 @@ def validate_static() -> None:
     if missing_locks:
         raise SystemExit("Required lockfile missing: " + json.dumps(missing_locks))
 
+    bootstrap = (ROOT / "scripts/bootstrap.py").read_text(encoding="utf-8")
+    if "command = [UV_BIN, \"sync\", \"--frozen\"]" not in bootstrap:
+        raise SystemExit("Bootstrap sync authority no longer enforces uv --frozen")
+
     docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     from_lines = [line for line in docker.splitlines() if line.startswith("FROM ")]
     if len(from_lines) < 3 or any("@sha256:" not in line for line in from_lines):
         raise SystemExit(f"Docker bases must be digest pinned: {from_lines}")
-    if "npm ci --no-audit --no-fund" not in docker or "uv sync --frozen" not in docker:
+    if "npm ci --no-audit --no-fund" not in docker or not _consumes_frozen_python_lock(docker):
         raise SystemExit("Dockerfile does not consume committed locks")
+    if "scripts/bootstrap.py sync --no-install-project" not in docker:
+        raise SystemExit("Dockerfile must consume uv.lock without installing the project early")
 
     floating = []
     uses_re = re.compile(r"uses:\s*([^\s#]+)@([^\s#]+)")
@@ -130,8 +147,20 @@ def validate_static() -> None:
         raise SystemExit("Floating GitHub Actions refs: " + json.dumps(floating))
 
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    if "uv sync --frozen --extra dev" not in ci or "npm ci --no-audit --no-fund" not in ci:
+    if not _consumes_frozen_python_lock(ci) or "npm ci --no-audit --no-fund" not in ci:
         raise SystemExit("CI does not consume committed dependency locks")
+    required_phase3_tokens = (
+        "bootstrap-contract:",
+        "bootstrap-native:",
+        'python: ["3.11.15", "3.12.13"]',
+        "ubuntu-24.04",
+        "windows-2025",
+        "macos-15",
+        "scripts/bootstrap.py audit",
+        "scripts/bootstrap.py evidence",
+    )
+    if any(token not in ci for token in required_phase3_tokens):
+        raise SystemExit("CI does not contain the complete Phase 3 exact-platform gate")
 
     hosted = (ROOT / ".github/workflows/verify-hosted-replay.yml").read_text(encoding="utf-8")
     if "npm ci --no-audit --no-fund" not in hosted:
