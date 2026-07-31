@@ -57,10 +57,16 @@ async function waitForReceipt(page, expectedReceiptId) {
 }
 
 export async function readReceiptId(page) {
-  const locator = page.locator(".receipt-grid > div").filter({ hasText: "Receipt ID" }).locator("dd");
-  if ((await locator.count()) === 0) return null;
-  const value = (await locator.first().textContent())?.trim() ?? "";
-  return RECEIPT_ID_PATTERN.test(value) ? value : null;
+  const locator = page.locator(".receipt-grid > div").filter({ hasText: "Receipt ID" }).locator("dd").first();
+  const deadline = Date.now() + DEFAULT_WAIT_TIMEOUT_MS;
+  while (Date.now() <= deadline) {
+    if ((await locator.count()) > 0) {
+      const value = ((await locator.textContent()) ?? "").trim();
+      if (RECEIPT_ID_PATTERN.test(value)) return value;
+    }
+    await sleep(POLL_INTERVAL_MS);
+  }
+  return null;
 }
 
 export async function assertUiMatchesPayload(page, payload, scenario) {
