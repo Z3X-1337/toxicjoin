@@ -14,26 +14,29 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11.15", "3.12.13"]
 
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
 
-      - name: Set up Python
+      - name: Set up exact Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install package and development tools
+      - name: Install exact uv bootstrap and locked development profile
         run: |
           python -m pip install --disable-pip-version-check 'uv==0.8.4'
-          uv sync --frozen --extra dev
+          python scripts/bootstrap.py verify --components python,uv,locks,contract
+          python scripts/bootstrap.py sync --extra dev
 
       - name: Lint
         run: uv run --frozen ruff check src tests
@@ -45,11 +48,11 @@ jobs:
           uv run --frozen pytest -q 2>&1 | tee pytest-${{ matrix.python-version }}.log
 
       - name: Generate benchmark evidence
-        if: matrix.python-version == '3.11'
+        if: matrix.python-version == '3.11.15'
         run: uv run --frozen toxicjoin-benchmark --output-dir artifacts/benchmark
 
       - name: Upload benchmark evidence
-        if: matrix.python-version == '3.11'
+        if: matrix.python-version == '3.11.15'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: toxicjoin-benchmark
@@ -58,13 +61,13 @@ jobs:
           retention-days: 30
 
       - name: Generate PPMC hard-gate evidence
-        if: matrix.python-version == '3.11'
+        if: matrix.python-version == '3.11.15'
         run: >-
           uv run --frozen python -m toxicjoin.benchmark.ppmc_hard_gate
           --output-dir artifacts/ppmc-hard-gate
 
       - name: Upload PPMC hard-gate evidence
-        if: matrix.python-version == '3.11'
+        if: matrix.python-version == '3.11.15'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: toxicjoin-ppmc-hard-gate
@@ -82,16 +85,24 @@ jobs:
           retention-days: 14
 
   web:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
 
-      - name: Set up Node.js
+      - name: Set up exact Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "22.16.0"
+
+      - name: Verify exact Node.js and npm
+        shell: bash
+        run: |
+          test "$(node --version)" = "v22.16.0"
+          test "$(npm --version)" = "10.9.2"
 
       - name: Install pinned frontend dependencies
         working-directory: apps/web
@@ -131,12 +142,14 @@ jobs:
           retention-days: 14
 
   container:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [test, web]
 
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
 
       - name: Build production image
         run: docker build --tag toxicjoin:ci .
