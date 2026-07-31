@@ -8,7 +8,7 @@ on:
       - "config/toolchain.json"
       - "pyproject.toml"
       - "uv.lock"
-      - "scripts/phase5_live_datahub.py"
+      - "scripts/phase5*.py"
       - "src/toxicjoin/agent/**"
       - "src/toxicjoin/context/**"
       - "src/toxicjoin/integrations/**"
@@ -126,7 +126,7 @@ jobs:
       - name: Bootstrap and index official MCP document tools
         shell: bash
         run: >-
-          uv run --frozen python scripts/phase5_live_datahub.py bootstrap-document
+          uv run --frozen python scripts/phase5_bootstrap_document.py
           --output "$PHASE5_EVIDENCE_DIR/document-bootstrap.json"
 
       - name: Execute read-only, isolated writer, fresh readback protocol
@@ -141,13 +141,13 @@ jobs:
       - name: Verify live tags, glossary terms, schema, and Agent discovery
         shell: bash
         run: >-
-          uv run --frozen python scripts/phase5_live_datahub.py agent-discovery
+          uv run --frozen python scripts/phase5_agent_discovery.py
           --output "$PHASE5_EVIDENCE_DIR/agent-discovery.json"
 
       - name: Verify live semantic policy decision through read-only MCP
         shell: bash
         run: >-
-          uv run --frozen python scripts/phase5_live_datahub.py policy-decision
+          uv run --frozen python scripts/phase5_policy_decision.py
           --output "$PHASE5_EVIDENCE_DIR/live-policy-decision.json"
 
       - name: Capture sanitized runtime identity and raw diagnostics
