@@ -1,5 +1,12 @@
 import { RECEIPT_ID_PATTERN, SHA256_PATTERN, requireCondition } from "./phase6_browser_common.mjs";
 
+const POLL_INTERVAL_MS = 100;
+const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 export function isExecuteResponse(response) {
   try {
     const url = new URL(response.url());
@@ -10,62 +17,43 @@ export function isExecuteResponse(response) {
 }
 
 export async function verifySourceModeIndicator(page, expectedText, expectedVisible) {
-  const selector = '[aria-label="System status"]';
-  const indicator = page.locator(selector);
-  await indicator.waitFor({ state: "attached", timeout: 30_000 });
-  await page.waitForFunction(
-    ({ selector: targetSelector, expected, visibleExpected }) => {
-      const element = document.querySelector(targetSelector);
-      if (!(element instanceof HTMLElement)) return false;
-      const style = window.getComputedStyle(element);
-      const rect = element.getBoundingClientRect();
-      const visible =
-        style.display !== "none" &&
-        style.visibility !== "hidden" &&
-        Number(style.opacity || "1") > 0 &&
-        rect.width > 0 &&
-        rect.height > 0;
-      return (
-        (element.textContent ?? "").replace(/\s+/g, " ").includes(expected) &&
-        visible === visibleExpected
-      );
-    },
-    { selector, expected: expectedText, visibleExpected: expectedVisible },
-    { timeout: 30_000 },
-  );
-  const state = await indicator.evaluate((element) => {
-    const style = window.getComputedStyle(element);
-    const rect = element.getBoundingClientRect();
-    return {
-      text: (element.textContent ?? "").replace(/\s+/g, " ").trim(),
-      visible:
-        style.display !== "none" &&
-        style.visibility !== "hidden" &&
-        Number(style.opacity || "1") > 0 &&
-        rect.width > 0 &&
-        rect.height > 0,
-      display: style.display,
-      visibility: style.visibility,
-      width: rect.width,
-      height: rect.height,
+  const indicator = page.locator('[aria-label="System status"]');
+  await indicator.waitFor({ state: "attached", timeout: DEFAULT_WAIT_TIMEOUT_MS });
+
+  const deadline = Date.now() + DEFAULT_WAIT_TIMEOUT_MS;
+  let state = null;
+  while (Date.now() <= deadline) {
+    const text = ((await indicator.textContent()) ?? "").replace(/\s+/g, " ").trim();
+    const visible = await indicator.isVisible();
+    const box = await indicator.boundingBox();
+    state = {
+      text,
+      visible,
+      width: box?.width ?? 0,
+      height: box?.height ?? 0,
     };
-  });
+    if (text.includes(expectedText) && visible === expectedVisible) break;
+    await sleep(POLL_INTERVAL_MS);
+  }
+
+  requireCondition(state !== null, "source-mode indicator state was not observed");
   requireCondition(state.text.includes(expectedText), `source-mode indicator missing ${expectedText}`);
   requireCondition(state.visible === expectedVisible, `source-mode indicator visibility drift for ${expectedText}`);
   return { ...state, expected_visible: expectedVisible };
 }
 
 async function waitForReceipt(page, expectedReceiptId) {
-  await page.waitForFunction(
-    ({ expected, pattern }) => {
-      const receiptNode = [...document.querySelectorAll(".receipt-grid > div")]
-        .find((node) => node.querySelector("dt")?.textContent?.includes("Receipt ID"));
-      const value = receiptNode?.querySelector("dd")?.textContent?.trim() ?? "";
-      return new RegExp(pattern).test(value) && value === expected;
-    },
-    { expected: expectedReceiptId, pattern: RECEIPT_ID_PATTERN.source },
-    { timeout: 30_000 },
-  );
+  const locator = page.locator(".receipt-grid > div").filter({ hasText: "Receipt ID" }).locator("dd").first();
+  await locator.waitFor({ state: "attached", timeout: DEFAULT_WAIT_TIMEOUT_MS });
+
+  const deadline = Date.now() + DEFAULT_WAIT_TIMEOUT_MS;
+  let value = "";
+  while (Date.now() <= deadline) {
+    value = ((await locator.textContent()) ?? "").trim();
+    if (RECEIPT_ID_PATTERN.test(value) && value === expectedReceiptId) return;
+    await sleep(POLL_INTERVAL_MS);
+  }
+  throw new Error(`receipt ${expectedReceiptId} did not become visible before timeout; last value: ${value}`);
 }
 
 export async function readReceiptId(page) {
