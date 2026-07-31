@@ -8,10 +8,14 @@ interface ProductHeaderProps {
 export function ProductHeader({ health, sourceMode }: ProductHeaderProps) {
   const modeLabel =
     sourceMode === "replay"
-      ? "Deterministic replay"
+      ? "Historical deterministic replay"
       : health?.mode === "live"
         ? "Live DataHub"
         : "Fixture execution";
+  const policyLabel =
+    sourceMode === "replay"
+      ? `Replay policy ${health?.policy_version ?? "0.1.0"}`
+      : `Policy ${health?.policy_version ?? "unknown"}`;
 
   return (
     <header className="product-header">
@@ -29,7 +33,7 @@ export function ProductHeader({ health, sourceMode }: ProductHeaderProps) {
         <span className="proof-dot" aria-hidden="true" />
         <span>{modeLabel}</span>
         <span className="proof-divider" aria-hidden="true" />
-        <span>Policy {health?.policy_version ?? "0.1.0"}</span>
+        <span>{policyLabel}</span>
       </div>
 
       <a
