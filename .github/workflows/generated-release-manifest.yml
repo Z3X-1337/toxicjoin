@@ -4,14 +4,25 @@ on:
   pull_request:
     paths:
       - ".github/workflows/generated-release-manifest.yml"
+      - ".github/workflows/phase8-durable-evidence.yml"
       - "scripts/generate_release_manifest_v2.py"
+      - "scripts/generate_release_manifest_v3.py"
       - "scripts/release_manifest_gate.py"
       - "scripts/release_manifest_artifacts.py"
       - "scripts/phase5_manifest_validator.py"
+      - "scripts/phase5_retention_policy.py"
       - "scripts/phase6_browser_release_manifest_contract.mjs"
       - "scripts/phase7_topology_evidence.py"
+      - "scripts/phase8_durable_evidence.py"
+      - "scripts/phase8_release_manifest.py"
       - "tests/test_generate_release_manifest.py"
+      - "tests/test_phase8_durable_evidence.py"
+      - "tests/test_phase8_release_manifest_contract.py"
+      - "config/phase8-evidence-retention.json"
+      - "evidence/retained/**"
       - "docs/phase7-acceptance.md"
+      - "docs/phase8-acceptance.md"
+      - "docs/durable-evidence.md"
       - "docs/release-manifest.md"
       - ".github/workflows/disclosure-sequence-evidence.yml"
   workflow_run:
@@ -52,11 +63,19 @@ jobs:
           python scripts/bootstrap.py sync --extra dev
           uv run --frozen ruff check \
             scripts/generate_release_manifest_v2.py \
+            scripts/generate_release_manifest_v3.py \
             scripts/release_manifest_gate.py \
             scripts/release_manifest_artifacts.py \
             scripts/phase7_topology_evidence.py \
-            tests/test_generate_release_manifest.py
-          uv run --frozen pytest -q tests/test_generate_release_manifest.py
+            scripts/phase8_durable_evidence.py \
+            scripts/phase8_release_manifest.py \
+            tests/test_generate_release_manifest.py \
+            tests/test_phase8_durable_evidence.py \
+            tests/test_phase8_release_manifest_contract.py
+          uv run --frozen pytest -q \
+            tests/test_generate_release_manifest.py \
+            tests/test_phase8_durable_evidence.py \
+            tests/test_phase8_release_manifest_contract.py
 
   candidate-manifest:
     if: github.event_name == 'pull_request'
@@ -97,7 +116,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python scripts/generate_release_manifest_v2.py \
+          python scripts/generate_release_manifest_v3.py \
             --mode candidate \
             --source-sha "$TOXICJOIN_SOURCE_SHA" \
             --checked-out-sha "${{ steps.identity.outputs.checked_out_sha }}" \
@@ -124,10 +143,16 @@ jobs:
               ensure_ascii=True,
           ).encode()
           assert hashlib.sha256(canonical).hexdigest() == claimed
-          assert payload["schema_version"] == "2.0"
+          assert payload["schema_version"] == "2.1"
           assert payload["identity"]["mode"] == "candidate"
           assert payload["identity"]["source_sha"] == os.environ["TOXICJOIN_SOURCE_SHA"]
+          assert payload["gate_summary"]["required_workflows"] == 12
           assert payload["gate_summary"]["all_required_gates_verified"] is True
+          assert payload["claim_boundaries"]["phase8_started"] is True
+          assert (
+              payload["claim_boundaries"]["durable_evidence_retention"]
+              == "git-content-addressed"
+          )
           for key in ("missing", "stale", "skipped", "inapplicable"):
               assert payload["gate_summary"][key] == []
           PY
@@ -177,7 +202,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          python scripts/generate_release_manifest_v2.py \
+          python scripts/generate_release_manifest_v3.py \
             --mode release \
             --source-sha "$TOXICJOIN_SOURCE_SHA" \
             --checked-out-sha "${{ steps.identity.outputs.checked_out_sha }}" \

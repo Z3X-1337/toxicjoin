@@ -1,0 +1,168 @@
+name: Phase 8 Durable Evidence Retention
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - ".github/workflows/phase8-durable-evidence.yml"
+      - ".github/workflows/generated-release-manifest.yml"
+      - "config/phase8-evidence-retention.json"
+      - "evidence/retained/**"
+      - "scripts/generate_release_manifest_v3.py"
+      - "scripts/phase5_retention_policy.py"
+      - "scripts/phase8_durable_evidence.py"
+      - "scripts/phase8_release_manifest.py"
+      - "tests/test_phase8_durable_evidence.py"
+      - "tests/test_phase8_release_manifest_contract.py"
+      - "docs/durable-evidence.md"
+      - "docs/phase8-acceptance.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase8-retention-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PHASE8_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  PHASE8_CATALOG: evidence/retained/catalog.json
+  PHASE8_OUTPUT_DIR: artifacts/phase8
+
+jobs:
+  retention-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact pull-request head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.PHASE8_SOURCE_SHA }}
+          persist-credentials: false
+      - name: Set up exact Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12.13"
+          cache: pip
+      - name: Install locked development environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check "uv==0.8.4"
+          python scripts/bootstrap.py verify --components python,uv,locks,contract
+          python scripts/bootstrap.py sync --extra dev
+      - name: Lint and test durable retention contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --frozen ruff check \
+            scripts/generate_release_manifest_v3.py \
+            scripts/phase5_retention_policy.py \
+            scripts/phase8_durable_evidence.py \
+            scripts/phase8_release_manifest.py \
+            tests/test_phase8_durable_evidence.py \
+            tests/test_phase8_release_manifest_contract.py
+          uv run --frozen pytest -q \
+            tests/test_phase8_durable_evidence.py \
+            tests/test_phase8_release_manifest_contract.py
+
+  retention-proof:
+    name: retention-proof
+    needs: retention-contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact pull-request head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.PHASE8_SOURCE_SHA }}
+          persist-credentials: false
+      - name: Set up exact Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12.13"
+      - name: Verify exact source identity
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          checked_out_sha="$(git rev-parse HEAD)"
+          test "$checked_out_sha" = "$PHASE8_SOURCE_SHA"
+          echo "checked_out_sha=$checked_out_sha" >> "$GITHUB_OUTPUT"
+      - name: Retrieve and verify durable evidence from Git
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$PHASE8_OUTPUT_DIR"
+          python scripts/phase8_durable_evidence.py \
+            --root . \
+            --catalog "$PHASE8_CATALOG" \
+            --source-sha "$PHASE8_SOURCE_SHA" \
+            --checked-out-sha "${{ steps.identity.outputs.checked_out_sha }}" \
+            --retrieve-dir "$PHASE8_OUTPUT_DIR/retrieved" \
+            --output "$PHASE8_OUTPUT_DIR/phase8-retention-proof.json"
+      - name: Verify proof self-hash, classification, and retrieval
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          path = Path("artifacts/phase8/phase8-retention-proof.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          claimed = payload.pop("report_sha256")
+          canonical = json.dumps(
+              payload,
+              sort_keys=True,
+              separators=(",", ":"),
+              ensure_ascii=True,
+          ).encode("utf-8")
+          assert hashlib.sha256(canonical).hexdigest() == claimed
+          assert payload["status"] == "verified"
+          assert payload["source"]["source_sha"] == "${{ env.PHASE8_SOURCE_SHA }}"
+          assert payload["retention"]["independent_of_actions_expiry"] is True
+          assert set(payload["retention"]["lifecycle_classes"]) == {
+              "current",
+              "historical",
+          }
+          assert set(payload["retention"]["purpose_classes"]) == {
+              "operational",
+              "preview",
+              "replay-only",
+              "submission",
+          }
+          assert payload["retrieval"]["verified"] is True
+          assert (
+              payload["retrieval"]["requested_sha256"]
+              == payload["retrieval"]["retrieved_sha256"]
+          )
+          assert payload["claim_boundaries"]["postgresql_canonical"] is False
+          PY
+      - name: Build content integrity manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$PHASE8_CATALOG" "$PHASE8_OUTPUT_DIR/retained-catalog.json"
+          cp config/phase8-evidence-retention.json "$PHASE8_OUTPUT_DIR/retention-policy.json"
+          find "$PHASE8_OUTPUT_DIR" -type f ! -name SHA256SUMS -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            > "$PHASE8_OUTPUT_DIR/SHA256SUMS"
+          sha256sum --check "$PHASE8_OUTPUT_DIR/SHA256SUMS"
+      - name: Verify source worktree remains unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test -z "$(git status --porcelain --untracked-files=no)"
+      - name: Upload exact-source retention proof
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: phase8-durable-evidence-retention
+          path: artifacts/phase8
+          if-no-files-found: error
+          retention-days: 90
