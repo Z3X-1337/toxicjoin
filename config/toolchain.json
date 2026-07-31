@@ -1,0 +1,76 @@
+{
+  "schema_version": "1.0",
+  "track": "2026-product-readiness",
+  "phase": "3-reproducible-locked-bootstrap",
+  "baseline_main_sha": "bb307a16df6157112531ec67ff635babb784a814",
+  "authority": "This file is the machine-readable authority for Phase 3 bootstrap tool versions and lock surfaces.",
+  "python": {
+    "requires_python": ">=3.11,<3.13",
+    "supported_exact": [
+      "3.11.15",
+      "3.12.13"
+    ],
+    "default_exact": "3.12.13"
+  },
+  "uv": {
+    "version": "0.8.4",
+    "bootstrap_exception": "The package manager itself is installed at this exact version before uv.lock can be consumed. No project dependency may be installed through this exception."
+  },
+  "node": {
+    "version": "22.16.0",
+    "npm_version": "10.9.2",
+    "package_manager": "npm@10.9.2"
+  },
+  "docker": {
+    "validated_on": "ubuntu-24.04",
+    "client_version": "28.0.4",
+    "server_version": "28.0.4",
+    "buildx_version": "0.35.0",
+    "compose_version": "2.38.2"
+  },
+  "datahub": {
+    "phase3_status": "version-record-only-no-live-execution",
+    "sdk_version": "1.6.0.15",
+    "agent_registry_preview_version": "1.6.0.16rc3",
+    "mcp_server_version": "0.6.0"
+  },
+  "containers": {
+    "node_builder": "node:22.16.0-alpine@sha256:41e4389f3d988d2ed55392df4db1420ad048ae53324a8e2b7c6d19508288107e",
+    "python_runtime": "python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de"
+  },
+  "github_runners": {
+    "linux": "ubuntu-24.04",
+    "windows": "windows-2025",
+    "macos": "macos-15"
+  },
+  "support_matrix": {
+    "native_bootstrap": [
+      "linux-x64",
+      "windows-x64",
+      "macos-arm64"
+    ],
+    "status": "candidate-until-exact-head-phase3-evidence-passes",
+    "full-test-parity": "deferred-to-phase4"
+  },
+  "locks": [
+    {
+      "path": "uv.lock",
+      "consumer": "uv sync --frozen"
+    },
+    {
+      "path": "package-lock.json",
+      "consumer": "npm ci"
+    },
+    {
+      "path": "apps/web/package-lock.json",
+      "consumer": "npm ci"
+    }
+  ],
+  "canonical_bootstrap_surfaces": [
+    "run.sh",
+    "run.ps1",
+    "Dockerfile",
+    "vercel.json",
+    ".github/workflows"
+  ]
+}
