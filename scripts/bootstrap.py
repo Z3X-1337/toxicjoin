@@ -49,18 +49,15 @@ def sha256(path: Path) -> str:
 
 
 def native_command(name: str, *args: str) -> list[str]:
-    """Resolve command wrappers without enabling a general shell."""
+    """Resolve Windows command wrappers without enabling a general shell."""
     if os.name == "nt" and name.lower() in {"npm", "npx"}:
-        command_line = subprocess.list2cmdline([f"{name}.cmd", *args])
-        return ["cmd.exe", "/d", "/s", "/c", command_line]
+        line = subprocess.list2cmdline([f"{name}.cmd", *args])
+        return ["cmd.exe", "/d", "/s", "/c", line]
     return [name, *args]
 
 
 def run(
-    command: Sequence[str],
-    *,
-    timeout: int = 900,
-    check: bool = True,
+    command: Sequence[str], *, timeout: int = 900, check: bool = True
 ) -> subprocess.CompletedProcess[str]:
     try:
         result = subprocess.run(
@@ -149,13 +146,13 @@ def git_identity() -> dict[str, str | None]:
 
 def lock_hashes(value: dict[str, Any] | None = None) -> dict[str, str]:
     value = value or contract()
-    result: dict[str, str] = {}
+    hashes: dict[str, str] = {}
     for item in value["locks"]:
         path = ROOT / item["path"]
         if not path.is_file():
             raise BootstrapError(f"required lock missing: {item['path']}")
-        result[item["path"]] = sha256(path)
-    return result
+        hashes[item["path"]] = sha256(path)
+    return hashes
 
 
 def parse_version(text: str, pattern: str, label: str) -> str:
@@ -187,8 +184,8 @@ def manifest_errors(value: dict[str, Any]) -> list[str]:
             errors.append(f"Dockerfile missing exact {key} identity")
 
     vercel = json.loads((ROOT / "vercel.json").read_text(encoding="utf-8"))
-    build_command = vercel.get("buildCommand", "")
-    if "npm ci" not in build_command or re.search(r"\bnpm\s+install\b", build_command):
+    command = vercel.get("buildCommand", "")
+    if "npm ci" not in command or re.search(r"\bnpm\s+install\b", command):
         errors.append("vercel.json must use npm ci")
 
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -242,8 +239,11 @@ def verify(components: list[str]) -> dict[str, Any]:
         }
 
     if "uv" in components:
-        output = run([UV_BIN, "--version"]).stdout.strip()
-        actual = parse_version(output, r"\buv\s+(\d+\.\d+\.\d+)\b", "uv")
+        actual = parse_version(
+            run([UV_BIN, "--version"]).stdout,
+            r"\buv\s+(\d+\.\d+\.\d+)\b",
+            "uv",
+        )
         if actual != value["uv"]["version"]:
             raise BootstrapError(
                 f"uv mismatch: expected {value['uv']['version']}, got {actual}"
@@ -278,7 +278,7 @@ def verify(components: list[str]) -> dict[str, Any]:
         result["npm"] = actual
 
     if "docker" in components:
-        versions = value["docker"]
+        expected = value["docker"]
         pair = run(
             [
                 "docker",
@@ -287,7 +287,7 @@ def verify(components: list[str]) -> dict[str, Any]:
                 "{{.Client.Version}}|{{.Server.Version}}",
             ]
         ).stdout.strip().split("|", 1)
-        if pair != [versions["client_version"], versions["server_version"]]:
+        if pair != [expected["client_version"], expected["server_version"]]:
             raise BootstrapError(f"Docker client/server mismatch: {pair}")
         buildx = parse_version(
             run(["docker", "buildx", "version"]).stdout,
@@ -299,7 +299,7 @@ def verify(components: list[str]) -> dict[str, Any]:
             r"v?(\d+\.\d+\.\d+)",
             "Compose",
         )
-        if buildx != versions["buildx_version"] or compose != versions["compose_version"]:
+        if buildx != expected["buildx_version"] or compose != expected["compose_version"]:
             raise BootstrapError(
                 f"Docker plugin mismatch: buildx={buildx}, compose={compose}"
             )
@@ -319,7 +319,7 @@ def bootstrap_files() -> list[Path]:
     files = [
         ROOT / name for name in ("run.sh", "run.ps1", "Dockerfile", "vercel.json")
     ]
-    files += sorted((ROOT / ".github" / "workflows").glob("*.y*ml"))
+    files.extend(sorted((ROOT / ".github" / "workflows").glob("*.y*ml")))
     return [path for path in files if path.is_file()]
 
 
@@ -338,21 +338,20 @@ def audit() -> dict[str, Any]:
     violations: list[dict[str, Any]] = []
     observations: list[dict[str, Any]] = []
     exact_paths = exact_toolchain_paths()
-    exact_versions = {
+    versions = {
         version
-        for versions in value["python"]["supported_by_platform"].values()
-        for version in versions
+        for items in value["python"]["supported_by_platform"].values()
+        for version in items
     }
-    exact_runners = set(value["github_runners"].values())
+    runners = set(value["github_runners"].values())
 
     for path in bootstrap_files():
         relative = path.relative_to(ROOT).as_posix()
-        exact_surface = relative in exact_paths
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            text = line.strip()
+        exact = relative in exact_paths
+        for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            text = raw.strip()
             if not text or text.startswith("#"):
                 continue
-
             checks = [
                 (
                     "P3-PIP-EDITABLE",
@@ -380,13 +379,13 @@ def audit() -> dict[str, Any]:
                     "uv run lacks --frozen",
                 ),
             ]
-            if exact_surface:
+            if exact:
                 checks.append(
                     (
                         "P3-RUNNER-LATEST",
                         any(
-                            item in text
-                            for item in (
+                            token in text
+                            for token in (
                                 "ubuntu-latest",
                                 "windows-latest",
                                 "macos-latest",
@@ -396,8 +395,8 @@ def audit() -> dict[str, Any]:
                     )
                 )
             elif any(
-                item in text
-                for item in ("ubuntu-latest", "windows-latest", "macos-latest")
+                token in text
+                for token in ("ubuntu-latest", "windows-latest", "macos-latest")
             ):
                 observations.append(
                     {
@@ -408,7 +407,6 @@ def audit() -> dict[str, Any]:
                         "text": text[:300],
                     }
                 )
-
             for rule, matched, message in checks:
                 if matched:
                     violations.append(
@@ -433,22 +431,11 @@ def audit() -> dict[str, Any]:
                     }
                 )
 
-            py_match = re.search(
-                r"^python-version:\s*[\"']?([^\"'\s\[]+)", text
-            )
-            if (
-                py_match
-                and "${{" not in py_match.group(1)
-                and py_match.group(1) not in exact_versions
-            ):
-                target = violations if exact_surface else observations
-                target.append(
+            py_match = re.search(r"^python-version:\s*[\"']?([^\"'\s\[]+)", text)
+            if py_match and "${{" not in py_match.group(1) and py_match.group(1) not in versions:
+                (violations if exact else observations).append(
                     {
-                        "rule_id": (
-                            "P3-PYTHON-VERSION"
-                            if exact_surface
-                            else "P3-DEFERRED-PYTHON"
-                        ),
+                        "rule_id": "P3-PYTHON-VERSION" if exact else "P3-DEFERRED-PYTHON",
                         "path": relative,
                         "line": number,
                         "message": "Python declaration is outside the exact contract",
@@ -456,22 +443,15 @@ def audit() -> dict[str, Any]:
                     }
                 )
 
-            node_match = re.search(
-                r"^node-version:\s*[\"']?([^\"'\s\[]+)", text
-            )
+            node_match = re.search(r"^node-version:\s*[\"']?([^\"'\s\[]+)", text)
             if (
                 node_match
                 and "${{" not in node_match.group(1)
                 and node_match.group(1) != value["node"]["version"]
             ):
-                target = violations if exact_surface else observations
-                target.append(
+                (violations if exact else observations).append(
                     {
-                        "rule_id": (
-                            "P3-NODE-VERSION"
-                            if exact_surface
-                            else "P3-DEFERRED-NODE"
-                        ),
+                        "rule_id": "P3-NODE-VERSION" if exact else "P3-DEFERRED-NODE",
                         "path": relative,
                         "line": number,
                         "message": "Node declaration differs from exact contract",
@@ -484,16 +464,11 @@ def audit() -> dict[str, Any]:
                 runner = runner_match.group(1).strip("\"'")
                 if (
                     runner.startswith(("ubuntu-", "windows-", "macos-"))
-                    and runner not in exact_runners
+                    and runner not in runners
                 ):
-                    target = violations if exact_surface else observations
-                    target.append(
+                    (violations if exact else observations).append(
                         {
-                            "rule_id": (
-                                "P3-RUNNER-VERSION"
-                                if exact_surface
-                                else "P3-DEFERRED-RUNNER"
-                            ),
+                            "rule_id": "P3-RUNNER-VERSION" if exact else "P3-DEFERRED-RUNNER",
                             "path": relative,
                             "line": number,
                             "message": "runner is outside the Phase 3 support matrix",
@@ -559,7 +534,7 @@ def sync(extras: list[str], *, no_install_project: bool = False) -> dict[str, An
     if no_install_project:
         command.append("--no-install-project")
     for extra in extras:
-        command += ["--extra", extra]
+        command.extend(["--extra", extra])
     started = time.monotonic()
     run(command)
     after = lock_hashes()
@@ -594,10 +569,11 @@ def smoke(timeout: int) -> dict[str, Any]:
     verify(["python", "uv", "locks", "contract"])
     port = free_port()
     started = time.monotonic()
-    with tempfile.TemporaryDirectory(prefix="toxicjoin-phase3-") as tmp:
-        tmp_path = Path(tmp)
-        runtime = tmp_path / "runtime"
+    with tempfile.TemporaryDirectory(prefix="toxicjoin-phase3-") as temporary:
+        temp = Path(temporary)
+        runtime = temp / "runtime"
         runtime.mkdir()
+        log_path = temp / "fixture.log"
         env = os.environ.copy()
         env.update(
             {
@@ -607,10 +583,13 @@ def smoke(timeout: int) -> dict[str, Any]:
                 "PYTHONUNBUFFERED": "1",
             }
         )
-        log_path = tmp_path / "fixture.log"
         with log_path.open("w", encoding="utf-8") as log:
             process = subprocess.Popen(
-                [UV_BIN, "run", "--frozen", "toxicjoin-api"],
+                [
+                    str(environment_python()),
+                    "-c",
+                    "from toxicjoin.cli import run_api; run_api()",
+                ],
                 cwd=ROOT,
                 env=env,
                 stdout=log,
@@ -646,8 +625,7 @@ def smoke(timeout: int) -> dict[str, Any]:
                     "receipt_store_ready": True,
                 }
                 if ready is None or any(
-                    ready.get(item) != expected_value
-                    for item, expected_value in expected.items()
+                    ready.get(key) != value for key, value in expected.items()
                 ):
                     raise BootstrapError(f"unexpected readiness: {ready}")
             except BootstrapError as exc:
@@ -680,10 +658,7 @@ def smoke(timeout: int) -> dict[str, Any]:
 
 def tracked_files() -> list[Path]:
     if (ROOT / ".git").exists() and shutil.which("git"):
-        return [
-            ROOT / name
-            for name in run(["git", "ls-files"]).stdout.splitlines()
-        ]
+        return [ROOT / name for name in run(["git", "ls-files"]).stdout.splitlines()]
     excluded = {".git", ".venv", "node_modules", "dist"}
     return [
         path
@@ -705,7 +680,6 @@ def census(path: Path) -> int:
         ("setup-node", r"node-version:"),
         ("runner", r"runs-on:"),
     ]
-    rows: list[dict[str, Any]] = []
     valid_suffixes = {
         "",
         ".json",
@@ -718,6 +692,7 @@ def census(path: Path) -> int:
         ".yaml",
         ".yml",
     }
+    rows: list[dict[str, Any]] = []
     for file in tracked_files():
         if file.suffix.lower() not in valid_suffixes:
             continue
@@ -725,8 +700,8 @@ def census(path: Path) -> int:
             lines = file.read_text(encoding="utf-8").splitlines()
         except UnicodeDecodeError:
             continue
-        for number, line in enumerate(lines, 1):
-            text = line.strip()
+        for number, raw in enumerate(lines, 1):
+            text = raw.strip()
             if not text or text.startswith("#"):
                 continue
             for tool, pattern in patterns:
@@ -829,9 +804,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
 
     verify_parser = commands.add_parser("verify")
-    verify_parser.add_argument(
-        "--components", default="python,uv,locks,contract"
-    )
+    verify_parser.add_argument("--components", default="python,uv,locks,contract")
     verify_parser.add_argument("--output", type=Path)
 
     sync_parser = commands.add_parser("sync")
