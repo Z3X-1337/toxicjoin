@@ -17,6 +17,7 @@ from release_manifest_artifacts import (
     json_member,
     member_by_basename,
     sha256_bytes,
+    verify_sha256sums,
 )
 from release_manifest_gate import (
     MODE_CANDIDATE,
@@ -86,16 +87,99 @@ def validate_ci_authoritative(
     }
 
 
-def install_authoritative_ci_validator() -> None:
-    current = GATE_SPECS["CI"]
+def validate_phase4_authoritative(
+    bundles: dict[str, ArtifactBundle], source_sha: str
+) -> dict[str, Any]:
+    """Validate parity and native reports using the Phase 4 emitted schema."""
+    parity = bundles["phase4-portability-parity"]
+    parity_entries = verify_sha256sums(parity)
+    parity_payload, parity_raw = json_member(
+        parity,
+        "phase4-parity-comparison.json",
+    )
+    comparisons = parity_payload.get("comparisons")
+    if parity_payload.get("schema_version") != "1.0":
+        raise ValueError("Phase 4 parity schema is invalid")
+    if parity_payload.get("passed") is not True:
+        raise ValueError("Phase 4 parity evidence is not verified")
+    if not isinstance(comparisons, list) or len(comparisons) != 2:
+        raise ValueError("Phase 4 parity comparisons are incomplete")
+    for comparison in comparisons:
+        if not isinstance(comparison, dict) or comparison.get("passed") is not True:
+            raise ValueError("Phase 4 parity comparison failed")
+        checks = comparison.get("checks")
+        if not isinstance(checks, dict) or not checks:
+            raise ValueError("Phase 4 parity checks are missing")
+        if not all(value is True for value in checks.values()):
+            raise ValueError("Phase 4 parity invariant failed")
+
+    native_names = [
+        name for name in bundles if name != "phase4-portability-parity"
+    ]
+    native_summaries: list[dict[str, Any]] = []
+    for name in sorted(native_names):
+        bundle = bundles[name]
+        manifest_entries = verify_sha256sums(bundle)
+        report, report_raw = json_member(
+            bundle,
+            "phase4-portability-evidence.json",
+        )
+        git = report.get("git")
+        pytest_report = report.get("pytest")
+        traceback_report = report.get("traceback_secret_redaction")
+        worktree = report.get("worktree")
+        if report.get("schema_version") != "1.0":
+            raise ValueError(f"Phase 4 native evidence {name!r} schema is invalid")
+        if not isinstance(git, dict) or git.get("commit_sha") != source_sha:
+            raise ValueError(f"Phase 4 native evidence {name!r} source mismatch")
+        if not isinstance(pytest_report, dict):
+            raise ValueError(f"Phase 4 native evidence {name!r} lacks pytest data")
+        passed = pytest_report.get("passed")
+        if not isinstance(passed, int) or passed <= 0:
+            raise ValueError(f"Phase 4 native evidence {name!r} has no passing tests")
+        if pytest_report.get("failed") != 0 or pytest_report.get("errors") != 0:
+            raise ValueError(f"Phase 4 native evidence {name!r} has test failures")
+        if not isinstance(traceback_report, dict) or traceback_report.get("passed") is not True:
+            raise ValueError(f"Phase 4 native evidence {name!r} failed traceback proof")
+        if not isinstance(worktree, dict) or worktree.get("clean") is not True:
+            raise ValueError(f"Phase 4 native evidence {name!r} has a dirty worktree")
+        native_summaries.append(
+            {
+                "artifact": name,
+                "python_version": report.get("environment", {}).get("python_version"),
+                "system": report.get("environment", {}).get("system"),
+                "passed": passed,
+                "manifest_entries": manifest_entries,
+                "report_sha256": sha256_bytes(report_raw),
+            }
+        )
+    if len(native_summaries) != 4:
+        raise ValueError("Phase 4 native platform evidence is incomplete")
+    return {
+        "parity_report_sha256": sha256_bytes(parity_raw),
+        "parity_manifest_entries": parity_entries,
+        "comparison_count": 2,
+        "native_artifact_count": 4,
+        "native": native_summaries,
+    }
+
+
+def install_authoritative_validators() -> None:
+    ci = GATE_SPECS["CI"]
     GATE_SPECS["CI"] = GateSpec(
-        required_artifacts=current.required_artifacts,
+        required_artifacts=ci.required_artifacts,
         validator=validate_ci_authoritative,
-        required_jobs=current.required_jobs,
+        required_jobs=ci.required_jobs,
+    )
+    phase4 = GATE_SPECS["Phase 4 Portability Evidence"]
+    GATE_SPECS["Phase 4 Portability Evidence"] = GateSpec(
+        required_artifacts=phase4.required_artifacts,
+        validator=validate_phase4_authoritative,
+        required_jobs=phase4.required_jobs,
     )
 
 
-install_authoritative_ci_validator()
+install_authoritative_validators()
 
 
 def write_atomic(path: Path, payload: dict[str, object]) -> None:
