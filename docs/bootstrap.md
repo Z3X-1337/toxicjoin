@@ -10,9 +10,16 @@ The executable enforcement authority is `scripts/bootstrap.py`. It uses only the
 
 ## Exact toolchain
 
-The Phase 3 contract currently requires:
+Python is exact per supported platform because CPython patch binaries are published differently across operating systems:
 
-- Python `3.11.15` or `3.12.13`;
+| Platform | Exact Python patches |
+|---|---|
+| Linux x64 | `3.11.15`, `3.12.13` |
+| Windows x64 | `3.11.9`, `3.12.10` |
+| macOS Intel x64 | `3.11.9`, `3.12.10` |
+
+The remaining exact tools are:
+
 - uv `0.8.4`;
 - Node.js `22.16.0`;
 - npm `10.9.2`;
@@ -22,8 +29,6 @@ The Phase 3 contract currently requires:
 A different patch version is not silently accepted. Update the contract and regenerate exact-platform evidence through a reviewed pull request before changing the supported toolchain.
 
 ## Lock authority
-
-The committed dependency authorities are:
 
 | Surface | Lock | Required consumer |
 |---|---|---|
@@ -50,7 +55,7 @@ Windows PowerShell:
 Both launchers:
 
 1. resolve the repository root;
-2. reject unsupported Python patches;
+2. reject Python patches outside the exact current-platform contract;
 3. verify the committed locks and manifest authorities;
 4. install uv only when absent and only at the exact contracted version;
 5. execute a frozen sync;
@@ -61,53 +66,30 @@ They do not upgrade pip, perform editable pip installation, resolve dependencies
 
 ## Manual diagnostics
 
-Verify Python, uv, and locks:
-
 ```bash
 python scripts/bootstrap.py verify --components python,uv,locks,contract
-```
-
-Verify Node and npm as well:
-
-```bash
 python scripts/bootstrap.py verify --components python,uv,node,npm,locks,contract
-```
-
-Perform an idempotent frozen sync:
-
-```bash
 python scripts/bootstrap.py sync
-```
-
-Run the fixture readiness smoke test:
-
-```bash
 python scripts/bootstrap.py smoke
-```
-
-Audit canonical bootstrap surfaces for lock bypasses and exact-toolchain drift, while retaining non-Phase-3 workflows as inventory-only observations:
-
-```bash
 python scripts/bootstrap.py audit
-```
-
-Generate a machine-readable census and content-addressed evidence package:
-
-```bash
 python scripts/bootstrap.py evidence --output-dir artifacts/phase3-bootstrap
 ```
 
+The audit fails closed on lock bypasses and exact-toolchain drift in canonical Phase 3 surfaces. Non-Phase-3 workflows are retained as inventory-only observations so this phase does not start Live DataHub or unrelated remediation.
+
 ## Clean-machine support boundary
 
-The Phase 3 workflow verifies native bootstrap on fixed GitHub runner families:
+The Phase 3 workflow verifies six exact runner/Python pairs:
 
-- `ubuntu-24.04` on x64;
-- `windows-2025` on x64;
-- `macos-15-intel` on x64.
+- `ubuntu-24.04`: Python `3.11.15` and `3.12.13`;
+- `windows-2025`: Python `3.11.9` and `3.12.10`;
+- `macos-15-intel`: Python `3.11.9` and `3.12.10`.
 
-Each runner is exercised with both exact supported Python patches. The gate performs two frozen syncs, compares package-set identity, installs both npm graphs through `npm ci`, builds the frontend, starts the fixture API, checks health/readiness, and verifies that the tracked worktree remains unchanged.
+Each job performs two frozen syncs, compares package-set identity, installs both npm graphs through `npm ci`, builds the frontend, starts the fixture API, checks health/readiness, verifies tracked-worktree cleanliness, and creates content-addressed evidence.
 
-The initial `macos-15` ARM64 probe failed before repository bootstrap because `actions/setup-python` did not publish exact `3.11.15` or `3.12.13` toolcache builds for that runner. Phase 3 therefore does not claim macOS ARM64 support. Adding it later requires a separate exact-toolchain proof rather than a moving or source-built Python fallback.
+The exploratory `macos-15` ARM64 run failed before repository bootstrap because the exact Phase 3 Python patches were unavailable to `actions/setup-python` on that runner. Phase 3 therefore does not claim macOS ARM64 support. Adding it later requires a separate exact-toolchain proof rather than a moving or source-built fallback.
+
+The Windows and macOS patch difference is deliberate: those platforms use the last official binary CPython patches available for the supported minors, while Linux can consume later source-built security patches. It does not weaken lock enforcement; each supported platform is checked against its own exact list.
 
 This is bootstrap portability only. The complete Windows/Linux test parity defect `TJ-P1-TEST-PORT-001`, traceback-frame portability, and full cross-platform test comparison remain Phase 4 work.
 
