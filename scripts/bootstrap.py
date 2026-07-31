@@ -180,12 +180,26 @@ def bootstrap_files() -> list[Path]:
     return [path for path in files if path.is_file()]
 
 
+def exact_toolchain_paths() -> set[str]:
+    return {
+        "run.sh",
+        "run.ps1",
+        "Dockerfile",
+        "vercel.json",
+        ".github/workflows/bootstrap.yml",
+        ".github/workflows/ci.yml",
+    }
+
+
 def audit() -> dict[str, Any]:
     value = contract()
     violations: list[dict[str, Any]] = []
+    observations: list[dict[str, Any]] = []
     runners = set(value["github_runners"].values())
+    exact_paths = exact_toolchain_paths()
     for path in bootstrap_files():
         relative = path.relative_to(ROOT).as_posix()
+        exact_surface = relative in exact_paths
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             text = line.strip()
             if not text or text.startswith("#"):
@@ -196,33 +210,53 @@ def audit() -> dict[str, Any]:
                 ("P3-NPM-INSTALL", bool(re.search(r"\bnpm\s+install\b", text)), "npm install bypasses package lock"),
                 ("P3-UV-SYNC", "uv sync" in text and "--frozen" not in text, "uv sync lacks --frozen"),
                 ("P3-UV-RUN", "uv run" in text and "--frozen" not in text, "uv run lacks --frozen"),
-                ("P3-RUNNER-LATEST", any(x in text for x in ("ubuntu-latest", "windows-latest", "macos-latest")), "moving runner label"),
             ]
+            if exact_surface:
+                checks.append(("P3-RUNNER-LATEST", any(x in text for x in ("ubuntu-latest", "windows-latest", "macos-latest")), "moving runner label on an exact bootstrap surface"))
+            elif any(x in text for x in ("ubuntu-latest", "windows-latest", "macos-latest")):
+                observations.append({"rule_id": "P3-DEFERRED-RUNNER", "path": relative, "line": number, "message": "moving runner retained on a non-Phase-3 workflow; inventoried without mutation", "text": text[:300]})
             for rule, matched, message in checks:
                 if matched:
                     violations.append({"rule_id": rule, "path": relative, "line": number, "message": message, "text": text[:300]})
             uv_match = re.search(r"uv==(\d+\.\d+\.\d+)", text)
             if uv_match and uv_match.group(1) != value["uv"]["version"]:
                 violations.append({"rule_id": "P3-UV-VERSION", "path": relative, "line": number, "message": "wrong uv version", "text": text[:300]})
-            py_match = re.search(r"python-version:\s*[\"']?([^\"'\s]+)", text)
+            matrix_match = re.search(r"^python-version:\s*\[(.+)\]$", text)
+            if matrix_match:
+                declared = [item.strip().strip("\"'") for item in matrix_match.group(1).split(",")]
+                if declared != value["python"]["supported_exact"]:
+                    target = violations if exact_surface else observations
+                    target.append({"rule_id": "P3-PYTHON-MATRIX" if exact_surface else "P3-DEFERRED-PYTHON", "path": relative, "line": number, "message": "Python matrix differs from exact contract" if exact_surface else "non-exact Python matrix inventoried on a deferred workflow", "text": text[:300]})
+            py_match = re.search(r"^python-version:\s*[\"']?([^\"'\s\[]+)", text)
             if py_match and "${{" not in py_match.group(1) and py_match.group(1) not in value["python"]["supported_exact"]:
-                violations.append({"rule_id": "P3-PYTHON-VERSION", "path": relative, "line": number, "message": "setup-python is not exact", "text": text[:300]})
-            node_match = re.search(r"node-version:\s*[\"']?([^\"'\s]+)", text)
+                target = violations if exact_surface else observations
+                target.append({"rule_id": "P3-PYTHON-VERSION" if exact_surface else "P3-DEFERRED-PYTHON", "path": relative, "line": number, "message": "setup-python is not exact" if exact_surface else "non-exact Python declaration inventoried on a deferred workflow", "text": text[:300]})
+            node_match = re.search(r"^node-version:\s*[\"']?([^\"'\s\[]+)", text)
             if node_match and "${{" not in node_match.group(1) and node_match.group(1) != value["node"]["version"]:
-                violations.append({"rule_id": "P3-NODE-VERSION", "path": relative, "line": number, "message": "setup-node is not exact", "text": text[:300]})
+                target = violations if exact_surface else observations
+                target.append({"rule_id": "P3-NODE-VERSION" if exact_surface else "P3-DEFERRED-NODE", "path": relative, "line": number, "message": "setup-node is not exact" if exact_surface else "non-exact Node declaration inventoried on a deferred workflow", "text": text[:300]})
             runner_match = re.search(r"runs-on:\s*([^#\s]+)", text)
             if runner_match and "${{" not in runner_match.group(1):
                 runner = runner_match.group(1).strip("\"'")
                 if runner.startswith(("ubuntu-", "windows-", "macos-")) and runner not in runners:
-                    violations.append({"rule_id": "P3-RUNNER-VERSION", "path": relative, "line": number, "message": "runner outside contract", "text": text[:300]})
+                    target = violations if exact_surface else observations
+                    target.append({"rule_id": "P3-RUNNER-VERSION" if exact_surface else "P3-DEFERRED-RUNNER", "path": relative, "line": number, "message": "runner outside contract" if exact_surface else "runner outside Phase 3 exact support matrix; inventoried without mutation", "text": text[:300]})
     for message in manifest_errors(value):
         violations.append({"rule_id": "P3-AUTHORITY", "path": "config/toolchain.json", "line": 1, "message": message, "text": ""})
-    return {"schema_version": "1.0", "generated_at": now(), "scanned_files": len(bootstrap_files()), "violation_count": len(violations), "violations": violations}
+    return {"schema_version": "1.0", "generated_at": now(), "scanned_files": len(bootstrap_files()), "exact_toolchain_paths": sorted(exact_paths), "violation_count": len(violations), "violations": violations, "observation_count": len(observations), "observations": observations}
 
 
-def package_identity() -> dict[str, Any]:
+def environment_python() -> Path:
+    candidate = ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    if not candidate.is_file():
+        raise BootstrapError(f"locked environment Python is missing: {candidate}")
+    return candidate
+
+
+def package_identity(*, direct_environment: bool = False) -> dict[str, Any]:
     code = "import importlib.metadata as m,json;print(json.dumps(sorted((d.metadata['Name'].lower(),d.version) for d in m.distributions()),separators=(',',':')))"
-    packages = json.loads(run([UV_BIN, "run", "--frozen", "python", "-c", code]).stdout)
+    command = [str(environment_python()), "-c", code] if direct_environment else [UV_BIN, "run", "--frozen", "python", "-c", code]
+    packages = json.loads(run(command).stdout)
     canonical = json.dumps(packages, sort_keys=True, separators=(",", ":")).encode()
     return {"count": len(packages), "sha256": hashlib.sha256(canonical).hexdigest(), "packages": packages}
 
@@ -240,7 +274,7 @@ def sync(extras: list[str], *, no_install_project: bool = False) -> dict[str, An
     after = lock_hashes()
     if before != after:
         raise BootstrapError("frozen sync changed a committed lock")
-    return {"schema_version": "1.0", "generated_at": now(), "command": command, "duration_seconds": round(time.monotonic() - started, 3), "lock_hashes_before": before, "lock_hashes_after": after, "installed_package_identity": package_identity()}
+    return {"schema_version": "1.0", "generated_at": now(), "command": command, "duration_seconds": round(time.monotonic() - started, 3), "lock_hashes_before": before, "lock_hashes_after": after, "installed_package_identity": package_identity(direct_environment=no_install_project)}
 
 
 def free_port() -> int:
