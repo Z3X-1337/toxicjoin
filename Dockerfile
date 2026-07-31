@@ -13,6 +13,7 @@ FROM python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee56815788280
 WORKDIR /app
 COPY config/toolchain.json ./config/toolchain.json
 COPY scripts/bootstrap.py ./scripts/bootstrap.py
+COPY .github/workflows/ci.yml ./.github/workflows/ci.yml
 COPY pyproject.toml uv.lock README.md LICENSE package.json package-lock.json vercel.json Dockerfile ./
 COPY apps/web/package.json apps/web/package-lock.json ./apps/web/
 RUN python scripts/bootstrap.py verify --components python,locks \
