@@ -18,7 +18,7 @@ COPY apps/web/package.json ./apps/web/package.json
 RUN python scripts/bootstrap.py verify --components python,locks \
     && python -m pip install --no-cache-dir 'uv==0.8.4' \
     && python scripts/bootstrap.py verify --components python,uv,locks,contract \
-    && python scripts/bootstrap.py sync \
+    && python scripts/bootstrap.py sync --no-install-project \
     && rm -rf /root/.cache/pip /root/.cache/uv
 
 FROM python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS runtime
