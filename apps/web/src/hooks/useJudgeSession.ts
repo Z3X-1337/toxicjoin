@@ -145,7 +145,10 @@ export function useJudgeSession(): JudgeSessionController {
   );
 
   useEffect(() => {
-    if (!shouldAutoRunSelectedScenario(state, selectedScenario)) {
+    if (
+      !selectedScenario ||
+      !shouldAutoRunSelectedScenario(state, selectedScenario)
+    ) {
       return;
     }
     void runScenario(selectedScenario);
