@@ -16,6 +16,12 @@ import phase8_durable_evidence as DURABLE  # noqa: E402
 CATALOG = ROOT / "evidence/retained/catalog.json"
 
 
+def test_content_addressed_json_is_forced_to_lf() -> None:
+    attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
+    assert "config/phase8-evidence-retention.json text eol=lf" in attributes
+    assert "evidence/retained/**/*.json text eol=lf" in attributes
+
+
 def test_committed_catalog_is_content_addressed_and_complete() -> None:
     verified = DURABLE.verify_catalog(root=ROOT, catalog_path=CATALOG)
     assert verified.payload["store"]["independent_of_actions_expiry"] is True
