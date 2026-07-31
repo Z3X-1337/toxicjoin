@@ -36,6 +36,13 @@ export interface JudgeSessionController extends JudgeSessionState, JudgeSessionA
   selectedScenario: DemoScenario | null;
 }
 
+interface AutomaticRunState {
+  bootstrapping: boolean;
+  running: boolean;
+  result: PipelineResponse | null;
+  error: string | null;
+}
+
 const DEFAULT_SCENARIO = "rewrite-churn-regions";
 
 const INITIAL_STATE: JudgeSessionState = {
@@ -50,6 +57,19 @@ const INITIAL_STATE: JudgeSessionState = {
   notice: null,
   error: null,
 };
+
+export function shouldAutoRunSelectedScenario(
+  state: AutomaticRunState,
+  selectedScenario: DemoScenario | null,
+): boolean {
+  return Boolean(
+    !state.bootstrapping &&
+      !state.running &&
+      !state.result &&
+      !state.error &&
+      selectedScenario,
+  );
+}
 
 export function useJudgeSession(): JudgeSessionController {
   const [state, setState] = useState<JudgeSessionState>(INITIAL_STATE);
@@ -125,16 +145,18 @@ export function useJudgeSession(): JudgeSessionController {
   );
 
   useEffect(() => {
-    if (
-      state.bootstrapping ||
-      state.running ||
-      state.result ||
-      !selectedScenario
-    ) {
+    if (!shouldAutoRunSelectedScenario(state, selectedScenario)) {
       return;
     }
     void runScenario(selectedScenario);
-  }, [runScenario, selectedScenario, state.bootstrapping, state.result, state.running]);
+  }, [
+    runScenario,
+    selectedScenario,
+    state.bootstrapping,
+    state.error,
+    state.result,
+    state.running,
+  ]);
 
   const selectScenario = useCallback((scenarioId: string): void => {
     setState((current) => ({
