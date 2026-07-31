@@ -10,7 +10,7 @@ export UV_PROJECT_ENVIRONMENT="${TOXICJOIN_VENV:-.venv}"
 mkdir -p "$DIAGNOSTICS_DIR"
 
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-  echo "bootstrap error: Python 3.11.15 or 3.12.13 is required." >&2
+  echo "bootstrap error: an exact platform-supported Python from config/toolchain.json is required." >&2
   exit 2
 fi
 
