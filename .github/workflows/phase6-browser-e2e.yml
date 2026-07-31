@@ -1,0 +1,218 @@
+name: Phase 6 Production Browser E2E
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/phase6-browser-e2e.yml"
+      - "Dockerfile"
+      - "package.json"
+      - "package-lock.json"
+      - "apps/web/**"
+      - "config/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/**"
+      - "scripts/phase6_browser_*.mjs"
+      - "tests/test_phase6_browser_e2e_contract.py"
+      - "docs/phase6-acceptance.md"
+      - "docs/phase6-browser-e2e.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase6-browser-e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  production-browser-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    env:
+      PHASE6_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      PHASE6_EVIDENCE_DIR: .toxicjoin/phase6-browser-e2e
+      PHASE6_CONTAINER: toxicjoin-phase6
+      PHASE6_IMAGE: toxicjoin:phase6-${{ github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - name: Check out exact pull-request head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.PHASE6_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Set up exact Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12.13"
+          cache: pip
+
+      - name: Set up exact Node.js and npm
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22.16.0"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Verify locked toolchain and Phase 6 contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check "uv==0.8.4"
+          python scripts/bootstrap.py verify --components python,uv,node,npm,docker,locks,contract
+          python scripts/bootstrap.py sync --extra dev
+          uv run --frozen pytest -q tests/test_phase6_browser_e2e_contract.py
+
+      - name: Install exact browser driver and browser binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          test "$(node --version)" = "v22.16.0"
+          test "$(npm --version)" = "10.9.2"
+          node -e "const p=require('./node_modules/playwright-core/package.json'); if(p.version!=='1.54.1') process.exit(1)"
+          node node_modules/playwright-core/cli.js install --with-deps chromium firefox webkit
+
+      - name: Build exact production image
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PHASE6_SOURCE_SHA"
+          docker build --tag "$PHASE6_IMAGE" .
+
+      - name: Run hardened production container
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker volume create toxicjoin-phase6-runtime
+          docker run --detach \
+            --name "$PHASE6_CONTAINER" \
+            --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --mount type=volume,src=toxicjoin-phase6-runtime,dst=/var/lib/toxicjoin \
+            --publish 18006:8000 \
+            "$PHASE6_IMAGE"
+
+      - name: Wait for production readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error \
+              http://127.0.0.1:18006/api/ready \
+              > phase6-ready.json; then
+              python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path("phase6-ready.json").read_text(encoding="utf-8"))
+          assert payload["status"] == "ok", payload
+          assert payload["mode"] == "fixture", payload
+          assert payload["database_ready"] is True, payload
+          assert payload["receipt_store_ready"] is True, payload
+          PY
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs "$PHASE6_CONTAINER"
+          exit 1
+
+      - name: Run cross-browser production E2E and generate evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/phase6_browser_e2e.mjs \
+            --origin http://127.0.0.1:18006 \
+            --expected-sha "$PHASE6_SOURCE_SHA" \
+            --output-dir "$PHASE6_EVIDENCE_DIR" \
+            --container "$PHASE6_CONTAINER" \
+            --image "$PHASE6_IMAGE"
+
+      - name: Verify evidence integrity and source cleanliness
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PHASE6_SOURCE_SHA"
+          git diff --exit-code
+          git diff --cached --exit-code
+          node --input-type=module - <<'NODE'
+          import { readFile } from "node:fs/promises";
+          import path from "node:path";
+          import { canonicalJson, sha256Bytes } from "./scripts/phase6_browser_common.mjs";
+
+          const root = path.resolve(process.env.PHASE6_EVIDENCE_DIR);
+          const report = JSON.parse(await readFile(path.join(root, "browser-e2e-report.json"), "utf8"));
+          const claimedReportHash = report.report_sha256;
+          delete report.report_sha256;
+          const actualReportHash = sha256Bytes(Buffer.from(canonicalJson(report), "utf8"));
+          if (actualReportHash !== claimedReportHash) {
+            throw new Error(`report_sha256 mismatch: claimed=${claimedReportHash} actual=${actualReportHash}`);
+          }
+          NODE
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(".toxicjoin/phase6-browser-e2e")
+          report = json.loads((root / "browser-e2e-report.json").read_text(encoding="utf-8"))
+          assert report["status"] == "verified", report
+          assert report["source"]["source_sha"] == os.environ["PHASE6_SOURCE_SHA"], report
+          assert len(report["matrix"]) == 6
+          assert report["coverage"]["fake_or_generated_ui_used"] is False
+          assert report["coverage"]["real_browser_screenshots"] is True
+
+          manifest = (root / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
+          assert manifest
+          for line in manifest:
+              expected, relative = line.split("  ", 1)
+              data = (root / relative).read_bytes()
+              assert hashlib.sha256(data).hexdigest() == expected, relative
+
+          screenshot_count = sum(
+              1 for path in (root / "screenshots").glob("*.png")
+          )
+          assert screenshot_count == 20, screenshot_count
+          PY
+
+      - name: Upload exact-head browser E2E evidence
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: phase6-browser-e2e-evidence
+          path: ${{ env.PHASE6_EVIDENCE_DIR }}/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 30
+
+      - name: Capture failure diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p "$PHASE6_EVIDENCE_DIR"
+          docker logs "$PHASE6_CONTAINER" \
+            > "$PHASE6_EVIDENCE_DIR/production-container-failure.log" 2>&1 || true
+          docker inspect "$PHASE6_CONTAINER" \
+            > "$PHASE6_EVIDENCE_DIR/production-container-failure-inspect.json" 2>&1 || true
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: phase6-browser-e2e-failure-diagnostics
+          path: ${{ env.PHASE6_EVIDENCE_DIR }}/
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 14
+
+      - name: Clean up production container
+        if: always()
+        shell: bash
+        run: |
+          docker rm --force "$PHASE6_CONTAINER" || true
+          docker volume rm toxicjoin-phase6-runtime || true
