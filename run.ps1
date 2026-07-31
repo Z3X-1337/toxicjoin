@@ -25,7 +25,7 @@ function Invoke-Checked {
 }
 
 if (-not (Get-Command $PythonBin -ErrorAction SilentlyContinue)) {
-    throw "Python 3.11.15 or 3.12.13 is required."
+    throw "An exact platform-supported Python from config/toolchain.json is required."
 }
 
 Invoke-Checked $PythonBin scripts/bootstrap.py verify `
