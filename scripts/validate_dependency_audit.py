@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EXCEPTIONS = ROOT / "docs/security/p4-dependency-risk-exceptions.json"
-_ALLOWED_UV_VERSION = "0.8.4"
+TOOLCHAIN = ROOT / "config/toolchain.json"
 _ALLOWED_UV_BOOTSTRAP_RE = re.compile(
     r"^python -m pip install(?: --no-cache-dir)? --disable-pip-version-check "
     r"[\"']uv==0\.8\.4[\"']$"
@@ -103,10 +103,25 @@ def _validate_workflow_installs(path: Path, text: str) -> None:
 
 
 def _consumes_frozen_python_lock(text: str) -> bool:
-    return (
-        "uv sync --frozen" in text
-        or "scripts/bootstrap.py sync" in text
-    )
+    return "uv sync --frozen" in text or "scripts/bootstrap.py sync" in text
+
+
+def _validate_phase3_matrix(ci: str) -> None:
+    toolchain = load(TOOLCHAIN)
+    runners = toolchain["github_runners"]
+    supported = toolchain["python"]["supported_by_platform"]
+    for platform_name in ("linux", "windows", "macos"):
+        runner = runners[platform_name]
+        for version in supported[platform_name]:
+            pair = re.compile(
+                rf"-\s+os:\s*{re.escape(runner)}\s*\n"
+                rf"\s+python:\s*[\"']{re.escape(version)}[\"']",
+                re.MULTILINE,
+            )
+            if not pair.search(ci):
+                raise SystemExit(
+                    f"CI Phase 3 matrix missing exact pair: {runner}/{version}"
+                )
 
 
 def validate_static() -> None:
@@ -122,6 +137,8 @@ def validate_static() -> None:
     bootstrap = (ROOT / "scripts/bootstrap.py").read_text(encoding="utf-8")
     if "command = [UV_BIN, \"sync\", \"--frozen\"]" not in bootstrap:
         raise SystemExit("Bootstrap sync authority no longer enforces uv --frozen")
+    if "supported_by_platform" not in bootstrap or "platform_key()" not in bootstrap:
+        raise SystemExit("Bootstrap no longer enforces platform-specific Python patches")
 
     docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     from_lines = [line for line in docker.splitlines() if line.startswith("FROM ")]
@@ -152,15 +169,14 @@ def validate_static() -> None:
     required_phase3_tokens = (
         "bootstrap-contract:",
         "bootstrap-native:",
-        'python: ["3.11.15", "3.12.13"]',
-        "ubuntu-24.04",
-        "windows-2025",
-        "macos-15",
+        "matrix:\n        include:",
         "scripts/bootstrap.py audit",
         "scripts/bootstrap.py evidence",
+        "phase3-bootstrap-${{ matrix.os }}-python-${{ matrix.python }}",
     )
     if any(token not in ci for token in required_phase3_tokens):
-        raise SystemExit("CI does not contain the complete Phase 3 exact-platform gate")
+        raise SystemExit("CI does not contain the complete Phase 3 gate")
+    _validate_phase3_matrix(ci)
 
     hosted = (ROOT / ".github/workflows/verify-hosted-replay.yml").read_text(encoding="utf-8")
     if "npm ci --no-audit --no-fund" not in hosted:
