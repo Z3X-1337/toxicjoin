@@ -90,6 +90,7 @@ def test_phase6_script_covers_required_browser_and_product_paths() -> None:
     assert "source_mode: \"replay\"" in script
     assert "git\", [\"diff\", \"--exit-code\"]" in script
     assert "git\", [\"diff\", \"--cached\", \"--exit-code\"]" in script
+    assert "waitForFunction" not in script
 
 
 def test_phase6_acceptance_preserves_future_phase_boundaries() -> None:
