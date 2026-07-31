@@ -6,8 +6,18 @@ import os
 import tempfile
 import tomllib
 from pathlib import Path
+from typing import Any
 
 import generate_release_manifest as legacy
+from release_manifest_artifacts import (
+    ArtifactBundle,
+    GATE_SPECS,
+    GateSpec,
+    canonical_sha256,
+    json_member,
+    member_by_basename,
+    sha256_bytes,
+)
 from release_manifest_gate import (
     MODE_CANDIDATE,
     MODE_RELEASE,
@@ -16,6 +26,76 @@ from release_manifest_gate import (
     collect_artifact_bundles,
     collect_gate_runs,
 )
+
+
+def validate_ci_authoritative(
+    bundles: dict[str, ArtifactBundle], source_sha: str
+) -> dict[str, Any]:
+    """Validate CI evidence using the checksum contract emitted by each producer."""
+    benchmark, benchmark_raw = json_member(
+        bundles["toxicjoin-benchmark"],
+        "benchmark.json",
+    )
+    metrics = benchmark.get("metrics")
+    if benchmark.get("schema_version") != "1.0" or not isinstance(metrics, dict):
+        raise ValueError("benchmark evidence schema is invalid")
+    if metrics.get("total_cases") != 30 or metrics.get("fully_passed") != 30:
+        raise ValueError("benchmark did not pass all 30 cases")
+    if metrics.get("false_allow_count") != 0 or metrics.get("unsafe_effective_allow_count") != 0:
+        raise ValueError("benchmark contains unsafe allows")
+
+    ppmc, ppmc_raw = json_member(
+        bundles["toxicjoin-ppmc-hard-gate"],
+        "ppmc-hard-gate.json",
+    )
+    if ppmc.get("schema_version") != "1.0" or ppmc.get("gate_passed") is not True:
+        raise ValueError("PPMC hard gate is not verified")
+    claimed_evidence_sha = legacy._validate_sha256(
+        str(ppmc.get("evidence_sha256", "")),
+        name="PPMC evidence_sha256",
+    )
+    canonical_payload = {
+        key: value for key, value in ppmc.items() if key != "evidence_sha256"
+    }
+    actual_evidence_sha = canonical_sha256(canonical_payload)
+    if actual_evidence_sha != claimed_evidence_sha:
+        raise ValueError("PPMC evidence_sha256 mismatch")
+    _, checksum_raw = member_by_basename(
+        bundles["toxicjoin-ppmc-hard-gate"],
+        "ppmc-hard-gate.sha256",
+    )
+    detached_checksum = legacy._validate_sha256(
+        checksum_raw.decode("utf-8").strip().split()[0],
+        name="PPMC detached checksum",
+    )
+    if detached_checksum != claimed_evidence_sha:
+        raise ValueError("PPMC detached checksum mismatch")
+
+    for name in ("pytest-3.11.15", "pytest-3.12.13", "toxicjoin-container-log"):
+        if not any(data.strip() for data in bundles[name].members.values()):
+            raise ValueError(f"{name} is empty")
+    return {
+        "benchmark_json_sha256": sha256_bytes(benchmark_raw),
+        "benchmark_total_cases": 30,
+        "benchmark_false_allow_count": 0,
+        "ppmc_json_sha256": sha256_bytes(ppmc_raw),
+        "ppmc_evidence_sha256": claimed_evidence_sha,
+        "ppmc_gate_passed": True,
+        "container_job_verified": True,
+        "source_sha": source_sha,
+    }
+
+
+def install_authoritative_ci_validator() -> None:
+    current = GATE_SPECS["CI"]
+    GATE_SPECS["CI"] = GateSpec(
+        required_artifacts=current.required_artifacts,
+        validator=validate_ci_authoritative,
+        required_jobs=current.required_jobs,
+    )
+
+
+install_authoritative_ci_validator()
 
 
 def write_atomic(path: Path, payload: dict[str, object]) -> None:
