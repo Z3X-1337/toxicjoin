@@ -41,13 +41,19 @@
   "github_runners": {
     "linux": "ubuntu-24.04",
     "windows": "windows-2025",
-    "macos": "macos-15"
+    "macos": "macos-15-intel"
   },
   "support_matrix": {
     "native_bootstrap": [
       "linux-x64",
       "windows-x64",
-      "macos-arm64"
+      "macos-x64"
+    ],
+    "excluded": [
+      {
+        "platform": "macos-arm64",
+        "reason": "actions/setup-python does not publish the exact Phase 3 Python 3.11.15 and 3.12.13 toolcache builds for the macos-15 ARM64 runner"
+      }
     ],
     "status": "candidate-until-exact-head-phase3-evidence-passes",
     "full-test-parity": "deferred-to-phase4"
@@ -71,6 +77,6 @@
     "run.ps1",
     "Dockerfile",
     "vercel.json",
-    ".github/workflows"
+    ".github/workflows/ci.yml"
   ]
 }
