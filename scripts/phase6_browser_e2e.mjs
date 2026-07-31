@@ -22,6 +22,17 @@ import {
 } from "./phase6_browser_common.mjs";
 import { runBrowserMatrix, runFailureDisclosure, runReplayTruthfulness } from "./phase6_browser_paths.mjs";
 
+const HARD_TIMEOUT_MS = 15 * 60 * 1000;
+const hardTimeout = setTimeout(() => {
+  process.stderr.write(`${JSON.stringify({
+    status: "failed",
+    error_type: "Phase6BrowserTimeout",
+    detail: `browser evidence exceeded ${HARD_TIMEOUT_MS}ms`,
+  }, null, 2)}\n`);
+  process.exit(124);
+}, HARD_TIMEOUT_MS);
+hardTimeout.unref();
+
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   const outputDir = path.resolve(options.outputDir);
@@ -126,6 +137,7 @@ async function main() {
   for (const filePath of finalFiles) manifest.push(`${await sha256File(filePath)}  ${relativePath(outputDir, filePath)}`);
   await writeFile(path.join(outputDir, "SHA256SUMS"), `${manifest.join("\n")}\n`, "utf8");
 
+  clearTimeout(hardTimeout);
   process.stdout.write(`${JSON.stringify({
     status: report.status,
     source_sha: sourceSha,
@@ -137,10 +149,11 @@ async function main() {
 }
 
 main().catch((error) => {
+  clearTimeout(hardTimeout);
   process.stderr.write(`${JSON.stringify({
     status: "failed",
     error_type: error?.constructor?.name ?? "Error",
     detail: String(error?.message ?? error),
   }, null, 2)}\n`);
-  process.exitCode = 1;
+  process.exit(1);
 });
