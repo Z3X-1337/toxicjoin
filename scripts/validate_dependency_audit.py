@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 EXCEPTIONS = ROOT / "docs/security/p4-dependency-risk-exceptions.json"
 TOOLCHAIN = ROOT / "config/toolchain.json"
 _ALLOWED_UV_BOOTSTRAP_RE = re.compile(
-    r"^python -m pip install(?: --no-cache-dir)? --disable-pip-version-check "
-    r"[\"']uv==0\.8\.4[\"']$"
+    r"^(?:run:\s*)?python -m pip install(?: --no-cache-dir)? "
+    r"--disable-pip-version-check [\"']uv==0\.8\.4[\"']$"
 )
 
 
