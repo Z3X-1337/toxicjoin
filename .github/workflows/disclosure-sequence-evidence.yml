@@ -17,7 +17,14 @@ on:
       - "tests/security/test_cumulative_disclosure_gate.py"
       - "tests/security/test_cumulative_execution_binding.py"
       - "tests/security/test_phase16_shared_disclosure_state.py"
+      - "scripts/phase7_topology_evidence.py"
+      - "scripts/generate_release_manifest_v2.py"
+      - "scripts/release_manifest_gate.py"
+      - "scripts/release_manifest_artifacts.py"
+      - "tests/test_generate_release_manifest.py"
+      - ".github/workflows/generated-release-manifest.yml"
       - ".github/workflows/disclosure-sequence-evidence.yml"
+      - "docs/phase7-acceptance.md"
   workflow_dispatch:
 
 permissions:
@@ -26,7 +33,7 @@ permissions:
 jobs:
   cumulative-disclosure-evidence:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Check out exact pull request head
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -45,21 +52,22 @@ jobs:
           printf '%s\n' "$actual_sha" > artifacts/release-candidate-sha.txt
           printf '%s\n' "${{ github.event.pull_request.number || 'workflow_dispatch' }}" > artifacts/target-pr-number.txt
 
-      - name: Set up Python 3.12
+      - name: Set up exact Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
-          python-version: "3.12"
+          python-version: "3.12.13"
           cache: pip
 
-      - name: Install ToxicJoin and development tools
+      - name: Install locked development environment
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --disable-pip-version-check 'uv==0.8.4'
-          uv sync --frozen --extra dev
+          python -m pip install --disable-pip-version-check "uv==0.8.4"
+          python scripts/bootstrap.py verify --components python,uv,locks,contract
+          python scripts/bootstrap.py sync --extra dev
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
-      - name: Run cumulative disclosure security regressions
+      - name: Run cumulative disclosure and topology regressions
         shell: bash
         run: |
           set -euo pipefail
@@ -94,6 +102,38 @@ jobs:
           assert changed["second"]["execution_released"] is False
           assert "CUMULATIVE_DISCLOSURE_RISK" in changed["second"]["final_reason_codes"]
           assert by_id["restart_preserves_privacy_history"]["assertion"] is True
+          PY
+
+      - name: Generate exact-source topology evidence
+        shell: bash
+        run: >-
+          python scripts/phase7_topology_evidence.py
+          --source-sha "${{ github.event.pull_request.head.sha || github.sha }}"
+          --output artifacts/topology-evidence.json
+
+      - name: Verify topology report self-hash and boundaries
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          path = Path("artifacts/topology-evidence.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          claimed = payload.pop("report_sha256")
+          canonical = json.dumps(
+              payload,
+              sort_keys=True,
+              separators=(",", ":"),
+              ensure_ascii=True,
+          ).encode()
+          assert hashlib.sha256(canonical).hexdigest() == claimed
+          assert payload["state_topology"] == "SINGLE_NODE"
+          assert payload["multi_replica_supported"] is False
+          assert payload["multi_replica_fail_closed"] is True
+          assert payload["shared_authoritative_backend"] is False
+          assert payload["postgresql_canonical"] is False
           PY
 
       - name: Upload cumulative disclosure evidence
