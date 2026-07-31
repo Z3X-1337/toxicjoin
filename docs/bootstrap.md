@@ -35,7 +35,7 @@ The only bootstrap exception is installing the package manager itself as exact `
 
 ## Native fixture startup
 
-Linux and macOS:
+Linux and supported macOS Intel hosts:
 
 ```bash
 bash run.sh
@@ -85,7 +85,7 @@ Run the fixture readiness smoke test:
 python scripts/bootstrap.py smoke
 ```
 
-Audit all canonical bootstrap and workflow surfaces for lock bypasses or moving toolchain declarations:
+Audit canonical bootstrap surfaces for lock bypasses and exact-toolchain drift, while retaining non-Phase-3 workflows as inventory-only observations:
 
 ```bash
 python scripts/bootstrap.py audit
@@ -101,11 +101,13 @@ python scripts/bootstrap.py evidence --output-dir artifacts/phase3-bootstrap
 
 The Phase 3 workflow verifies native bootstrap on fixed GitHub runner families:
 
-- `ubuntu-24.04`;
-- `windows-2025`;
-- `macos-15`.
+- `ubuntu-24.04` on x64;
+- `windows-2025` on x64;
+- `macos-15-intel` on x64.
 
 Each runner is exercised with both exact supported Python patches. The gate performs two frozen syncs, compares package-set identity, installs both npm graphs through `npm ci`, builds the frontend, starts the fixture API, checks health/readiness, and verifies that the tracked worktree remains unchanged.
+
+The initial `macos-15` ARM64 probe failed before repository bootstrap because `actions/setup-python` did not publish exact `3.11.15` or `3.12.13` toolcache builds for that runner. Phase 3 therefore does not claim macOS ARM64 support. Adding it later requires a separate exact-toolchain proof rather than a moving or source-built Python fallback.
 
 This is bootstrap portability only. The complete Windows/Linux test parity defect `TJ-P1-TEST-PORT-001`, traceback-frame portability, and full cross-platform test comparison remain Phase 4 work.
 
