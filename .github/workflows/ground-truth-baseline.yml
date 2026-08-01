@@ -4,18 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    paths:
-      - ".github/workflows/ground-truth-baseline.yml"
-      - "scripts/generate_baseline_manifest.py"
-      - "tests/test_generate_baseline_manifest.py"
-      - "pyproject.toml"
-      - "uv.lock"
-      - "package-lock.json"
-      - "apps/web/package-lock.json"
-      - "Dockerfile"
-      - "src/toxicjoin/policy/policy.yaml"
-      - "src/toxicjoin/benchmark/**"
-      - "tests/**"
   workflow_dispatch:
 
 permissions:
