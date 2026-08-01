@@ -4,29 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    paths:
-      - "src/toxicjoin/disclosure/**"
-      - "src/toxicjoin/execute/**"
-      - "src/toxicjoin/verify/**"
-      - "src/toxicjoin/pipeline.py"
-      - "src/toxicjoin/auth.py"
-      - "src/toxicjoin/context/**"
-      - "src/toxicjoin/integrations/**"
-      - "src/toxicjoin/policy/**"
-      - "src/toxicjoin/receipts/**"
-      - "src/toxicjoin/api/**"
-      - "src/toxicjoin/benchmark/disclosure_sequences.py"
-      - "tests/security/test_cumulative_disclosure_gate.py"
-      - "tests/security/test_cumulative_execution_binding.py"
-      - "tests/security/test_phase16_shared_disclosure_state.py"
-      - "scripts/phase7_topology_evidence.py"
-      - "scripts/generate_release_manifest_v2.py"
-      - "scripts/release_manifest_gate.py"
-      - "scripts/release_manifest_artifacts.py"
-      - "tests/test_generate_release_manifest.py"
-      - ".github/workflows/generated-release-manifest.yml"
-      - ".github/workflows/disclosure-sequence-evidence.yml"
-      - "docs/phase7-acceptance.md"
   workflow_dispatch:
 
 permissions:
