@@ -20,6 +20,7 @@ def _read(path: Path) -> str:
 
 def test_phase6_workflow_uses_exact_source_and_production_container() -> None:
     workflow = _read(WORKFLOW)
+    trigger_block = workflow.split("permissions:", 1)[0]
 
     assert 'PHASE6_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}' in workflow
     assert "ref: ${{ env.PHASE6_SOURCE_SHA }}" in workflow
@@ -45,7 +46,10 @@ def test_phase6_workflow_uses_exact_source_and_production_container() -> None:
     assert "npm run dev" not in workflow
     assert "playwright-real-production-browser" not in workflow
     assert "phase6-browser-e2e-evidence" in workflow
-    assert 'scripts/phase6_browser_*.mjs' in workflow
+    assert "node scripts/phase6_browser_e2e.mjs" in workflow
+    assert "  pull_request:\n" in trigger_block
+    assert "    paths:" not in trigger_block
+    assert "    paths-ignore:" not in trigger_block
 
 
 def test_phase6_workflow_verifies_report_hash_with_generator_canonicalization() -> None:

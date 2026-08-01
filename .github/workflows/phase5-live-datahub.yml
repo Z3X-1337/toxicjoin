@@ -1,22 +1,9 @@
 name: Phase 5 Exact-SHA Live DataHub Evidence
 
 on:
+  push:
+    branches: [main]
   pull_request:
-    paths:
-      - ".github/workflows/phase5-live-datahub.yml"
-      - "config/datahub-assets.json"
-      - "config/toolchain.json"
-      - "pyproject.toml"
-      - "uv.lock"
-      - "scripts/phase5*.py"
-      - "src/toxicjoin/agent/**"
-      - "src/toxicjoin/context/**"
-      - "src/toxicjoin/integrations/**"
-      - "src/toxicjoin/models.py"
-      - "src/toxicjoin/policy/**"
-      - "src/toxicjoin/sql/**"
-      - "tests/integration/test_datahub_spike.py"
-      - "tests/test_phase5_live_datahub.py"
   workflow_dispatch:
 
 permissions:

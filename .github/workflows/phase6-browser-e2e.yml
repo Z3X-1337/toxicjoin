@@ -1,21 +1,9 @@
 name: Phase 6 Production Browser E2E
 
 on:
+  push:
+    branches: [main]
   pull_request:
-    paths:
-      - ".github/workflows/phase6-browser-e2e.yml"
-      - "Dockerfile"
-      - "package.json"
-      - "package-lock.json"
-      - "apps/web/**"
-      - "config/**"
-      - "pyproject.toml"
-      - "uv.lock"
-      - "src/**"
-      - "scripts/phase6_browser_*.mjs"
-      - "tests/test_phase6_browser_e2e_contract.py"
-      - "docs/phase6-acceptance.md"
-      - "docs/phase6-browser-e2e.md"
   workflow_dispatch:
 
 permissions:
