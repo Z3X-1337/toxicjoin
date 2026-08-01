@@ -5,10 +5,25 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-RELEASE_CRITICAL_MAIN_GATES = {
+REQUIRED_RELEASE_GATES = {
+    ".github/workflows/ci.yml": "CI",
+    ".github/workflows/ground-truth-baseline.yml": "Ground Truth Baseline",
+    ".github/workflows/codeql.yml": "CodeQL",
+    ".github/workflows/supply-chain.yml": "Supply Chain Security",
+    ".github/workflows/governance-dependency.yml": "Governance Dependency Evidence",
+    ".github/workflows/adversarial-mutations.yml": "Adversarial Mutation Evidence",
+    ".github/workflows/compositional-ablation.yml": "Compositional Ablation Evidence",
     ".github/workflows/disclosure-sequence-evidence.yml": "Disclosure Sequence Evidence",
+    ".github/workflows/phase4-portability.yml": "Phase 4 Portability Evidence",
     ".github/workflows/phase5-live-datahub.yml": "Phase 5 Exact-SHA Live DataHub Evidence",
     ".github/workflows/phase6-browser-e2e.yml": "Phase 6 Production Browser E2E",
+    ".github/workflows/phase8-durable-evidence.yml": "Phase 8 Durable Evidence Retention",
+}
+
+REPAIRED_EXACT_SHA_GATES = {
+    ".github/workflows/disclosure-sequence-evidence.yml",
+    ".github/workflows/phase5-live-datahub.yml",
+    ".github/workflows/phase6-browser-e2e.yml",
 }
 
 
@@ -23,8 +38,8 @@ def _trigger_block(workflow: Path) -> str:
     return "\n".join(block)
 
 
-def test_release_critical_gates_run_automatically_on_exact_main() -> None:
-    for relative_path, expected_name in RELEASE_CRITICAL_MAIN_GATES.items():
+def test_all_release_gates_run_automatically_on_main() -> None:
+    for relative_path, expected_name in REQUIRED_RELEASE_GATES.items():
         workflow = ROOT / relative_path
         content = workflow.read_text(encoding="utf-8")
         trigger_block = _trigger_block(workflow)
@@ -34,6 +49,13 @@ def test_release_critical_gates_run_automatically_on_exact_main() -> None:
             r"(?m)^  push:\n    branches: \[main\]$",
             trigger_block,
         ), f"{expected_name} must run automatically on push to main"
+
+
+def test_repaired_gates_keep_pr_dispatch_and_exact_sha_binding() -> None:
+    for relative_path in REPAIRED_EXACT_SHA_GATES:
+        content = (ROOT / relative_path).read_text(encoding="utf-8")
+        trigger_block = _trigger_block(ROOT / relative_path)
+
         assert "  pull_request:" in trigger_block
         assert "  workflow_dispatch:" in trigger_block
         assert "github.event.pull_request.head.sha || github.sha" in content
