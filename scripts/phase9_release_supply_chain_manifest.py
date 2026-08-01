@@ -16,6 +16,10 @@ def install_phase9_supply_chain_gate(*, mode: str) -> None:
     candidate manifest and intentionally non-applicable for an exact-main
     release manifest. All exact-lock audits and SBOM artifacts remain required
     in both modes.
+
+    Because this module changes Candidate Manifest semantics and is consumed by
+    the Phase 9 preview, the Generated Release Manifest workflow must execute on
+    every pull-request head rather than depend on a maintained path allowlist.
     """
     spec = GATE_SPECS[WORKFLOW_NAME]
     required = spec.required_artifacts
