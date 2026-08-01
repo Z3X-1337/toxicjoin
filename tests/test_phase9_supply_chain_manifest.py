@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,7 @@ import release_manifest_artifacts as ARTIFACTS  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def restore_supply_chain_gate() -> None:
+def restore_supply_chain_gate() -> Iterator[None]:
     original = ARTIFACTS.GATE_SPECS[PHASE9.WORKFLOW_NAME]
     yield
     ARTIFACTS.GATE_SPECS[PHASE9.WORKFLOW_NAME] = original
