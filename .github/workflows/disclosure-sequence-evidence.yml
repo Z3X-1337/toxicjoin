@@ -1,6 +1,8 @@
 name: Disclosure Sequence Evidence
 
 on:
+  push:
+    branches: [main]
   pull_request:
     paths:
       - "src/toxicjoin/disclosure/**"
