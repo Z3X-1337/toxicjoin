@@ -6,7 +6,9 @@ from pathlib import Path
 
 import pytest
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = ROOT / "scripts"
+GENERATED_MANIFEST_WORKFLOW = ROOT / ".github/workflows/generated-release-manifest.yml"
 sys.path.insert(0, str(SCRIPTS))
 
 import generate_release_manifest_v3 as V3  # noqa: E402
@@ -96,3 +98,12 @@ def test_mode_parser_is_explicit_and_fail_closed() -> None:
         V3._manifest_mode(["--mode"])
     with pytest.raises(ValueError, match="unsupported"):
         PHASE9.install_phase9_supply_chain_gate(mode="other")
+
+
+def test_generated_manifest_runs_on_every_pull_request() -> None:
+    workflow = GENERATED_MANIFEST_WORKFLOW.read_text(encoding="utf-8")
+    trigger_block = workflow.split("permissions:", 1)[0]
+
+    assert "  pull_request:\n" in trigger_block
+    assert "    paths:" not in trigger_block
+    assert "    paths-ignore:" not in trigger_block
