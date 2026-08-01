@@ -9,7 +9,7 @@ RUN npm ci --no-audit --no-fund
 COPY apps/web/ ./
 RUN npm run build
 
-FROM python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS python-deps
+FROM python:3.14.6-slim-trixie@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6 AS python-deps
 WORKDIR /app
 COPY config/toolchain.json ./config/toolchain.json
 COPY scripts/bootstrap.py ./scripts/bootstrap.py
@@ -22,7 +22,7 @@ RUN python scripts/bootstrap.py verify --components python,locks \
     && python scripts/bootstrap.py sync --no-install-project \
     && rm -rf /root/.cache/pip /root/.cache/uv
 
-FROM python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS runtime
+FROM python:3.14.6-slim-trixie@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6 AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
