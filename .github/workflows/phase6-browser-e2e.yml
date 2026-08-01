@@ -1,6 +1,8 @@
 name: Phase 6 Production Browser E2E
 
 on:
+  push:
+    branches: [main]
   pull_request:
     paths:
       - ".github/workflows/phase6-browser-e2e.yml"
