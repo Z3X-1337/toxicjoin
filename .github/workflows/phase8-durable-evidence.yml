@@ -4,20 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    paths:
-      - ".github/workflows/phase8-durable-evidence.yml"
-      - ".github/workflows/generated-release-manifest.yml"
-      - "config/phase8-evidence-retention.json"
-      - "evidence/retained/**"
-      - "scripts/generate_release_manifest_v3.py"
-      - "scripts/phase5_retention_policy.py"
-      - "scripts/phase8_durable_evidence.py"
-      - "scripts/phase8_evidence_*.py"
-      - "scripts/phase8_release_manifest.py"
-      - "tests/test_phase8_durable_evidence.py"
-      - "tests/test_phase8_release_manifest_contract.py"
-      - "docs/durable-evidence.md"
-      - "docs/phase8-acceptance.md"
   workflow_dispatch:
 
 permissions:
