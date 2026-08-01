@@ -35,6 +35,8 @@ python scripts/phase8_durable_evidence.py \
 
 The GitHub Actions proof may expire; the source objects and catalog do not, because they are versioned in Git. The proof artifact exists to demonstrate retrieval and exact-head verification.
 
-## Large binary evidence
+## Large binary evidence and Phase 9
 
-Browser screenshots, full Live DataHub bundles, SBOMs, and other large binary artifacts are indexed by digest but are not committed into normal Git history. Phase 9 must attach those bytes to the immutable GitHub Release and verify that their checksums the release manifest.
+Browser screenshots, full Live DataHub bundles, SBOMs, and other large binary artifacts are indexed by digest but are not committed into normal Git history. Phase 9 obtains those bytes only from exact-release-SHA workflow artifacts named by the verified Release Manifest.
+
+The immutable Release bundle contains the final evidence index, four CycloneDX SBOMs, the exact Release Manifest, reproducibility instructions, a deterministic evidence ZIP, and `SHA256SUMS`. The release workflow verifies each source artifact digest before extraction, verifies the downloaded GitHub Release assets again after publication, and refuses a tag or Release that already exists with a conflicting identity.
