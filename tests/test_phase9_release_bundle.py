@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+PHASE9_WORKFLOW = ROOT / ".github/workflows/phase9-immutable-release.yml"
+GENERATED_MANIFEST_WORKFLOW = ROOT / ".github/workflows/generated-release-manifest.yml"
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import phase9_release_bundle as bundle  # noqa: E402
@@ -70,3 +72,21 @@ def test_release_verifier_binds_annotated_tag_and_assets(tmp_path: Path) -> None
     )
     assert report["status"] == "verified"
     assert report["tag_resolved_sha"] == source
+
+
+def test_exact_main_publisher_accepts_nested_workflow_run_only() -> None:
+    phase9 = PHASE9_WORKFLOW.read_text(encoding="utf-8")
+    generated = GENERATED_MANIFEST_WORKFLOW.read_text(encoding="utf-8")
+
+    publisher = phase9.split("  publish-and-verify-release:\n", 1)[1]
+    publisher_condition = publisher.split("    runs-on:", 1)[0]
+    release_manifest = generated.split("  release-manifest:\n", 1)[1]
+    release_manifest_condition = release_manifest.split("    runs-on:", 1)[0]
+
+    assert 'workflows: ["Generated Release Manifest"]' in phase9
+    assert "github.event_name == 'workflow_run'" in publisher_condition
+    assert "github.event.workflow_run.event == 'workflow_run'" in publisher_condition
+    assert "github.event.workflow_run.event == 'push'" not in publisher_condition
+
+    assert 'workflows: ["Ground Truth Baseline"]' in generated
+    assert "github.event.workflow_run.event == 'push'" in release_manifest_condition
