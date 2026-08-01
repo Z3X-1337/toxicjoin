@@ -1,6 +1,8 @@
 name: Phase 5 Exact-SHA Live DataHub Evidence
 
 on:
+  push:
+    branches: [main]
   pull_request:
     paths:
       - ".github/workflows/phase5-live-datahub.yml"
