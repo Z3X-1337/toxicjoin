@@ -20,10 +20,11 @@ REQUIRED_RELEASE_GATES = {
     ".github/workflows/phase8-durable-evidence.yml": "Phase 8 Durable Evidence Retention",
 }
 
-REPAIRED_EXACT_SHA_GATES = {
+EXACT_SHA_GATES = {
     ".github/workflows/disclosure-sequence-evidence.yml",
     ".github/workflows/phase5-live-datahub.yml",
     ".github/workflows/phase6-browser-e2e.yml",
+    ".github/workflows/phase8-durable-evidence.yml",
 }
 
 
@@ -38,7 +39,7 @@ def _trigger_block(workflow: Path) -> str:
     return "\n".join(block)
 
 
-def test_all_release_gates_run_automatically_on_main() -> None:
+def test_all_release_gates_run_on_every_pr_and_exact_main() -> None:
     for relative_path, expected_name in REQUIRED_RELEASE_GATES.items():
         workflow = ROOT / relative_path
         content = workflow.read_text(encoding="utf-8")
@@ -49,13 +50,18 @@ def test_all_release_gates_run_automatically_on_main() -> None:
             r"(?m)^  push:\n    branches: \[main\]$",
             trigger_block,
         ), f"{expected_name} must run automatically on push to main"
+        assert re.search(
+            r"(?m)^  pull_request:\s*$",
+            trigger_block,
+        ), f"{expected_name} must run on every pull-request head"
+        assert "    paths:" not in trigger_block
+        assert "    paths-ignore:" not in trigger_block
 
 
-def test_repaired_gates_keep_pr_dispatch_and_exact_sha_binding() -> None:
-    for relative_path in REPAIRED_EXACT_SHA_GATES:
+def test_exact_sha_gates_keep_dispatch_and_source_binding() -> None:
+    for relative_path in EXACT_SHA_GATES:
         content = (ROOT / relative_path).read_text(encoding="utf-8")
         trigger_block = _trigger_block(ROOT / relative_path)
 
-        assert "  pull_request:" in trigger_block
         assert "  workflow_dispatch:" in trigger_block
         assert "github.event.pull_request.head.sha || github.sha" in content
