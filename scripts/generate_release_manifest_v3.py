@@ -7,7 +7,7 @@ from phase8_release_manifest import (
     decorate_phase8_claim_boundaries,
     install_phase8_gate,
 )
-from phase9_supply_chain_manifest import (
+from phase9_release_supply_chain_manifest import (
     decorate_phase9_supply_chain_claim,
     install_phase9_supply_chain_gate,
 )
