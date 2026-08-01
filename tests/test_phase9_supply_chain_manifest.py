@@ -10,7 +10,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import generate_release_manifest_v3 as V3  # noqa: E402
-import phase9_supply_chain_manifest as PHASE9  # noqa: E402
+import phase9_release_supply_chain_manifest as PHASE9  # noqa: E402
 import release_manifest_artifacts as ARTIFACTS  # noqa: E402
 
 
