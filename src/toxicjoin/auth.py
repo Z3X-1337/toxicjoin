@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 from contextlib import contextmanager
 from contextvars import ContextVar
 from enum import StrEnum
@@ -216,5 +217,26 @@ def bind_request_identity(identity: RequestIdentity) -> Iterator[None]:
         _CURRENT_IDENTITY.reset(token)
 
 
+_CREDENTIAL_HASH_PEPPER = secrets.token_bytes(32)
+"""Process-local HMAC key for hashing presented API keys.
+
+A bare SHA-256 hash here reads to static analysis as CWE-327/CWE-916 (weak hash of sensitive
+data) because the tooling cannot distinguish a 32-512 character random API token from a
+low-entropy human password. A slow KDF (bcrypt/argon2/PBKDF2) is the right answer for a
+password; it is the wrong engineering for a key whose entropy already makes offline brute
+force infeasible, and adding one would tax every request for no real benefit — this is exactly
+why GitHub, Stripe and AWS all hash API tokens with a fast, keyed hash rather than a slow one.
+
+Keying the hash is the improvement actually worth making: it means a leak of the stored hash
+list alone gives an attacker nothing to verify offline guesses against, without the cost of a
+slow KDF. The pepper is regenerated every process start and never persisted or logged, which is
+sufficient because credential configuration itself is reloaded fresh from
+TOXICJOIN_API_KEYS_JSON on every restart — there is no cross-restart verification requirement
+for this hash to satisfy, unlike the content-identity hashes elsewhere in this codebase (e.g.
+receipts/execution authorization) that must stay unkeyed so a verifier can reproduce them
+independently from known plaintext.
+"""
+
+
 def _sha256_text(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return hmac.new(_CREDENTIAL_HASH_PEPPER, value.encode("utf-8"), hashlib.sha256).hexdigest()
