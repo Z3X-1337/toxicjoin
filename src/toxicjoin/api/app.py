@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from toxicjoin.api.live import create_live_pipeline_async, live_mode_requested
 from toxicjoin.api.limits import (
     ApiResourceLimits,
     AuthFailureLimiter,
@@ -126,15 +127,20 @@ def create_app(
     resolved_traffic_limiter = traffic_limiter or PrincipalTrafficLimiter(
         resolved_limits
     )
+    # Live mode is decided by environment and only materializes during lifespan startup, so
+    # it has to be recognized here too. Without this the surface would compute as
+    # unrestricted, exposing docs and granting the anonymous fixture identity every scope
+    # against real governed data.
+    deferred_live = pipeline is None and live_mode_requested()
     if (
-        pipeline is not None
-        and pipeline.mode == ReceiptMode.LIVE
-        and resolved_authenticator is None
-    ):
+        (pipeline is not None and pipeline.mode == ReceiptMode.LIVE) or deferred_live
+    ) and resolved_authenticator is None:
         raise ValueError("LIVE API requires configured authentication")
 
-    restricted_surface = resolved_authenticator is not None or (
-        pipeline is not None and pipeline.mode == ReceiptMode.LIVE
+    restricted_surface = (
+        resolved_authenticator is not None
+        or deferred_live
+        or (pipeline is not None and pipeline.mode == ReceiptMode.LIVE)
     )
     if pipeline is not None and restricted_surface:
         if pipeline.disclosure_ledger is None or not pipeline.stateful_privacy_required:
@@ -161,6 +167,19 @@ def create_app(
 
         @asynccontextmanager
         async def lifespan(application: FastAPI):
+            if live_mode_requested():
+                # Startup raises if DataHub is unreachable. A server that came up anyway
+                # would be advertising live governance it cannot supply.
+                runtime = await create_live_pipeline_async()
+                application.state.pipeline = runtime.pipeline
+                application.state.snapshot_refresher = runtime.refresher
+                runtime.refresher.start()
+                try:
+                    yield
+                finally:
+                    runtime.refresher.stop()
+                return
+
             application.state.pipeline = create_default_pipeline(
                 stateful_privacy_required=restricted_surface
             )
@@ -180,6 +199,7 @@ def create_app(
         window_seconds=resolved_limits.auth_failure_window_seconds,
     )
     application.state.restricted_surface = restricted_surface
+    application.state.snapshot_refresher = None
     application.add_middleware(
         RequestBodyLimitMiddleware,
         max_bytes=resolved_limits.max_request_bytes,
@@ -243,8 +263,14 @@ def create_app(
                 and services.disclosure_ledger.cohort_key_path.is_file()
             )
             freshness_check = getattr(services.context_resolver, "is_fresh", None)
+            snapshot_fresh = callable(freshness_check) and bool(freshness_check())
+            # A live deployment whose refresher has died is not ready even while the current
+            # snapshot is still inside its window: it is minutes away from refusing
+            # everything, and that must surface before it happens rather than after.
+            refresher = getattr(request.app.state, "snapshot_refresher", None)
+            refresher_ready = refresher is None or refresher.health().running
             governance_ready = services.mode != ReceiptMode.LIVE or (
-                callable(freshness_check) and bool(freshness_check())
+                snapshot_fresh and refresher_ready
             )
             ready = (
                 database_ready

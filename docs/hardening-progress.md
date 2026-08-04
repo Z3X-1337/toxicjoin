@@ -274,3 +274,73 @@ clean. Frontend: typecheck clean, 24 tests, production build succeeds.
 | Six compositional attacks (CTE, transform, `MIN()`, group-by-pseudonym, `WHERE` singling) | BLOCK | BLOCK (unchanged) |
 | Public aggregate on an authenticated deployment | BLOCK, opaque error | ALLOW, rows released |
 | Four consecutive protected queries, stateful | 1 allowed then permanently blocked | all four allowed within budget |
+
+---
+
+## Phase 6 — Live DataHub runtime
+
+The governed DataHub path existed as a library and a one-shot CLI but never as a running
+service. Three things were missing, and one of them was a latent bug.
+
+### D16 — A failed refresh must never replace the snapshot
+
+`DataHubSnapshotContextResolver` expires after a bounded age and `DataHubSnapshotLoader` can
+fetch a new one, but nothing connected them: a live server worked until its first snapshot
+aged out, then refused everything with `DATAHUB_CONTEXT_STALE`. Correct, and useless.
+
+`DataHubSnapshotRefresher` refreshes on a daemon thread at half the freshness window, so one
+failed attempt still leaves time to retry before expiry. The rule that matters more than the
+scheduling is that a failed refresh leaves the existing snapshot untouched. Installing a
+partial snapshot would convert an outage into silent governance drift — the pipeline would
+keep answering from metadata that no longer reflects DataHub. Instead the old snapshot expires
+on its own schedule and the request path fails closed.
+
+### D17 — Live mode is chosen by environment, so `create_app` has to know before startup
+
+The pipeline only materializes during lifespan startup, so `restricted_surface` computed as
+`False` for a server launched with `TOXICJOIN_MODE=live` and no credentials: docs exposed, and
+the anonymous fixture identity granted every scope **over real governed data**. `create_app`
+now recognizes the deferred-live case and refuses to build without authentication.
+
+### D18 — `asyncio.run` cannot nest, and that would have broken every live startup
+
+The first factory bootstrapped its snapshot with `asyncio.run`. The ASGI lifespan is already
+inside a running loop, so live mode would have failed every time with
+`RuntimeError: asyncio.run() cannot be called from a running event loop` — an error with
+nothing to do with DataHub, masking the real cause behind plumbing. A stray "coroutine was
+never awaited" warning surfaced it. The server now uses `create_live_pipeline_async` and
+awaits directly; the sync wrapper remains for CLI callers.
+
+A test pins the fix by asserting the *specific* failure (`could not acquire a governed DataHub
+snapshot`) rather than any exception — the original test passed for the wrong reason.
+
+### Other live-mode guards
+
+- **Fail fast at startup.** Unreachable DataHub means the server does not come up. No fallback
+  to fixture governance exists, and a test asserts no pipeline is installed after a failure.
+- **Read-only credentials on the request path.** Context is acquired through a role-bound
+  client built from `DATAHUB_GMS_READ_TOKEN`; write-back stays a separate isolated process.
+- **No implicit warehouse.** Live mode refuses to start without an existing database rather
+  than seeding synthetic rows under real governance.
+- **Readiness covers the refresher.** A live deployment whose refresh loop has died is not
+  ready even while its snapshot is still valid — it is minutes from refusing everything.
+
+### Verification
+
+`tests/integration/test_live_pipeline_end_to_end.py` drives the real loader, real tag →
+category normalization, real freshness binding, real policy engine, real DuckDB executor and
+real receipt store against a simulated MCP server. Only the wire is faked.
+
+The test that matters most for the product claim:
+`test_refresher_reinstalls_governance_after_a_tag_change` reclassifies a column in DataHub and
+shows the decision change **without a restart**. `test_untagged_datahub_fields_fail_closed`
+shows an unclassified field blocking rather than defaulting permissive.
+
+Suite: **955 passed, 1 skipped** in 100s. `ruff check src tests` clean.
+
+| Env var | Purpose |
+| --- | --- |
+| `TOXICJOIN_MODE=live` | select the live runtime |
+| `TOXICJOIN_DATAHUB_ASSET_MAP` | URN manifest (default `config/datahub-assets.json`) |
+| `TOXICJOIN_DATAHUB_SNAPSHOT_MAX_AGE_SECONDS` | freshness window (default 300) |
+| `TOXICJOIN_DATABASE` | governed warehouse; must exist in live mode |
