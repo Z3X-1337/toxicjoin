@@ -28,7 +28,7 @@ toxicjoin-proof-verify = "toxicjoin.proofs.cli:main"
 
 [project.optional-dependencies]
 datahub = [
-  "mcp>=1.27,<2",
+  "mcp>=1.27,<3",
   "acryl-datahub==1.6.0.16",
 ]
 agent-registry = [
