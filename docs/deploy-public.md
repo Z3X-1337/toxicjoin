@@ -115,6 +115,7 @@ DATAHUB_MCP_ARGS=--from mcp-server-datahub==0.6.0 mcp-server-datahub
 TOXICJOIN_API_KEYS_JSON=<see below>
 TOXICJOIN_ALLOWED_HOSTS=your-host.example
 TOXICJOIN_RECEIPT_HMAC_KEY=<at least 32 random bytes>
+TOXICJOIN_TRUSTED_PROXY_IPS=<see Operating notes - only if you sit behind a reverse proxy>
 ```
 
 `TOXICJOIN_API_KEYS_JSON` is a JSON array; keys are 32–512 characters and are never stored in
@@ -141,6 +142,17 @@ Set it as a secret (`fly secrets set`, Render secret env var), never in a commit
   principal gets `TOXICJOIN_DISCLOSURE_MAX_PROTECTED_RELEASES` protected releases (default 5)
   per `TOXICJOIN_DISCLOSURE_BUDGET_WINDOW_SECONDS` (default 24h). Raise it before a live demo
   or a reviewer's sixth query will return `CUMULATIVE_BUDGET_EXHAUSTED` and look like a fault.
+- **Set `TOXICJOIN_TRUSTED_PROXY_IPS` if a reverse proxy or load balancer sits in front of
+  this service.** The pre-auth failure limiter keys on `request.client.host`; left unset
+  (the default), X-Forwarded-* headers are never trusted and that value is always the direct
+  TCP peer — correct only when nothing sits between the caller and this process. Behind any
+  proxy that is *not* on `127.0.0.1` in the same network namespace, every caller collapses
+  onto the proxy's own address and one bad credential from anyone throttles everyone
+  (`AUTH_FAILURE_LIMIT_EXCEEDED`) for the whole fleet. Set it to the proxy's address or CIDR
+  (comma-separated for more than one hop) once you've confirmed that proxy itself sets
+  `X-Forwarded-For` from the real client and does not pass through a caller-supplied one —
+  trusting a proxy that forwards an attacker's own header verbatim defeats the throttle
+  instead of fixing it.
 
 ### What live mode does not do
 

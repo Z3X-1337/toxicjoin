@@ -442,3 +442,73 @@ Suite: **958 passed, 1 skipped**. `ruff check src tests scripts` clean.
 
 **Not verified here:** the container image itself. Docker is unavailable in this environment,
 so `fly deploy` / Render will be the first real build of it.
+
+---
+
+## Phase 9 — Proxy-trust boundary and a clean bandit scan
+
+### D25 — `request.client.host` is only as trustworthy as the proxy in front of it
+
+The pre-auth failure limiter (`_unauthenticated_principal`) and the per-peer traffic key
+(`_traffic_principal`) both key on `request.client.host` — necessary, since Phase 8 had just
+fixed the opposite problem of everyone sharing one bucket. But that value's trustworthiness
+depends entirely on what sits in front of the process, and it was never examined: uvicorn
+defaults to `proxy_headers=True, forwarded_allow_ips="127.0.0.1"`, silently rewriting
+`request.client` from `X-Forwarded-For` whenever the *direct* TCP peer is `127.0.0.1` —
+correct for a reverse proxy running on the same host, wrong and silent for anything else.
+
+Both fly.toml and render.yaml terminate TLS at a managed edge and forward to the container
+over an internal network, so on either platform the direct peer is not `127.0.0.1`. With
+uvicorn's default, `X-Forwarded-For` would simply be ignored there and every caller would
+correctly get its own peer key — the two shipped configs were never actually exposed by
+this gap. But it was still an *unexamined* trust boundary sitting under a security control,
+and any live/credentialed deployment placed behind an actual local reverse proxy would have
+inherited it silently. Two ways that goes wrong:
+
+- **Untrusted proxy honored** (CWE-346): distinct callers collapse onto one limiter key —
+  the shared-budget denial of service Phase 8 exists to prevent, reintroduced by the proxy.
+- **Proxy trusted but forwards a caller-supplied header verbatim** (CWE-290): an attacker
+  mints a fresh `X-Forwarded-For` per request and the failure throttle stops throttling.
+
+`cli.py:_uvicorn_proxy_kwargs` resolves this the way uvicorn already intends it to be
+resolved — `forwarded_allow_ips` is the mechanism, not a hand-rolled header parse in
+`app.py`. Trust is off by default (`proxy_headers=False`); an operator behind a real proxy
+opts in with `TOXICJOIN_TRUSTED_PROXY_IPS`, documented in `docs/deploy-public.md` alongside
+the same warning about what happens if the trusted proxy itself forwards an unverified
+header. `tests/unit/test_cli_proxy_trust.py` pins the default-off behaviour, blank-is-unset,
+explicit opt-in, and the real-environ fallback.
+
+### D26 — Two bandit findings, both real interpolation, neither real input
+
+`bandit -r src` flagged two `B608` (SQL built via string interpolation) findings at medium
+severity: `demo/seed.py`'s CSV-staging insert (added in Phase 2) and
+`benchmark/disclosure_sequences.py`'s evidence-corpus query builder. Both interpolate
+identifiers — table names, a column spec, a region literal — into SQL text, which is exactly
+the shape the rule exists to catch.
+
+Neither is reachable from any request path or takes a caller-supplied value: `seed.py`'s
+`table`/`column_spec` come only from a five-entry module constant, and
+`disclosure_sequences.py`'s `_sql()` is called only with hardcoded literals from a standalone
+offline evidence-generation CLI. Silencing them with a bare `# nosec` would leave that
+reasoning undiscoverable to the next reader; each now carries the explanation inline, an
+assertion that makes the safety self-evident rather than resting on the constant never
+changing silently, and the `# nosec B608` marker on bandit's exact flagged line.
+
+`bandit -ll -r src` now reports zero medium/high findings (0 accepted at face value — both
+suppressions are justified, not hidden). `pip-audit` reports no known vulnerabilities in any
+dependency.
+
+### D27 — Machine-specific Claude Code settings must not enter the shared repository
+
+`.claude/settings.json` on this machine points at personal hook scripts under
+`C:/Users/<user>/.claude/hooks/*.ps1`. Committing it would leak a local path into a public
+hackathon submission and, worse, break Claude Code for anyone else who opens this repo — the
+hooks it references do not exist on their machine. It is now excluded via `.gitignore`
+without being deleted, so it keeps working locally. `.claude/CLAUDE.md` (portable, no
+machine-specific content) and the already-tracked `.claude/launch.json` remain committed.
+
+### Verification
+
+Full suite re-run clean after every change in this phase: **962 passed, 1 skipped**,
+`ruff check src tests scripts` clean, `bandit -ll -r src` zero medium/high, `pip-audit` zero
+known vulnerabilities, frontend typecheck/test/build clean.

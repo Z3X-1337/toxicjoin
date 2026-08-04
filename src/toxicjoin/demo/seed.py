@@ -279,8 +279,16 @@ def _insert_rows(
             column_spec = ", ".join(
                 f"'{name}': '{sql_type}'" for name, sql_type in columns.items()
             )
+            # table/column_spec are interpolated into SQL text, which is exactly the shape
+            # bandit's B608 rule exists to catch. Both come only from _TABLE_COLUMNS, a
+            # five-entry module constant with no external or caller-supplied input on any
+            # path that reaches this function — asserting membership makes that safety
+            # self-evident at the call site instead of resting on the constant never
+            # changing silently. The row values themselves never touch this string; they
+            # travel through the CSV file passed as the one bound parameter.
+            assert table in _TABLE_COLUMNS
             connection.execute(
-                f"INSERT INTO {table} SELECT * FROM read_csv(?, header=false, "
+                f"INSERT INTO {table} SELECT * FROM read_csv(?, header=false, "  # nosec B608
                 f"columns={{{column_spec}}})",
                 [str(csv_path)],
             )

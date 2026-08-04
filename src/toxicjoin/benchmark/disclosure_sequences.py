@@ -25,6 +25,15 @@ _TASK = "Cumulative privacy evidence for approved aggregate analytics"
 
 
 def _sql(region: str, *, aggregate: str = "COUNT", alias: str = "subject_count") -> str:
+    """Build one offline evidence-corpus query.
+
+    This module has no request path: it is a standalone CLI (`main`, below) that generates
+    regression evidence from calls hardcoded at the bottom of this file. `region`, `aggregate`
+    and `alias` are always literal strings from those call sites, never external or
+    caller-supplied input, so interpolating them is not the injection shape bandit's B608
+    flags elsewhere on the real request path (see `verify/engine.py`, `execute/`).
+    """
+
     if aggregate == "COUNT":
         expression = "COUNT(DISTINCT c.customer_id)"
     elif aggregate == "MAX":
@@ -32,7 +41,7 @@ def _sql(region: str, *, aggregate: str = "COUNT", alias: str = "subject_count")
     else:
         raise ValueError(aggregate)
     return (
-        f"SELECT {expression} AS {alias} FROM customers c "
+        f"SELECT {expression} AS {alias} FROM customers c "  # nosec B608
         f"WHERE c.coarse_region = '{region}'"
     )
 
