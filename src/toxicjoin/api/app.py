@@ -33,6 +33,7 @@ from toxicjoin.api.models import (
 )
 from toxicjoin.api.scenarios import SCENARIOS
 from toxicjoin.auth import (
+    FIXTURE_ANONYMOUS_PRINCIPAL,
     ApiKeyAuthenticator,
     AuthScope,
     AuthenticatedRequest,
@@ -245,7 +246,7 @@ def create_app(
     @application.get("/api/ready", response_model=HealthResponse)
     def readiness(request: Request, response: Response) -> HealthResponse:
         authenticated = _require_scope(request, AuthScope.SYSTEM_READ)
-        with _traffic_slot(request, authenticated.identity.principal_id):
+        with _traffic_slot(request, _traffic_principal(request, authenticated)):
             services = _pipeline(request)
             database_ready = (
                 services.executor is not None
@@ -306,7 +307,7 @@ def create_app(
     @application.post("/api/analyze", response_model=PipelineResponse)
     def analyze(payload: PipelineRequest, request: Request) -> PipelineResponse:
         authenticated = _require_scope(request, AuthScope.ANALYZE)
-        with _traffic_slot(request, authenticated.identity.principal_id):
+        with _traffic_slot(request, _traffic_principal(request, authenticated)):
             result = _run_pipeline(
                 request,
                 payload,
@@ -318,7 +319,7 @@ def create_app(
     @application.post("/api/execute-safe", response_model=PipelineResponse)
     def execute_safe(payload: PipelineRequest, request: Request) -> PipelineResponse:
         authenticated = _require_scope(request, AuthScope.EXECUTE)
-        with _traffic_slot(request, authenticated.identity.principal_id):
+        with _traffic_slot(request, _traffic_principal(request, authenticated)):
             result = _run_pipeline(
                 request,
                 payload,
@@ -338,7 +339,7 @@ def create_app(
 
         scope = AuthScope.EXECUTE if payload.execute else AuthScope.ANALYZE
         authenticated = _require_scope(request, scope)
-        with _traffic_slot(request, authenticated.identity.principal_id):
+        with _traffic_slot(request, _traffic_principal(request, authenticated)):
             pipeline = _pipeline(request)
             resolver = pipeline.context_resolver
             catalog = getattr(resolver, "catalog", None)
@@ -378,7 +379,7 @@ def create_app(
         request: Request,
     ) -> DecisionReceipt:
         authenticated = _require_scope(request, AuthScope.RECEIPTS_READ)
-        with _traffic_slot(request, authenticated.identity.principal_id):
+        with _traffic_slot(request, _traffic_principal(request, authenticated)):
             try:
                 receipt = _pipeline(request).receipt_store.read(receipt_id)
             except FileNotFoundError as exc:
@@ -560,6 +561,24 @@ def _require_scope(request: Request, scope: AuthScope) -> AuthenticatedRequest:
             {"code": exc.code, "required_scope": scope.value},
             None,
         ) from exc
+
+
+def _traffic_principal(request: Request, authenticated: AuthenticatedRequest) -> str:
+    """Return the key traffic budgets are accounted against.
+
+    Authenticated callers are metered by their real principal. The unauthenticated fixture
+    surface deliberately shares one *identity* so receipts and disclosure history stay
+    unpartitioned — but metering every visitor against that single key would give the entire
+    public demo two concurrent requests and sixty per minute in total, so two reviewers
+    clicking at once would rate-limit each other. Traffic is therefore keyed per peer while
+    the identity stays shared.
+    """
+
+    principal = authenticated.identity.principal_id
+    if principal != FIXTURE_ANONYMOUS_PRINCIPAL:
+        return principal
+    client = request.client
+    return f"{principal}@{client.host if client is not None else 'unknown'}"
 
 
 @contextmanager

@@ -2,23 +2,32 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "phase5_live_datahub.py"
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
+SCRIPT = SCRIPTS_DIR / "phase5_live_datahub.py"
 SPEC = importlib.util.spec_from_file_location("phase5_live_datahub", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 phase5 = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(phase5)
 
+# Sealing helpers belong to the shared evidence module. Reaching them through
+# phase5_live_datahub relied on an incidental re-export, which made an unused-import cleanup
+# in that script silently break these tests.
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+from phase5_evidence_common import _canonical_hash  # noqa: E402
+
 
 def _seal(payload: dict[str, Any]) -> dict[str, Any]:
     value = json.loads(json.dumps(payload))
     value["report_sha256"] = "0" * 64
-    value["report_sha256"] = phase5._canonical_hash(
+    value["report_sha256"] = _canonical_hash(
         value,
         omit=("report_sha256",),
     )

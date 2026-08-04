@@ -385,3 +385,60 @@ as an enforcement tool, not a landing page.
 
 Agent loop: BLOCK → adapt → ALLOW. No console errors. No horizontal overflow at 375px or
 1280px. Typecheck clean, 24 frontend tests, production build succeeds.
+
+---
+
+## Phase 8 — Public deployment
+
+### D21 — Anonymous reviewers were sharing one traffic budget
+
+The unauthenticated fixture surface shares a single identity on purpose: receipts and
+cumulative disclosure history must not be partitioned by network address. But traffic budgets
+were keyed on that same shared value, so the *entire public demo* had two concurrent requests
+and sixty per minute in total. Two reviewers clicking at the same moment would have refused
+each other's work, and one client could exhaust the deployment for everyone.
+
+`_traffic_principal` now keys unauthenticated traffic per peer while leaving the identity
+shared. Authenticated callers stay metered by their real principal and never by where they
+connected from.
+
+### D22 — The public demo runs fixture mode, and that is not a compromise
+
+The synthetic warehouse contains no real people, so the interface can stay open without
+handing out a credential, and every decision a reviewer sees still comes from the real parser,
+policy engine, read-only DuckDB, verification and receipts. Only the governance *source* is
+synthetic, and `/api/ready` and every receipt say so.
+
+Two limits are raised from their defaults because the defaults assume a credentialed API
+rather than a public audience: 240 requests/window and 8 concurrent per peer.
+
+### D23 — A green deploy proves nothing about enforcement
+
+The failure worth fearing is a stale image that still contains the bypasses — it looks
+completely healthy from the outside. `scripts/verify_deployment.py` drives a deployed URL and
+asserts on outcomes: the three deterministic decisions, and both closed bypasses returning
+BLOCK with zero rows. Exit 1 on any deviation, so it belongs in a post-deploy step.
+
+Verified against the running server: 5/5 pass, exit 0; unreachable host exits 1.
+
+### D24 — An unused import can still be part of a module's surface
+
+Fixing the long-standing `F401` in `scripts/phase5_live_datahub.py` broke five tests: the
+import was unused *in* that file but reached through it as an implicit re-export. The fix was
+to have the test import from the module that defines the helper, removing the fragile coupling
+rather than silencing the lint. CI's lint scope now includes `scripts/`, which is why the
+warning had survived this long.
+
+### Artifacts
+
+| File | Purpose |
+| --- | --- |
+| `fly.toml` | Fly.io deployment, volume-backed runtime directory |
+| `render.yaml` | Render blueprint, ephemeral runtime directory documented as demo-only |
+| `docs/deploy-public.md` | both deployments, the DataHub tag map, and what live mode will not do |
+| `scripts/verify_deployment.py` | post-deploy proof that the bypasses are still refused |
+
+Suite: **958 passed, 1 skipped**. `ruff check src tests scripts` clean.
+
+**Not verified here:** the container image itself. Docker is unavailable in this environment,
+so `fly deploy` / Render will be the first real build of it.

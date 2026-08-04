@@ -193,7 +193,7 @@ jobs:
           python scripts/bootstrap.py sync --extra dev
 
       - name: Lint
-        run: uv run --frozen ruff check src tests
+        run: uv run --frozen ruff check src tests scripts
 
       - name: Test
         shell: bash

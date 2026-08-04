@@ -16,6 +16,14 @@ from pydantic import Field, ValidationError
 from toxicjoin.models import StrictModel
 
 
+FIXTURE_ANONYMOUS_PRINCIPAL = "fixture:anonymous"
+"""Shared placeholder identity for the unauthenticated fixture surface.
+
+It is deliberately one identity: receipts and cumulative disclosure history must not be
+partitioned by network address. Traffic accounting is a separate concern and keys on the peer
+as well — see ``toxicjoin.api.app._traffic_principal``.
+"""
+
 _API_KEYS_ENV = "TOXICJOIN_API_KEYS_JSON"
 _ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$"
 _SESSION_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
@@ -180,8 +188,8 @@ def fixture_anonymous_request() -> AuthenticatedRequest:
 
     return AuthenticatedRequest(
         identity=RequestIdentity(
-            principal_id="fixture:anonymous",
-            credential_id="fixture:anonymous",
+            principal_id=FIXTURE_ANONYMOUS_PRINCIPAL,
+            credential_id=FIXTURE_ANONYMOUS_PRINCIPAL,
             agent_id="fixture:judge",
         ),
         scopes=(
