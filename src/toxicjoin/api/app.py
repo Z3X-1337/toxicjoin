@@ -21,7 +21,10 @@ from toxicjoin.api.limits import (
     ResponseBodyLimitMiddleware,
     TrafficLimitError,
 )
+from toxicjoin.agent.governed import AgentProposalError
+from toxicjoin.agent.runtime import AgentSessionResult, GovernedAgentSession
 from toxicjoin.api.models import (
+    AgentRunRequest,
     DemoScenarioList,
     HealthResponse,
     LivenessResponse,
@@ -297,6 +300,45 @@ def create_app(
                 identity=authenticated.identity,
             )
         return PipelineResponse.from_result(result)
+
+    @application.post("/api/agent/run", response_model=AgentSessionResult)
+    def agent_run(payload: AgentRunRequest, request: Request) -> AgentSessionResult:
+        """Let the Governed Agent attempt a goal under the firewall.
+
+        The agent proposes; ToxicJoin decides. Every attempt runs the full pipeline, so a
+        refusal here is the same refusal `/api/execute-safe` would give, and the agent only
+        ever sees a deterministic reason code to adapt from.
+        """
+
+        scope = AuthScope.EXECUTE if payload.execute else AuthScope.ANALYZE
+        authenticated = _require_scope(request, scope)
+        with _traffic_slot(request, authenticated.identity.principal_id):
+            pipeline = _pipeline(request)
+            resolver = pipeline.context_resolver
+            catalog = getattr(resolver, "catalog", None)
+            if catalog is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail={"code": "AGENT_CONTEXT_UNAVAILABLE"},
+                )
+            try:
+                with bind_request_identity(authenticated.identity):
+                    session = GovernedAgentSession(pipeline=pipeline, catalog=catalog)
+                    return session.run(
+                        goal=payload.goal,
+                        subject_key=payload.subject_key,
+                        execute=payload.execute,
+                    )
+            except AgentProposalError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": exc.code},
+                ) from exc
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail={"code": "AGENT_SESSION_FAILURE"},
+                ) from exc
 
     @application.get(
         "/api/receipts/{receipt_id}",

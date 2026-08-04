@@ -161,3 +161,84 @@ silently into a passing suite.
 | Full suite | 889 passed / 1 skipped, **57 min** | 916 passed / 1 skipped, **72 s** |
 | `seed_database` | 22.0 s | 0.35 s |
 | Integration + root | 23 min | 35 s |
+
+---
+
+## Phase 3 — Resolving the unwired 40%
+
+`agent/`, `prospective/`, `proofs/` and `repair/` were ~11,900 lines with no request path
+reaching them. Leaving that ambiguous was itself a defect: a reader could not tell which code
+was live, and nothing prevented drift in either direction.
+
+### D12 — Wire `agent/`, because it is the product, not research
+
+`GovernedAgent` is a proposal boundary: it converts untrusted planner output into a canonical
+proposal and holds no policy engine, authorizer, executor, ledger or DataHub authority. That is
+precisely the hackathon's subject and it was sitting unreachable. Two pieces were missing, both
+small: a way to build `AgentDataContext` from the resolver the runtime actually uses, and
+something to drive propose → decide → feedback → adapt against real verdicts.
+
+`agent/runtime.py` adds both, plus `POST /api/agent/run`. The loop terminates on the
+pipeline's decision, never the planner's opinion; an agent that keeps proposing unsafe SQL
+just exhausts its budget, which `test_agent_that_never_remediates_exhausts_its_budget_without_releasing`
+pins.
+
+`RemediatingTemplatePlanner` is deterministic rather than an LLM on purpose. The property under
+test is that *no* planner can widen its own authority, so a model would make the demo
+irreproducible while proving nothing extra. Swapping in a real model means implementing
+`TrustedPlannerAdapter`; the wrapper revalidates every field either way.
+
+### D13 — Mark the rest experimental, and make the mark machine-checked
+
+Physically moving `prospective/` and `repair/` would break the benchmark hard-gate evidence and
+rewrite history across 137 branches for no safety gain. Instead each package states its status
+in its module docstring, and `tests/security/test_runtime_module_boundary.py` verifies the
+split in both directions: declared-runtime packages must actually be imported by the API, and
+experimental packages must declare themselves and must never export an `ExecutionAuthorizer`
+subclass.
+
+`proofs/` is a third case and is labelled honestly as **partially wired**: `DuckDBExecutor`
+accepts an optional privacy proof and refuses one unless the authority is the strict
+proof-bound authorizer, but the shipped pipeline never supplies one. A test asserts the default
+authority is *not* proof-bound, so migrating that path forces the claim boundary to be updated
+with it.
+
+| Package | Lines | Decision |
+| --- | --- | --- |
+| `agent/` | ~4,300 | **Wired** — `/api/agent/run`, GUI panel, 7 integration tests |
+| `proofs/` | ~1,300 | **Partially wired** — models only; strict path inactive and pinned |
+| `prospective/` | ~3,300 | **Experimental** — declared + boundary-tested |
+| `repair/` | ~1,600 | **Experimental** — declared + boundary-tested |
+
+---
+
+## Phase 4 — Interactive GUI
+
+The public link was a static replay. Two live panels now sit at the top of the interface:
+
+**Live console** (`QueryConsole.tsx`) — SQL textarea, task purpose, subject dataset/field,
+analyze-vs-execute toggle, and five one-click presets. Renders the decision, reason codes,
+generated safe SQL, every verification check, released rows, and the receipt id.
+
+**Governed Agent loop** (`AgentLoop.tsx`) — a goal box and three preset goals; renders the
+attempt chain with per-attempt verdict, reason codes, SQL and receipt.
+
+### D14 — The console must never fall back to replay
+
+`lib/api.ts` silently answers from the replay bundle when the API is down, which is defensible
+for a scripted scenario rail and indefensible for a console: it would present a dead backend as
+a working privacy firewall. `lib/console.ts` is a separate transport that always surfaces the
+failure, and `console.test.ts` pins that behaviour.
+
+Two presets are the closed bypasses, so a reviewer watches the firewall refuse them live rather
+than trusting a changelog. Verified in-browser against the running API:
+
+| Preset | Result | Rows |
+| --- | --- | --- |
+| Allow — low-risk aggregate | ALLOW | 4 |
+| Rewrite — add a subject threshold | ALLOW after rewrite | 3 |
+| Block — compositional re-identification | BLOCK `COMPOSITIONAL_REIDENTIFICATION_RISK` | 0 |
+| Attack — fabricated subject_count | BLOCK `REWRITE_FAILED` | 0 |
+| Attack — caller-chosen weak subject | BLOCK `UNTRUSTED_SUBJECT_KEY` | 0 |
+
+Agent loop, all three goals: BLOCK → adapt → ALLOW, 3 rows released on the final attempt.

@@ -1,3 +1,4 @@
+import { AgentLoop } from "./components/AgentLoop";
 import { BenchmarkPanel } from "./components/BenchmarkPanel";
 import { DecisionHero } from "./components/DecisionHero";
 import { EvidenceGraph } from "./components/EvidenceGraph";
@@ -56,6 +57,7 @@ export function App() {
 
         <div className="main-column">
           <QueryConsole />
+          <AgentLoop />
           <DecisionHero
             scenario={session.selectedScenario}
             result={session.result}

@@ -1,4 +1,15 @@
-"""Counterfactual Privacy Cut Compiler (CPCC) primitives."""
+"""Counterfactual Privacy Cut Compiler (CPCC) primitives.
+
+EXPERIMENTAL — not wired into the HTTP runtime.
+
+CPCC searches a committed finite remediation space for a minimum-cost repair of an unsafe
+query. The shipped rewriter deliberately supports exactly one narrow transformation instead,
+because a rewriter that can restructure arbitrary SQL is far harder to argue is safe than one
+that can only add a subject threshold.
+
+Kept in-tree as the intended successor to that rewriter. `tests/security/test_runtime_module_boundary.py`
+enforces this status.
+"""
 
 from toxicjoin.repair.compiler import (
     CompiledCpccRepair,
