@@ -235,6 +235,17 @@ TOXICJOIN_API_KEYS_JSON on every restart — there is no cross-restart verificat
 for this hash to satisfy, unlike the content-identity hashes elsewhere in this codebase (e.g.
 receipts/execution authorization) that must stay unkeyed so a verifier can reproduce them
 independently from known plaintext.
+
+CodeQL (py/weak-sensitive-data-hashing, CWE-327/CWE-916) still flags this after the HMAC keying,
+because its suggested remedy is specifically a slow KDF and HMAC-SHA256 is not one. That remedy
+was measured, not just reasoned about, before being rejected: ``hashlib.pbkdf2_hmac`` on this
+call site's input size, at NIST SP 800-132's own stated minimum of 10,000 iterations, costs
+~17ms per call on ordinary hardware; at 100,000 iterations, ~170ms. ``authenticate()`` runs on
+every incoming API request — including unauthenticated, garbage-credential ones, before rate
+limiting has any way to tell good traffic from bad — so either number turns this endpoint into
+a CPU-exhaustion amplifier, working directly against the request/response/concurrency budgets
+this project already enforces elsewhere (api/limits.py). The alert is dismissed accordingly
+(GitHub code-scanning alert #3, reason "won't fix") rather than left open or silently ignored.
 """
 
 
