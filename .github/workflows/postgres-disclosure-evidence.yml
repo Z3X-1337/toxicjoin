@@ -1,0 +1,101 @@
+name: PostgreSQL Disclosure Evidence
+
+on:
+  pull_request:
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/toxicjoin/disclosure/**"
+      - "tests/integration/test_postgres_shared_disclosure.py"
+      - "scripts/validate_dependency_audit.py"
+      - "docs/security/p4-dependency-risk-exceptions.json"
+      - ".github/workflows/postgres-disclosure-evidence.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-shared-disclosure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: toxicjoin
+          POSTGRES_USER: toxicjoin
+          POSTGRES_PASSWORD: toxicjoin
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U toxicjoin -d toxicjoin"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      TOXICJOIN_TEST_POSTGRES_DSN: postgresql://toxicjoin:toxicjoin@127.0.0.1:5432/toxicjoin
+
+    steps:
+      - name: Check out exact pull request head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify checked-out revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          expected_sha="${{ github.event.pull_request.head.sha || github.sha }}"
+          test "$actual_sha" = "$expected_sha"
+          mkdir -p artifacts
+          printf '%s\n' "$actual_sha" > artifacts/release-candidate-sha.txt
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Sync exact locked PostgreSQL evidence profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check 'uv==0.8.4'
+          uv sync --frozen --extra dev --extra security --extra postgres
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Audit exact locked PostgreSQL dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv export --frozen --no-emit-project --no-hashes \
+            --extra postgres --extra security \
+            --output-file artifacts/requirements-postgres.txt
+          set +e
+          .venv/bin/pip-audit -r artifacts/requirements-postgres.txt \
+            --format json --output artifacts/pip-audit-postgres.json
+          AUDIT_RC=$?
+          set -e
+          echo "postgres pip-audit exit code: $AUDIT_RC"
+          .venv/bin/python scripts/validate_dependency_audit.py python \
+            --profile postgres --audit-json artifacts/pip-audit-postgres.json
+
+      - name: Verify PostgreSQL shared-authoritative disclosure semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/integration/test_postgres_shared_disclosure.py \
+            | tee artifacts/pytest.txt
+
+      - name: Upload PostgreSQL disclosure evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: toxicjoin-postgres-disclosure-evidence
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
