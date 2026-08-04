@@ -8,6 +8,7 @@ from toxicjoin.auth import RequestIdentity
 from toxicjoin.demo import default_fixture_catalog
 from toxicjoin.disclosure import (
     CompositionRule,
+    DisclosureBudget,
     DisclosureLedger,
     DisclosureStateTopology,
     DisclosureStateTopologyError,
@@ -50,6 +51,14 @@ def _sensitive_sql(literal: str) -> str:
     )
 
 
+# These regressions were written when the gate permitted exactly one protected release per
+# scope for the lifetime of the ledger. That limit is now a configurable budget, so they pin
+# the budget to one release and keep testing the same boundary: the release that exceeds the
+# allowance is refused, and refused releases never append history.
+SINGLE_RELEASE_BUDGET = DisclosureBudget(max_protected_releases=1)
+
+
+
 def test_raw_replica_local_sqlite_partitions_cumulative_privacy_history(tmp_path: Path) -> None:
     """Document why the raw SQLite primitive is not a horizontally authoritative backend."""
 
@@ -57,10 +66,12 @@ def test_raw_replica_local_sqlite_partitions_cumulative_privacy_history(tmp_path
     replica_a = SQLiteDisclosureLedger(
         tmp_path / "replica-a.sqlite3",
         cohort_key_path=cohort_key_path,
+        budget=SINGLE_RELEASE_BUDGET,
     )
     replica_b = SQLiteDisclosureLedger(
         tmp_path / "replica-b.sqlite3",
         cohort_key_path=cohort_key_path,
+        budget=SINGLE_RELEASE_BUDGET,
     )
 
     sql_a = _sensitive_sql("alpha")
@@ -71,6 +82,7 @@ def test_raw_replica_local_sqlite_partitions_cumulative_privacy_history(tmp_path
     control = SQLiteDisclosureLedger(
         tmp_path / "authoritative-control.sqlite3",
         cohort_key_path=cohort_key_path,
+        budget=SINGLE_RELEASE_BUDGET,
     )
     control_a = control.evaluate_and_commit(_event(sql_a, 101), sql=sql_a)
     control_b = control.evaluate_and_commit(_event(sql_b, 102), sql=sql_b)
@@ -82,7 +94,7 @@ def test_raw_replica_local_sqlite_partitions_cumulative_privacy_history(tmp_path
 
     assert control_a.allowed is True
     assert control_b.allowed is False
-    assert control_b.rule == CompositionRule.CUMULATIVE_VARIATION_BLOCK
+    assert control_b.rule == CompositionRule.CUMULATIVE_BUDGET_EXHAUSTED
 
 
 def test_public_sqlite_authority_rejects_declared_multi_replica_deployment(tmp_path: Path) -> None:
@@ -93,6 +105,7 @@ def test_public_sqlite_authority_rejects_declared_multi_replica_deployment(tmp_p
         DisclosureLedger(
             tmp_path / "disclosures.sqlite3",
             deployment_replica_count=2,
+            budget=SINGLE_RELEASE_BUDGET,
         )
 
 
@@ -106,13 +119,14 @@ def test_public_sqlite_authority_honors_replica_count_environment(
         DisclosureStateTopologyError,
         match="multi-replica stateful privacy requires a shared authoritative disclosure backend",
     ):
-        DisclosureLedger(tmp_path / "disclosures.sqlite3")
+        DisclosureLedger(tmp_path / "disclosures.sqlite3", budget=SINGLE_RELEASE_BUDGET)
 
 
 def test_single_node_and_future_shared_authoritative_topologies_are_explicit(tmp_path: Path) -> None:
     ledger = DisclosureLedger(
         tmp_path / "disclosures.sqlite3",
         deployment_replica_count=1,
+        budget=SINGLE_RELEASE_BUDGET,
     )
 
     assert ledger.state_topology is DisclosureStateTopology.SINGLE_NODE

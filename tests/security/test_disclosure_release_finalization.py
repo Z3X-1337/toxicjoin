@@ -5,12 +5,17 @@ from pathlib import Path
 from toxicjoin.auth import RequestIdentity, bind_request_identity
 from toxicjoin.context import FixtureContextResolver
 from toxicjoin.demo import default_fixture_catalog, seed_database
-from toxicjoin.disclosure import DisclosureCommitment, DisclosureLedger
+from toxicjoin.disclosure import DisclosureBudget, DisclosureCommitment, DisclosureLedger
 from toxicjoin.execute import DuckDBExecutor
 from toxicjoin.models import ColumnRef, Decision, ReasonCode
 from toxicjoin.pipeline import PipelineRequest, ToxicJoinPipeline
 from toxicjoin.policy import PolicyEngine, load_policy
 from toxicjoin.receipts import ReceiptMode, ReceiptStore
+
+
+# Written when the gate allowed exactly one protected release per scope; pinned to that
+# budget so it keeps testing the exhaustion boundary rather than the default allowance.
+SINGLE_RELEASE_BUDGET = DisclosureBudget(max_protected_releases=1)
 
 
 _SUBJECT = ColumnRef(dataset="customers", field_path="customer_id")
@@ -47,7 +52,7 @@ def _commitment(ledger: DisclosureLedger, receipt_id: str) -> DisclosureCommitme
 def test_execution_failure_aborts_reservation_and_does_not_poison_scope(tmp_path: Path) -> None:
     database = tmp_path / "fixture.duckdb"
     seed_database(database)
-    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3")
+    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3", budget=SINGLE_RELEASE_BUDGET)
     pipeline = ToxicJoinPipeline(
         context_resolver=FixtureContextResolver(default_fixture_catalog()),
         policy_engine=PolicyEngine(load_policy()),
@@ -103,7 +108,7 @@ def test_execution_failure_aborts_reservation_and_does_not_poison_scope(tmp_path
 def test_released_protected_query_blocks_identical_new_receipt(tmp_path: Path) -> None:
     database = tmp_path / "fixture.duckdb"
     seed_database(database)
-    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3")
+    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3", budget=SINGLE_RELEASE_BUDGET)
     pipeline = ToxicJoinPipeline(
         context_resolver=FixtureContextResolver(default_fixture_catalog()),
         policy_engine=PolicyEngine(load_policy()),

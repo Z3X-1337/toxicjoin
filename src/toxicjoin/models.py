@@ -34,12 +34,29 @@ class SensitivityCategory(StrEnum):
     UNCLASSIFIED = "UNCLASSIFIED"
 
 
+SUBJECT_IDENTIFIER_CATEGORIES: frozenset["SensitivityCategory"] = frozenset(
+    {
+        SensitivityCategory.DIRECT_IDENTIFIER,
+        SensitivityCategory.STABLE_PSEUDONYM,
+    }
+)
+"""Categories that may act as the privacy subject of a k-anonymity threshold.
+
+A distinct-count threshold only bounds re-identification risk when it counts the governed
+population the policy protects. Counting a low-risk or public field (an order id, an event
+id) satisfies the syntax while leaving the underlying subject cohort arbitrarily small, so
+the subject must be an identifier category. This constant is the single authority shared by
+the policy engine and the disclosure subject-domain resolver.
+"""
+
+
 class ReasonCode(StrEnum):
     DIRECT_SENSITIVE_LINKAGE = "DIRECT_SENSITIVE_LINKAGE"
     COMPOSITIONAL_REIDENTIFICATION_RISK = "COMPOSITIONAL_REIDENTIFICATION_RISK"
     CUMULATIVE_DISCLOSURE_RISK = "CUMULATIVE_DISCLOSURE_RISK"
     DISCLOSURE_STATE_UNAVAILABLE = "DISCLOSURE_STATE_UNAVAILABLE"
     SMALL_GROUP_RISK = "SMALL_GROUP_RISK"
+    UNTRUSTED_SUBJECT_KEY = "UNTRUSTED_SUBJECT_KEY"
     UNRESOLVED_DATASET = "UNRESOLVED_DATASET"
     UNRESOLVED_COLUMN = "UNRESOLVED_COLUMN"
     UNCLASSIFIED_COLUMN = "UNCLASSIFIED_COLUMN"

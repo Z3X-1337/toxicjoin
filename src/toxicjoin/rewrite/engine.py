@@ -86,6 +86,12 @@ def enforce_minimum_group_size(
         raise RewriteError(
             "multiple threshold subjects are outside the safe rewrite profile"
         )
+    if "UNTRUSTED_GROUP_THRESHOLD_NON_CONJUNCTIVE" in original_plan.analysis_warnings:
+        # Conjoining a threshold onto an inverted one yields a contradiction that returns no
+        # groups. Failing here reports the real cause instead of an empty verified result.
+        raise RewriteError(
+            "boolean-guarded HAVING thresholds are outside the safe rewrite profile"
+        )
 
     try:
         root = sqlglot.parse_one(sql, read=dialect)

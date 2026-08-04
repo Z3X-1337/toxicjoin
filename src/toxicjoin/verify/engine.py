@@ -360,21 +360,37 @@ def verify_and_execute(
 
         normalized_columns = tuple(column.lower() for column in execution.columns)
         count_column_present = subject_count_column.lower() in normalized_columns
+        # The column name alone proves nothing: `999 AS subject_count` satisfies it while
+        # carrying no governed value. Require the output's semantic lineage to be a pure
+        # distinct-count over the very subject the threshold claims to protect.
+        count_column_proven = count_column_present and _subject_count_is_governed(
+            query_plan,
+            subject_count_column=subject_count_column,
+            subject_key=subject_key,
+        )
         checks.append(
             VerificationCheck(
                 name="subject_count_output",
-                passed=count_column_present,
+                passed=count_column_proven,
                 detail=(
-                    f"result contains {subject_count_column!r}"
-                    if count_column_present
-                    else f"result does not contain required {subject_count_column!r} column"
+                    f"result contains {subject_count_column!r} proven by lineage to be "
+                    f"COUNT(DISTINCT {subject_key.key})"
+                    if count_column_proven
+                    else (
+                        f"result does not contain required {subject_count_column!r} column"
+                        if not count_column_present
+                        else (
+                            f"{subject_count_column!r} is not proven by output lineage to "
+                            f"count distinct {subject_key.key}"
+                        )
+                    )
                 ),
             )
         )
 
         group_sizes_valid = False
         group_detail = "group sizes were not evaluated"
-        if count_column_present and not execution.truncated:
+        if count_column_proven and not execution.truncated:
             index = normalized_columns.index(subject_count_column.lower())
             try:
                 group_sizes = tuple(int(row[index]) for row in execution.rows)
@@ -416,6 +432,36 @@ def verify_and_execute(
         checks=checks,
         execution=execution,
         execution_attempted=True,
+    )
+
+
+def _subject_count_is_governed(
+    query_plan: QueryPlan,
+    *,
+    subject_count_column: str,
+    subject_key: ColumnRef,
+) -> bool:
+    """Return whether the declared subject-count output really counts the subject.
+
+    ``ProjectionExposure`` already records, for every root output, the governed columns that
+    produced it and how. A fabricated literal produces no exposure at all, and any expression
+    other than a pure ``COUNT(DISTINCT subject)`` produces a different exposure kind, so this
+    check cannot be satisfied by a caller-chosen alias.
+    """
+
+    target = subject_count_column.lower()
+    matches = [
+        exposure
+        for exposure in query_plan.projected_exposures
+        if exposure.output_name.lower() == target
+    ]
+    if len(matches) != 1:
+        return False
+    exposure = matches[0]
+    return (
+        exposure.kind == ProjectionExposureKind.AGGREGATE_VALUE
+        and len(exposure.source_columns) == 1
+        and exposure.source_columns[0].key == subject_key.key
     )
 
 

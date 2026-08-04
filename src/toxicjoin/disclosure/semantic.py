@@ -20,6 +20,7 @@ from toxicjoin.disclosure.models import (
     compute_subject_namespace_sha256,
 )
 from toxicjoin.models import (
+    SUBJECT_IDENTIFIER_CATEGORIES,
     ColumnContext,
     ColumnRef,
     ProjectionExposure,
@@ -28,10 +29,10 @@ from toxicjoin.models import (
 )
 
 
-_SUBJECT_CATEGORIES = {
-    SensitivityCategory.DIRECT_IDENTIFIER,
-    SensitivityCategory.STABLE_PSEUDONYM,
-}
+# Re-exported for callers that already import it from this module. The authority now lives
+# in toxicjoin.models so the policy engine can apply the same rule without depending on the
+# disclosure layer.
+_SUBJECT_CATEGORIES = SUBJECT_IDENTIFIER_CATEGORIES
 
 
 class ContextResolver(Protocol):
@@ -53,9 +54,13 @@ def resolve_governed_subject_domain(
     sources = tuple(sorted(set(source_datasets)))
     if not sources:
         raise DisclosureSemanticError("subject domain requires at least one source dataset")
-    if subject_key.dataset not in sources:
-        raise DisclosureSemanticError("subject key dataset must participate in the query")
 
+    # The subject namespace is deliberately dataset-independent: it is hashed from the
+    # identifier's field path and governed category, so the same subject population is one
+    # namespace wherever it appears. Requiring the *declared* dataset to be a query source was
+    # therefore stricter than the model needs, and rejected ordinary queries that reach the
+    # same subjects through another governed table. The scan below still fails closed unless
+    # some source actually carries that governed identifier.
     requested_dataset = catalog.datasets.get(subject_key.dataset)
     if requested_dataset is None:
         raise DisclosureSemanticError("subject key dataset is not governed")
@@ -122,12 +127,13 @@ def resolve_governed_subject_domain_from_resolver(
     sources = tuple(sorted(set(query_plan.source_datasets)))
     if not sources:
         raise DisclosureSemanticError("subject domain requires at least one source dataset")
-    if subject_key.dataset not in sources:
-        raise DisclosureSemanticError("subject key dataset must participate in the query")
 
+    # See resolve_governed_subject_domain: the namespace spans datasets, so the declared
+    # subject dataset need not itself be a query source. It is probed alongside the sources so
+    # its own governance is still validated.
     refs = tuple(
         ColumnRef(dataset=dataset, field_path=subject_key.field_path)
-        for dataset in sources
+        for dataset in (*sources, subject_key.dataset)
     )
     probe = QueryPlan(
         statement_type="SELECT",

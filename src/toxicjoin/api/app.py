@@ -15,6 +15,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from toxicjoin.api.limits import (
     ApiResourceLimits,
+    AuthFailureLimiter,
     PrincipalTrafficLimiter,
     RequestBodyLimitMiddleware,
     ResponseBodyLimitMiddleware,
@@ -171,6 +172,10 @@ def create_app(
     application.state.authenticator = resolved_authenticator
     application.state.resource_limits = resolved_limits
     application.state.traffic_limiter = resolved_traffic_limiter
+    application.state.auth_failure_limiter = AuthFailureLimiter(
+        max_failures=resolved_limits.auth_failure_limit,
+        window_seconds=resolved_limits.auth_failure_window_seconds,
+    )
     application.state.restricted_surface = restricted_surface
     application.add_middleware(
         RequestBodyLimitMiddleware,
@@ -387,18 +392,25 @@ def _secure_allowed_hosts() -> tuple[str, ...]:
 
 
 def _resolve_web_dist(value: str | Path | None) -> Path | None:
-    candidates: list[Path] = []
-    if value is not None:
-        candidates.append(Path(value))
-    configured = os.getenv("TOXICJOIN_WEB_DIST")
-    if configured:
-        candidates.append(Path(configured))
-    candidates.append(Path("apps/web/dist"))
+    """Resolve the judge interface directory from the most explicit source only.
 
-    for candidate in candidates:
-        resolved = candidate.expanduser().resolve()
-        if resolved.is_dir() and (resolved / "index.html").is_file():
-            return resolved
+    Explicit configuration is authoritative. Falling through from a configured-but-missing
+    directory to a repository-relative probe would let a typo or a half-finished deploy
+    silently serve a different, possibly stale build than the operator asked for, so only the
+    unconfigured case consults the development default.
+    """
+
+    configured_env = os.getenv("TOXICJOIN_WEB_DIST")
+    if value is not None:
+        candidate = Path(value)
+    elif configured_env:
+        candidate = Path(configured_env)
+    else:
+        candidate = Path("apps/web/dist")
+
+    resolved = candidate.expanduser().resolve()
+    if resolved.is_dir() and (resolved / "index.html").is_file():
+        return resolved
     return None
 
 
@@ -412,6 +424,23 @@ def _pipeline(request: Request) -> ToxicJoinPipeline:
     return pipeline
 
 
+_UNAUTHENTICATED_PRINCIPAL_PREFIX = "unauthenticated:"
+
+
+def _unauthenticated_principal(request: Request) -> str:
+    """Derive a pre-authentication limiter key from the peer address.
+
+    The per-principal limiter cannot key on an identity that does not exist yet, so before
+    this change every rejected credential was unmetered and an attacker could probe keys as
+    fast as the network allowed. The peer address is spoofable behind a proxy and is not used
+    for any authorization decision; it exists only to give failed attempts a cost.
+    """
+
+    client = request.client
+    host = client.host if client is not None else "unknown"
+    return f"{_UNAUTHENTICATED_PRINCIPAL_PREFIX}{host}"
+
+
 def _require_scope(request: Request, scope: AuthScope) -> AuthenticatedRequest:
     authenticator = getattr(request.app.state, "authenticator", None)
     if authenticator is None:
@@ -422,13 +451,30 @@ def _require_scope(request: Request, scope: AuthScope) -> AuthenticatedRequest:
             )
         return fixture_anonymous_request()
 
+    failure_limiter = getattr(request.app.state, "auth_failure_limiter", None)
+    peer = _unauthenticated_principal(request)
+    if failure_limiter is not None:
+        try:
+            failure_limiter.check(peer)
+        except TrafficLimitError as exc:
+            raise HTTPException(
+                status_code=429,
+                detail={"code": exc.code},
+                headers={"Retry-After": str(exc.retry_after_seconds)},
+            ) from exc
+
+    def reject(status_code: int, detail: dict[str, object], headers: dict[str, str] | None):
+        if failure_limiter is not None:
+            failure_limiter.record_failure(peer)
+        return HTTPException(status_code=status_code, detail=detail, headers=headers)
+
     authorization = request.headers.get("authorization", "")
     scheme, separator, token = authorization.partition(" ")
     if not separator or scheme.lower() != "bearer" or not token.strip():
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "AUTH_MISSING_BEARER"},
-            headers={"WWW-Authenticate": "Bearer"},
+        raise reject(
+            401,
+            {"code": "AUTH_MISSING_BEARER"},
+            {"WWW-Authenticate": "Bearer"},
         )
 
     session_id = request.headers.get("x-toxicjoin-session")
@@ -439,15 +485,12 @@ def _require_scope(request: Request, scope: AuthScope) -> AuthenticatedRequest:
             session_id=session_id,
         )
     except AuthenticationError as exc:
-        raise HTTPException(
-            status_code=401,
-            detail={"code": exc.code},
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
+        raise reject(401, {"code": exc.code}, {"WWW-Authenticate": "Bearer"}) from exc
     except AuthorizationError as exc:
-        raise HTTPException(
-            status_code=403,
-            detail={"code": exc.code, "required_scope": scope.value},
+        raise reject(
+            403,
+            {"code": exc.code, "required_scope": scope.value},
+            None,
         ) from exc
 
 

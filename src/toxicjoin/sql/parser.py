@@ -259,22 +259,12 @@ def _extract_minimum_group_threshold(
         return None, None
 
     candidates: list[tuple[int, ColumnRef]] = []
-    for node in body.walk():
-        candidate: tuple[exp.Expression, exp.Expression] | None = None
-        if isinstance(node, exp.GTE):
-            candidate = (node.this, node.expression)
-        elif isinstance(node, exp.LTE):
-            candidate = (node.expression, node.this)
-
+    for node in _conjunctive_terms(body):
+        candidate = _threshold_comparison(node, select)
         if candidate is None:
             continue
 
-        count_expression, literal_expression = candidate
-        literal = _integer_literal(literal_expression)
-        distinct_column = _count_distinct_column(count_expression, select)
-        if literal is None or distinct_column is None:
-            continue
-
+        literal, distinct_column = candidate
         resolved = _resolve_columns(
             (distinct_column,),
             scope=scope,
@@ -286,6 +276,13 @@ def _extract_minimum_group_threshold(
         candidates.append((literal, next(iter(resolved))))
 
     if not candidates:
+        # A threshold-shaped comparison that is not a top-level AND conjunct sits under a
+        # boolean context (NOT, CASE, a function call) that can invert or discard it, so it
+        # proves nothing about the released groups.
+        if any(
+            _threshold_comparison(node, select) is not None for node in body.walk()
+        ):
+            warnings.add("UNTRUSTED_GROUP_THRESHOLD_NON_CONJUNCTIVE")
         return None, None
 
     subjects = {column.key for _, column in candidates}
@@ -295,6 +292,49 @@ def _extract_minimum_group_threshold(
 
     threshold, subject = max(candidates, key=lambda item: item[0])
     return threshold, subject
+
+
+def _conjunctive_terms(expression: exp.Expression) -> tuple[exp.Expression, ...]:
+    """Flatten a HAVING body into the terms that must all hold for a group to survive.
+
+    Only ``AND`` and parentheses preserve that guarantee. Descending into any other boolean
+    context would let ``NOT (COUNT(DISTINCT subject) >= k)`` or
+    ``CASE WHEN COUNT(DISTINCT subject) >= k THEN FALSE ELSE TRUE END`` read as a satisfied
+    threshold while the query in fact returns exactly the groups below it.
+    """
+
+    terms: list[exp.Expression] = []
+    stack: list[exp.Expression] = [expression]
+    while stack:
+        node = stack.pop()
+        while isinstance(node, exp.Paren):
+            node = node.this
+        if isinstance(node, exp.And):
+            stack.append(node.this)
+            stack.append(node.expression)
+            continue
+        terms.append(node)
+    return tuple(terms)
+
+
+def _threshold_comparison(
+    node: exp.Expression,
+    select: exp.Select,
+) -> tuple[int, exp.Column] | None:
+    """Return ``(threshold, subject_column)`` when a node is a distinct-count lower bound."""
+
+    if isinstance(node, exp.GTE):
+        count_expression, literal_expression = node.this, node.expression
+    elif isinstance(node, exp.LTE):
+        count_expression, literal_expression = node.expression, node.this
+    else:
+        return None
+
+    literal = _integer_literal(literal_expression)
+    distinct_column = _count_distinct_column(count_expression, select)
+    if literal is None or distinct_column is None:
+        return None
+    return literal, distinct_column
 
 
 def _integer_literal(expression: exp.Expression) -> int | None:

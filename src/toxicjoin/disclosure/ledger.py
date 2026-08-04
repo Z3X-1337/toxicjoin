@@ -21,6 +21,7 @@ from toxicjoin.disclosure.composition import (
 )
 from toxicjoin.disclosure.models import (
     CompositionRule,
+    DisclosureBudget,
     DisclosureCommitment,
     DisclosureCompositionDecision,
     DisclosureEvent,
@@ -68,7 +69,9 @@ class DisclosureLedger:
         *,
         busy_timeout_ms: int = 5_000,
         cohort_key_path: str | Path | None = None,
+        budget: DisclosureBudget | None = None,
     ) -> None:
+        self.budget = budget if budget is not None else DisclosureBudget.from_environment()
         self.path = Path(path)
         self.cohort_key_path = (
             Path(cohort_key_path)
@@ -165,7 +168,11 @@ class DisclosureLedger:
                     commitment=commitment,
                 )
 
-            evaluation = evaluate_composition_history(history, bound_event)
+            evaluation = evaluate_composition_history(
+                history,
+                bound_event,
+                budget=self.budget,
+            )
             if not evaluation.allowed:
                 connection.rollback()
                 return DisclosureCompositionDecision(

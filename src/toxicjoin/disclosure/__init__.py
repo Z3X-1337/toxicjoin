@@ -15,6 +15,7 @@ from toxicjoin.disclosure.ledger import (
 )
 from toxicjoin.disclosure.models import (
     CompositionRule,
+    DisclosureBudget,
     DisclosureAuditIdentity,
     DisclosureCommitment,
     DisclosureComposition,
@@ -47,6 +48,7 @@ from toxicjoin.disclosure.topology import (
 
 __all__ = [
     "CompositionRule",
+    "DisclosureBudget",
     "DisclosureAuditIdentity",
     "DisclosureCommitment",
     "DisclosureCommitmentReplay",
