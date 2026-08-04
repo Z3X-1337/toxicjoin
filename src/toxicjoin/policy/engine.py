@@ -8,7 +8,9 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from toxicjoin.models import (
+    SUBJECT_IDENTIFIER_CATEGORIES,
     ColumnContext,
+    ColumnRef,
     Decision,
     PolicyDecision,
     PolicyInput,
@@ -157,14 +159,48 @@ class PolicyEngine:
         threshold = policy_input.minimum_group_size_present
         expected_subject = policy_input.subject_key
         detected_subject = policy_input.query_plan.minimum_group_size_subject
+        subject_category = _subject_governed_category(policy_input)
+        # The caller declares subject_key, so it is untrusted input. A distinct-count over a
+        # public field (order id, event id) satisfies the threshold syntax while leaving the
+        # protected cohort arbitrarily small, so only a governed identifier may act as the
+        # k-anonymity witness.
+        subject_is_governed_identifier = subject_category in SUBJECT_IDENTIFIER_CATEGORIES
         threshold_subject_matches = (
             expected_subject is not None
             and detected_subject is not None
             and expected_subject.key == detected_subject.key
+            and subject_is_governed_identifier
         )
         trusted_threshold = threshold if threshold_subject_matches else None
 
         if policy_input.query_plan.is_grouped and sensitive_anywhere:
+            threshold_evidence = _threshold_evidence(
+                threshold=threshold,
+                expected_subject=expected_subject,
+                detected_subject=detected_subject,
+                subject_category=subject_category,
+                subject_is_governed_identifier=subject_is_governed_identifier,
+                threshold_subject_matches=threshold_subject_matches,
+            )
+            if not subject_is_governed_identifier:
+                # No rewrite can repair this: the caller named a subject that governance does
+                # not classify as an identifier, so counting it proves nothing about the
+                # protected cohort. Report the declaration itself as the fault.
+                return PolicyDecision(
+                    decision=Decision.BLOCK,
+                    reason_codes=(ReasonCode.UNTRUSTED_SUBJECT_KEY,),
+                    policy_version=self.config.version,
+                    evidence={
+                        "required_minimum_group_size": self.config.minimum_group_size,
+                        "required_subject_categories": sorted(
+                            category.value for category in SUBJECT_IDENTIFIER_CATEGORIES
+                        ),
+                        **threshold_evidence,
+                        "lineage_sources": _lineage_evidence(
+                            policy_input.all_referenced_context
+                        ),
+                    },
+                )
             if (
                 trusted_threshold is None
                 or trusted_threshold < self.config.minimum_group_size
@@ -175,14 +211,7 @@ class PolicyEngine:
                     policy_version=self.config.version,
                     evidence={
                         "required_minimum_group_size": self.config.minimum_group_size,
-                        "detected_minimum_group_size": threshold,
-                        "expected_subject_key": (
-                            expected_subject.key if expected_subject is not None else None
-                        ),
-                        "detected_threshold_subject": (
-                            detected_subject.key if detected_subject is not None else None
-                        ),
-                        "threshold_subject_matches": threshold_subject_matches,
+                        **threshold_evidence,
                         "projected_exposures": [
                             exposure.model_dump(mode="json")
                             for exposure in policy_input.query_plan.projected_exposures
@@ -231,8 +260,60 @@ class PolicyEngine:
                 "trusted_threshold_subject": (
                     detected_subject.key if threshold_subject_matches else None
                 ),
+                **_threshold_evidence(
+                    threshold=threshold,
+                    expected_subject=expected_subject,
+                    detected_subject=detected_subject,
+                    subject_category=subject_category,
+                    subject_is_governed_identifier=subject_is_governed_identifier,
+                    threshold_subject_matches=threshold_subject_matches,
+                ),
             },
         )
+
+
+def _subject_governed_category(
+    policy_input: PolicyInput,
+) -> SensitivityCategory | None:
+    """Return the governed category of the declared subject key, if it is resolved.
+
+    The subject is looked up in the same resolved context the rest of the decision uses, so
+    a caller cannot name a field that governance never classified. An unreferenced or
+    unresolved subject returns ``None`` and therefore never yields a trusted threshold.
+    """
+
+    subject = policy_input.subject_key
+    if subject is None:
+        return None
+    for column in policy_input.all_referenced_context:
+        if column.ref.key == subject.key:
+            return column.category if column.resolved else None
+    return None
+
+
+def _threshold_evidence(
+    *,
+    threshold: int | None,
+    expected_subject: ColumnRef | None,
+    detected_subject: ColumnRef | None,
+    subject_category: SensitivityCategory | None,
+    subject_is_governed_identifier: bool,
+    threshold_subject_matches: bool,
+) -> dict[str, object]:
+    return {
+        "detected_minimum_group_size": threshold,
+        "expected_subject_key": (
+            expected_subject.key if expected_subject is not None else None
+        ),
+        "detected_threshold_subject": (
+            detected_subject.key if detected_subject is not None else None
+        ),
+        "subject_governed_category": (
+            subject_category.value if subject_category is not None else None
+        ),
+        "subject_is_governed_identifier": subject_is_governed_identifier,
+        "threshold_subject_matches": threshold_subject_matches,
+    }
 
 
 def _decision_evidence(

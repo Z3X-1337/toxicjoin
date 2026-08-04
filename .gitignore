@@ -17,3 +17,10 @@ node_modules/
 dist/
 build/
 .DS_Store
+*.tsbuildinfo
+
+# Personal Claude Code configuration: hook paths are absolute and machine-specific
+# (e.g. C:/Users/<name>/.claude/hooks/...). .claude/launch.json and .claude/CLAUDE.md
+# are portable project config and stay tracked.
+.claude/settings.json
+.claude/settings.local.json

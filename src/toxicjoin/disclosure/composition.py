@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from datetime import datetime, timedelta, timezone
 
 import sqlglot
 from sqlglot import exp
 
 from toxicjoin.disclosure.models import (
     CompositionRule,
+    DisclosureBudget,
     DisclosureComposition,
     DisclosureCompositionEvaluation,
     DisclosureEvent,
@@ -124,8 +126,21 @@ def validate_event_composition(event: DisclosureEvent) -> None:
 def evaluate_composition_history(
     history: tuple[DisclosureRecord, ...],
     candidate: DisclosureEvent,
+    *,
+    budget: DisclosureBudget | None = None,
+    now: datetime | None = None,
 ) -> DisclosureCompositionEvaluation:
-    """Evaluate one candidate against active release history without mutating state."""
+    """Evaluate one candidate against active release history without mutating state.
+
+    Protected releases consume a bounded per-scope budget inside a rolling window. Releases
+    older than the window no longer restrict new work, which is what makes the stateful mode
+    usable beyond a single query; the budget is an explicit exposure bound and not a claim
+    that the permitted releases cannot be differenced against each other.
+    """
+
+    effective_budget = budget or DisclosureBudget()
+    evaluated_at = now or datetime.now(timezone.utc)
+    horizon = evaluated_at - timedelta(seconds=effective_budget.window_seconds)
 
     validate_event_composition(candidate)
     composition = candidate.composition
@@ -139,12 +154,16 @@ def evaluate_composition_history(
         if not protected:
             continue
         if record.event.composition is None:
+            # History predating composition metadata cannot be reasoned about at all, so it
+            # keeps failing closed regardless of the budget.
             return DisclosureCompositionEvaluation(
                 allowed=False,
                 rule=CompositionRule.LEGACY_HISTORY_BLOCK,
                 protected_release=composition.protected_release,
                 prior_protected_count=len(prior_protected) + 1,
             )
+        if record.created_at <= horizon:
+            continue
         prior_protected.append(record.event.composition)
 
     if not composition.protected_release:
@@ -155,30 +174,21 @@ def evaluate_composition_history(
             prior_protected_count=len(prior_protected),
         )
 
-    if not prior_protected:
-        return DisclosureCompositionEvaluation(
-            allowed=True,
-            rule=CompositionRule.FIRST_PROTECTED_RELEASE,
-            protected_release=True,
-            prior_protected_count=0,
-        )
-
-    same_release = all(
-        previous.release_family_sha256 == composition.release_family_sha256
-        and previous.cohort_hmac_sha256 == composition.cohort_hmac_sha256
-        for previous in prior_protected
-    )
-    if same_release:
+    if len(prior_protected) >= effective_budget.max_protected_releases:
         return DisclosureCompositionEvaluation(
             allowed=False,
-            rule=CompositionRule.REPEAT_PROTECTED_RELEASE_BLOCK,
+            rule=CompositionRule.CUMULATIVE_BUDGET_EXHAUSTED,
             protected_release=True,
             prior_protected_count=len(prior_protected),
         )
 
     return DisclosureCompositionEvaluation(
-        allowed=False,
-        rule=CompositionRule.CUMULATIVE_VARIATION_BLOCK,
+        allowed=True,
+        rule=(
+            CompositionRule.FIRST_PROTECTED_RELEASE
+            if not prior_protected
+            else CompositionRule.PROTECTED_RELEASE_WITHIN_BUDGET
+        ),
         protected_release=True,
         prior_protected_count=len(prior_protected),
     )

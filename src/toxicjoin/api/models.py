@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from toxicjoin.models import (
     ColumnRef,
@@ -80,3 +80,20 @@ DEFAULT_SUBJECT_KEY = ColumnRef(
     field_path="customer_id",
     alias="c",
 )
+
+
+class AgentRunRequest(StrictModel):
+    """Ask the Governed Agent to attempt work under the firewall."""
+
+    goal: str = Field(min_length=1, max_length=2000)
+    subject_key: ColumnRef = DEFAULT_SUBJECT_KEY
+    execute: bool = True
+
+    @field_validator("goal")
+    @classmethod
+    def goal_must_not_be_blank(cls, value: str) -> str:
+        # `min_length` counts whitespace, so a blank goal would otherwise pass schema
+        # validation and fail deeper in as an opaque server error.
+        if not value.strip():
+            raise ValueError("goal must not be blank")
+        return value

@@ -13,14 +13,19 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from toxicjoin.api.live import create_live_pipeline_async, live_mode_requested
 from toxicjoin.api.limits import (
     ApiResourceLimits,
+    AuthFailureLimiter,
     PrincipalTrafficLimiter,
     RequestBodyLimitMiddleware,
     ResponseBodyLimitMiddleware,
     TrafficLimitError,
 )
+from toxicjoin.agent.governed import AgentProposalError
+from toxicjoin.agent.runtime import AgentSessionResult, GovernedAgentSession
 from toxicjoin.api.models import (
+    AgentRunRequest,
     DemoScenarioList,
     HealthResponse,
     LivenessResponse,
@@ -28,6 +33,7 @@ from toxicjoin.api.models import (
 )
 from toxicjoin.api.scenarios import SCENARIOS
 from toxicjoin.auth import (
+    FIXTURE_ANONYMOUS_PRINCIPAL,
     ApiKeyAuthenticator,
     AuthScope,
     AuthenticatedRequest,
@@ -122,15 +128,20 @@ def create_app(
     resolved_traffic_limiter = traffic_limiter or PrincipalTrafficLimiter(
         resolved_limits
     )
+    # Live mode is decided by environment and only materializes during lifespan startup, so
+    # it has to be recognized here too. Without this the surface would compute as
+    # unrestricted, exposing docs and granting the anonymous fixture identity every scope
+    # against real governed data.
+    deferred_live = pipeline is None and live_mode_requested()
     if (
-        pipeline is not None
-        and pipeline.mode == ReceiptMode.LIVE
-        and resolved_authenticator is None
-    ):
+        (pipeline is not None and pipeline.mode == ReceiptMode.LIVE) or deferred_live
+    ) and resolved_authenticator is None:
         raise ValueError("LIVE API requires configured authentication")
 
-    restricted_surface = resolved_authenticator is not None or (
-        pipeline is not None and pipeline.mode == ReceiptMode.LIVE
+    restricted_surface = (
+        resolved_authenticator is not None
+        or deferred_live
+        or (pipeline is not None and pipeline.mode == ReceiptMode.LIVE)
     )
     if pipeline is not None and restricted_surface:
         if pipeline.disclosure_ledger is None or not pipeline.stateful_privacy_required:
@@ -157,6 +168,19 @@ def create_app(
 
         @asynccontextmanager
         async def lifespan(application: FastAPI):
+            if live_mode_requested():
+                # Startup raises if DataHub is unreachable. A server that came up anyway
+                # would be advertising live governance it cannot supply.
+                runtime = await create_live_pipeline_async()
+                application.state.pipeline = runtime.pipeline
+                application.state.snapshot_refresher = runtime.refresher
+                runtime.refresher.start()
+                try:
+                    yield
+                finally:
+                    runtime.refresher.stop()
+                return
+
             application.state.pipeline = create_default_pipeline(
                 stateful_privacy_required=restricted_surface
             )
@@ -171,7 +195,12 @@ def create_app(
     application.state.authenticator = resolved_authenticator
     application.state.resource_limits = resolved_limits
     application.state.traffic_limiter = resolved_traffic_limiter
+    application.state.auth_failure_limiter = AuthFailureLimiter(
+        max_failures=resolved_limits.auth_failure_limit,
+        window_seconds=resolved_limits.auth_failure_window_seconds,
+    )
     application.state.restricted_surface = restricted_surface
+    application.state.snapshot_refresher = None
     application.add_middleware(
         RequestBodyLimitMiddleware,
         max_bytes=resolved_limits.max_request_bytes,
@@ -217,7 +246,7 @@ def create_app(
     @application.get("/api/ready", response_model=HealthResponse)
     def readiness(request: Request, response: Response) -> HealthResponse:
         authenticated = _require_scope(request, AuthScope.SYSTEM_READ)
-        with _traffic_slot(request, authenticated.identity.principal_id):
+        with _traffic_slot(request, _traffic_principal(request, authenticated)):
             services = _pipeline(request)
             database_ready = (
                 services.executor is not None
@@ -235,8 +264,14 @@ def create_app(
                 and services.disclosure_ledger.cohort_key_path.is_file()
             )
             freshness_check = getattr(services.context_resolver, "is_fresh", None)
+            snapshot_fresh = callable(freshness_check) and bool(freshness_check())
+            # A live deployment whose refresher has died is not ready even while the current
+            # snapshot is still inside its window: it is minutes away from refusing
+            # everything, and that must surface before it happens rather than after.
+            refresher = getattr(request.app.state, "snapshot_refresher", None)
+            refresher_ready = refresher is None or refresher.health().running
             governance_ready = services.mode != ReceiptMode.LIVE or (
-                callable(freshness_check) and bool(freshness_check())
+                snapshot_fresh and refresher_ready
             )
             ready = (
                 database_ready
@@ -272,7 +307,7 @@ def create_app(
     @application.post("/api/analyze", response_model=PipelineResponse)
     def analyze(payload: PipelineRequest, request: Request) -> PipelineResponse:
         authenticated = _require_scope(request, AuthScope.ANALYZE)
-        with _traffic_slot(request, authenticated.identity.principal_id):
+        with _traffic_slot(request, _traffic_principal(request, authenticated)):
             result = _run_pipeline(
                 request,
                 payload,
@@ -284,7 +319,7 @@ def create_app(
     @application.post("/api/execute-safe", response_model=PipelineResponse)
     def execute_safe(payload: PipelineRequest, request: Request) -> PipelineResponse:
         authenticated = _require_scope(request, AuthScope.EXECUTE)
-        with _traffic_slot(request, authenticated.identity.principal_id):
+        with _traffic_slot(request, _traffic_principal(request, authenticated)):
             result = _run_pipeline(
                 request,
                 payload,
@@ -292,6 +327,45 @@ def create_app(
                 identity=authenticated.identity,
             )
         return PipelineResponse.from_result(result)
+
+    @application.post("/api/agent/run", response_model=AgentSessionResult)
+    def agent_run(payload: AgentRunRequest, request: Request) -> AgentSessionResult:
+        """Let the Governed Agent attempt a goal under the firewall.
+
+        The agent proposes; ToxicJoin decides. Every attempt runs the full pipeline, so a
+        refusal here is the same refusal `/api/execute-safe` would give, and the agent only
+        ever sees a deterministic reason code to adapt from.
+        """
+
+        scope = AuthScope.EXECUTE if payload.execute else AuthScope.ANALYZE
+        authenticated = _require_scope(request, scope)
+        with _traffic_slot(request, _traffic_principal(request, authenticated)):
+            pipeline = _pipeline(request)
+            resolver = pipeline.context_resolver
+            catalog = getattr(resolver, "catalog", None)
+            if catalog is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail={"code": "AGENT_CONTEXT_UNAVAILABLE"},
+                )
+            try:
+                with bind_request_identity(authenticated.identity):
+                    session = GovernedAgentSession(pipeline=pipeline, catalog=catalog)
+                    return session.run(
+                        goal=payload.goal,
+                        subject_key=payload.subject_key,
+                        execute=payload.execute,
+                    )
+            except AgentProposalError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": exc.code},
+                ) from exc
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail={"code": "AGENT_SESSION_FAILURE"},
+                ) from exc
 
     @application.get(
         "/api/receipts/{receipt_id}",
@@ -305,7 +379,7 @@ def create_app(
         request: Request,
     ) -> DecisionReceipt:
         authenticated = _require_scope(request, AuthScope.RECEIPTS_READ)
-        with _traffic_slot(request, authenticated.identity.principal_id):
+        with _traffic_slot(request, _traffic_principal(request, authenticated)):
             try:
                 receipt = _pipeline(request).receipt_store.read(receipt_id)
             except FileNotFoundError as exc:
@@ -387,18 +461,25 @@ def _secure_allowed_hosts() -> tuple[str, ...]:
 
 
 def _resolve_web_dist(value: str | Path | None) -> Path | None:
-    candidates: list[Path] = []
-    if value is not None:
-        candidates.append(Path(value))
-    configured = os.getenv("TOXICJOIN_WEB_DIST")
-    if configured:
-        candidates.append(Path(configured))
-    candidates.append(Path("apps/web/dist"))
+    """Resolve the judge interface directory from the most explicit source only.
 
-    for candidate in candidates:
-        resolved = candidate.expanduser().resolve()
-        if resolved.is_dir() and (resolved / "index.html").is_file():
-            return resolved
+    Explicit configuration is authoritative. Falling through from a configured-but-missing
+    directory to a repository-relative probe would let a typo or a half-finished deploy
+    silently serve a different, possibly stale build than the operator asked for, so only the
+    unconfigured case consults the development default.
+    """
+
+    configured_env = os.getenv("TOXICJOIN_WEB_DIST")
+    if value is not None:
+        candidate = Path(value)
+    elif configured_env:
+        candidate = Path(configured_env)
+    else:
+        candidate = Path("apps/web/dist")
+
+    resolved = candidate.expanduser().resolve()
+    if resolved.is_dir() and (resolved / "index.html").is_file():
+        return resolved
     return None
 
 
@@ -412,6 +493,23 @@ def _pipeline(request: Request) -> ToxicJoinPipeline:
     return pipeline
 
 
+_UNAUTHENTICATED_PRINCIPAL_PREFIX = "unauthenticated:"
+
+
+def _unauthenticated_principal(request: Request) -> str:
+    """Derive a pre-authentication limiter key from the peer address.
+
+    The per-principal limiter cannot key on an identity that does not exist yet, so before
+    this change every rejected credential was unmetered and an attacker could probe keys as
+    fast as the network allowed. The peer address is spoofable behind a proxy and is not used
+    for any authorization decision; it exists only to give failed attempts a cost.
+    """
+
+    client = request.client
+    host = client.host if client is not None else "unknown"
+    return f"{_UNAUTHENTICATED_PRINCIPAL_PREFIX}{host}"
+
+
 def _require_scope(request: Request, scope: AuthScope) -> AuthenticatedRequest:
     authenticator = getattr(request.app.state, "authenticator", None)
     if authenticator is None:
@@ -422,13 +520,30 @@ def _require_scope(request: Request, scope: AuthScope) -> AuthenticatedRequest:
             )
         return fixture_anonymous_request()
 
+    failure_limiter = getattr(request.app.state, "auth_failure_limiter", None)
+    peer = _unauthenticated_principal(request)
+    if failure_limiter is not None:
+        try:
+            failure_limiter.check(peer)
+        except TrafficLimitError as exc:
+            raise HTTPException(
+                status_code=429,
+                detail={"code": exc.code},
+                headers={"Retry-After": str(exc.retry_after_seconds)},
+            ) from exc
+
+    def reject(status_code: int, detail: dict[str, object], headers: dict[str, str] | None):
+        if failure_limiter is not None:
+            failure_limiter.record_failure(peer)
+        return HTTPException(status_code=status_code, detail=detail, headers=headers)
+
     authorization = request.headers.get("authorization", "")
     scheme, separator, token = authorization.partition(" ")
     if not separator or scheme.lower() != "bearer" or not token.strip():
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "AUTH_MISSING_BEARER"},
-            headers={"WWW-Authenticate": "Bearer"},
+        raise reject(
+            401,
+            {"code": "AUTH_MISSING_BEARER"},
+            {"WWW-Authenticate": "Bearer"},
         )
 
     session_id = request.headers.get("x-toxicjoin-session")
@@ -439,16 +554,31 @@ def _require_scope(request: Request, scope: AuthScope) -> AuthenticatedRequest:
             session_id=session_id,
         )
     except AuthenticationError as exc:
-        raise HTTPException(
-            status_code=401,
-            detail={"code": exc.code},
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
+        raise reject(401, {"code": exc.code}, {"WWW-Authenticate": "Bearer"}) from exc
     except AuthorizationError as exc:
-        raise HTTPException(
-            status_code=403,
-            detail={"code": exc.code, "required_scope": scope.value},
+        raise reject(
+            403,
+            {"code": exc.code, "required_scope": scope.value},
+            None,
         ) from exc
+
+
+def _traffic_principal(request: Request, authenticated: AuthenticatedRequest) -> str:
+    """Return the key traffic budgets are accounted against.
+
+    Authenticated callers are metered by their real principal. The unauthenticated fixture
+    surface deliberately shares one *identity* so receipts and disclosure history stay
+    unpartitioned — but metering every visitor against that single key would give the entire
+    public demo two concurrent requests and sixty per minute in total, so two reviewers
+    clicking at once would rate-limit each other. Traffic is therefore keyed per peer while
+    the identity stays shared.
+    """
+
+    principal = authenticated.identity.principal_id
+    if principal != FIXTURE_ANONYMOUS_PRINCIPAL:
+        return principal
+    client = request.client
+    return f"{principal}@{client.host if client is not None else 'unknown'}"
 
 
 @contextmanager

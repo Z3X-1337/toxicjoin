@@ -24,7 +24,6 @@ from phase5_evidence_common import (  # noqa: E402
     SCHEMA_VERSION,
     Phase5EvidenceError,
     _artifact_manifest,
-    _canonical_hash,
     _contract_hashes,
     _credential_separation_from_env,
     _git_identity,

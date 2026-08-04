@@ -1,33 +1,49 @@
 # ToxicJoin
 
-> DataHub-grounded compositional privacy firewall for AI data agents.
+> A field can be safe on its own while the **combination** is not. ToxicJoin is the firewall that catches the combination — before the query runs.
 
-ToxicJoin evaluates proposed analytical SQL **before execution**, resolves governed DataHub context and physical lineage, and returns one deterministic outcome:
+An AI data agent joins a stable pseudonym to a location signal, a support category and a model score. Every column passed its own review. The join re-identifies people. Column-by-column checks cannot see it, because the risk is in the composition.
 
-- **ALLOW** — execute through the hardened read-only path.
-- **REWRITE** — generate one constrained safer query, then parse, ground, and evaluate it again.
-- **BLOCK** — stop before DuckDB is called.
+ToxicJoin evaluates proposed SQL **before execution**, grounds every field in governed DataHub context and upstream lineage, and returns one deterministic outcome — **ALLOW**, **REWRITE**, or **BLOCK**. The agent proposes. ToxicJoin decides. Uncertainty fails closed.
 
-The LLM/agent never owns the authorization decision. Unsupported SQL, unresolved or stale governance, ambiguous lineage, failed rewrite, failed verification, integrity failure, or incomplete evidence fails closed.
+## Try it in one command
 
-ToxicJoin was built for **Build with DataHub: The Agent Hackathon**, targeting **Agents That Do Real Work**.
+```bash
+bash run.sh
+```
+
+Then open `http://127.0.0.1:8000` and use the **live console**: paste SQL, pick an action, and watch the real decision, verification checks, released rows and signed receipt. The **Governed Agent loop** below it shows an agent being refused, reading the reason code, and adapting until its query is safe. Both panels call the real API — there is no replay fallback in either.
+
+Windows: `.\run.ps1`. Full walkthrough: [`docs/judge-testing.md`](docs/judge-testing.md).
+
+## What is proven
+
+- **30-case regression corpus:** 30/30 expected decisions, reason codes and effective outcomes; **zero false allows**.
+- **144 adversarial SQL mutations** across known-unsafe composition families: **zero unsafe executions**.
+- **Two privacy bypasses found by adversarial review and closed**, each with regressions that fail against the unfixed source — reproducible live from the console's two attack presets:
+  - a literal aliased as `subject_count` combined with a `NOT`-inverted `HAVING`;
+  - a caller declaring a public column (`orders.order_id`) as the privacy subject.
+- **931 tests** covering unit, integration and security regressions, running in ~90 seconds.
+
+Measurement scope and limits: [`docs/evidence/benchmark.md`](docs/evidence/benchmark.md). This is a regression corpus for a declared SQL/policy profile, not a claim of universal privacy detection.
 
 ## Architecture authority
 
 [`docs/architecture.md`](docs/architecture.md) is the normative product-architecture and claim-boundary authority. Security, threat-model, deployment, judge, evidence, replay, vNext, and submission documents are subordinate or revision-bound views and may not upgrade a fixture, historical, replay-only, staged, off-main, or roadmap capability into a current product claim.
 
+Recent hardening decisions and their rationale: [`docs/hardening-progress.md`](docs/hardening-progress.md).
+
 ## Judge quick path
 
-1. **See the interface immediately:** https://toxicjoin-replay.vercel.app/
-   - Explicitly labeled **Historical Deterministic Replay**.
-   - The retained public replay has policy identity `0.1.0`; it is not current-main policy `0.2.0` evidence.
-   - It is not represented as live DuckDB execution, live DataHub mutation, or current-source release evidence.
-2. **Run the executable product path:** [`docs/judge-testing.md`](docs/judge-testing.md).
-3. **Inspect the submission freeze and current claim boundary:** [`docs/evidence/submission-freeze.md`](docs/evidence/submission-freeze.md).
+1. **Run it:** `bash run.sh`, then exercise the live console and agent loop at `http://127.0.0.1:8000`.
+2. **Reproduce the closed bypasses:** the two `Attack —` presets in the console.
+3. **Inspect the claim boundary:** [`docs/evidence/submission-freeze.md`](docs/evidence/submission-freeze.md).
 4. **Inspect sample outputs:** [`examples/`](examples/README.md).
 5. **Inspect retained real DataHub OSS + official MCP evidence:** [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md).
-   - This evidence is exact-revision evidence and was not rerun on final `main` `1aead67c339c218f5858a9eb9de05868cdc3a0e5`.
+   - Exact-revision evidence; it was not rerun on the final `main` commit.
 6. **Inspect retained production-image black-box evidence:** [`docs/evidence/final-security-blackbox.md`](docs/evidence/final-security-blackbox.md).
+
+A retained static replay of an earlier build remains at https://toxicjoin-replay.vercel.app/ — it is labelled **Historical Deterministic Replay**, carries policy identity `0.1.0` rather than current `0.2.0`, and is not live execution. Prefer `run.sh`.
 
 The shortest product proof chain is:
 
@@ -152,17 +168,28 @@ PENDING -> RELEASED
 
 `PENDING` participates immediately so concurrent requests cannot race around the privacy gate.
 
+Protected releases consume a bounded per-scope budget inside a rolling window (default 5 per 24h, configurable via `TOXICJOIN_DISCLOSURE_MAX_PROTECTED_RELEASES` and `TOXICJOIN_DISCLOSURE_BUDGET_WINDOW_SECONDS`). This is an exposure **bound**, not a non-inference proof: ToxicJoin does not claim differential privacy, and two aggregates over overlapping populations can always be differenced. The budget makes the residual risk an explicit number instead of an unstated one, and exhaustion fails closed with `CUMULATIVE_BUDGET_EXHAUSTED`.
+
 The public SQLite disclosure authority is explicitly **single-node**. Phase 16 proved that replica-local SQLite files partition cumulative privacy history, then added a fail-closed topology boundary: a deployment declaring more than one application replica cannot silently claim shared-authoritative cumulative privacy state.
 
 ToxicJoin does **not** currently claim a PostgreSQL/shared-authoritative disclosure backend, distributed transactions, cross-node replay state, or horizontally shared receipt/key custody.
 
 Draft PR #118 contains an off-main PostgreSQL shared-authoritative implementation and evidence workflow. It is staged work, not a capability present on `main`, not wired into the current HTTP runtime, and not a production-supported backend.
 
-## vNext claim boundary
+## What is wired, and what is not
 
-`docs/vnext/**` contains staged security architecture developed during the hardening roadmap, including Governed-Agent authority separation, prospective privacy model checking (PPMC), proof handoffs, proof-bound execution, warehouse-snapshot revalidation, and cryptographic protocol separation.
+Every package states its runtime status in its module docstring, and
+[`tests/security/test_runtime_module_boundary.py`](tests/security/test_runtime_module_boundary.py)
+enforces it in both directions, so the split cannot drift silently.
 
-Those components are real code with exact-revision tests, but they must not be confused with a claim that the canonical HTTP runtime has fully migrated to the complete vNext proof chain. The stable runtime and the staged vNext architecture are documented separately on purpose.
+| Package | Status |
+| --- | --- |
+| `agent/` | **Wired** — `POST /api/agent/run` and the GUI agent panel |
+| `proofs/` | **Partially wired** — models reach the execution boundary; the strict proof path is inactive and pinned inactive by test |
+| `prospective/` (PPMC) | **Experimental** — real code with CI evidence, no request path invokes it |
+| `repair/` (CPCC) | **Experimental** — same |
+
+`docs/vnext/**` holds the design authority for the experimental work. Those components are real code with exact-revision tests, but the canonical HTTP runtime has **not** migrated to the complete vNext proof chain and does not claim to have.
 
 ## Run fixture mode
 
@@ -182,6 +209,7 @@ Windows PowerShell:
 
 After startup:
 
+- judge interface + live console: `http://127.0.0.1:8000`
 - API docs: `http://127.0.0.1:8000/docs`
 - liveness: `GET /api/health`
 - detailed readiness: `GET /api/ready`
@@ -189,6 +217,7 @@ After startup:
 - benchmark summary: `GET /api/benchmark/summary`
 - analyze without execution: `POST /api/analyze`
 - guarded execution: `POST /api/execute-safe`
+- governed agent loop: `POST /api/agent/run`
 - receipt lookup: `GET /api/receipts/{receipt_id}`
 
 Fixture mode uses deterministic synthetic warehouse data. It is a real executable ToxicJoin path, but it is not represented as a live external DataHub deployment.
@@ -233,7 +262,7 @@ See [`docs/evidence/release-candidate.md`](docs/evidence/release-candidate.md), 
 
 ```text
 src/toxicjoin/
-  agent/         governed Agent boundaries and proof authority
+  agent/         governed Agent boundary, planner adapter, and runtime loop
   api/           FastAPI boundary and curated judge scenarios
   benchmark/     benchmark and evidence summaries
   context/       fixture and normalized DataHub context

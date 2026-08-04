@@ -9,6 +9,7 @@ from toxicjoin.context import FixtureContextResolver
 from toxicjoin.demo import default_fixture_catalog, seed_database
 from toxicjoin.disclosure import (
     DisclosureCommitment,
+    DisclosureBudget,
     DisclosureLedger,
     build_disclosure_event_from_resolver,
 )
@@ -53,10 +54,18 @@ def _pipeline(tmp_path: Path) -> ToxicJoinPipeline:
         receipt_store=ReceiptStore(tmp_path / "receipts"),
         mode=ReceiptMode.FIXTURE,
         executor=DuckDBExecutor(database),
-        disclosure_ledger=DisclosureLedger(tmp_path / "disclosures.sqlite3"),
+        disclosure_ledger=DisclosureLedger(tmp_path / "disclosures.sqlite3", budget=SINGLE_RELEASE_BUDGET),
         stateful_privacy_required=True,
         include_sanitized_sql=False,
     )
+
+
+# These regressions were written when the gate permitted exactly one protected release per
+# scope for the lifetime of the ledger. That limit is now a configurable budget, so they pin
+# the budget to one release and keep testing the same boundary: the release that exceeds the
+# allowance is refused, and refused releases never append history.
+SINGLE_RELEASE_BUDGET = DisclosureBudget(max_protected_releases=1)
+
 
 
 def test_allow_allow_pair_becomes_blocked_only_after_first_release(tmp_path: Path) -> None:
@@ -138,7 +147,7 @@ def test_identical_cohort_with_alias_change_is_blocked_after_release(tmp_path: P
         if check.name == "cumulative_disclosure"
     )
     assert cumulative.passed is False
-    assert "REPEAT_PROTECTED_RELEASE_BLOCK" in cumulative.detail
+    assert "CUMULATIVE_BUDGET_EXHAUSTED" in cumulative.detail
     assert repeat_result.verification.execution_attempted is False
     assert repeat_result.verification.execution is None
     assert pipeline.disclosure_ledger is not None
@@ -178,7 +187,7 @@ def test_inactive_fixture_pipeline_drops_disclosure_authority_and_remains_statel
 ) -> None:
     database = tmp_path / "fixture.duckdb"
     seed_database(database)
-    inactive_ledger = DisclosureLedger(tmp_path / "inactive-disclosures.sqlite3")
+    inactive_ledger = DisclosureLedger(tmp_path / "inactive-disclosures.sqlite3", budget=SINGLE_RELEASE_BUDGET)
     pipeline = ToxicJoinPipeline(
         context_resolver=FixtureContextResolver(default_fixture_catalog()),
         policy_engine=PolicyEngine(load_policy()),
@@ -209,7 +218,7 @@ def test_inactive_fixture_pipeline_drops_disclosure_authority_and_remains_statel
 def _committed_authorizer(tmp_path: Path):
     resolver = FixtureContextResolver(default_fixture_catalog())
     policy = PolicyEngine(load_policy())
-    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3")
+    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3", budget=SINGLE_RELEASE_BUDGET)
     sql = _count_sql("north")
     plan = analyze_sql(sql, dialect="duckdb")
     resolution = resolver.resolve(plan)
@@ -313,8 +322,8 @@ def test_executor_rejects_disclosure_authority_substitution(tmp_path: Path) -> N
     seed_database(database)
     resolver = FixtureContextResolver(default_fixture_catalog())
     policy = PolicyEngine(load_policy())
-    first_ledger = DisclosureLedger(tmp_path / "first.sqlite3")
-    second_ledger = DisclosureLedger(tmp_path / "second.sqlite3")
+    first_ledger = DisclosureLedger(tmp_path / "first.sqlite3", budget=SINGLE_RELEASE_BUDGET)
+    second_ledger = DisclosureLedger(tmp_path / "second.sqlite3", budget=SINGLE_RELEASE_BUDGET)
     executor = DuckDBExecutor(database)
     executor.bind_authorizer(
         ExecutionAuthorizer(

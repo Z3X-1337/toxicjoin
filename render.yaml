@@ -1,0 +1,38 @@
+# Render deployment for the public judge interface.
+#
+# Same posture as fly.toml: FIXTURE mode, open, synthetic warehouse, real pipeline behind it.
+# Live DataHub mode belongs in a separate service with its own secrets — see
+# docs/deploy-public.md.
+
+services:
+  - type: web
+    name: toxicjoin
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: frankfurt
+    healthCheckPath: /api/health
+    autoDeploy: false
+
+    envVars:
+      - key: TOXICJOIN_HOST
+        value: "0.0.0.0"
+      - key: TOXICJOIN_PORT
+        value: "8000"
+      - key: TOXICJOIN_WEB_DIST
+        value: /app/apps/web/dist
+
+      # Render's free and starter tiers have an ephemeral filesystem, so the runtime directory
+      # is placed under /tmp rather than a mount. Receipts and the disclosure ledger therefore
+      # do not survive a restart. That is acceptable for a demo — and only for a demo: a live
+      # deployment must persist both, because receipts are audit evidence and the ledger is
+      # cumulative privacy state whose loss would reset every principal's budget.
+      - key: TOXICJOIN_RUNTIME_DIR
+        value: /tmp/toxicjoin
+
+      # Defaults are tuned for a credentialed API. Left as-is, two reviewers clicking at the
+      # same time would rate-limit each other.
+      - key: TOXICJOIN_RATE_LIMIT_REQUESTS
+        value: "240"
+      - key: TOXICJOIN_MAX_CONCURRENT_PER_PRINCIPAL
+        value: "8"

@@ -112,7 +112,11 @@ class DisclosureLedger(_BaseDisclosureLedger):
                     commitment=commitment,
                 )
 
-            evaluation = evaluate_composition_history(active_history, bound_event)
+            evaluation = evaluate_composition_history(
+                active_history,
+                bound_event,
+                budget=self.budget,
+            )
             if not evaluation.allowed:
                 connection.rollback()
                 return DisclosureCompositionDecision(

@@ -1,7 +1,9 @@
+import { AgentLoop } from "./components/AgentLoop";
 import { BenchmarkPanel } from "./components/BenchmarkPanel";
 import { DecisionHero } from "./components/DecisionHero";
 import { EvidenceGraph } from "./components/EvidenceGraph";
 import { ProductHeader } from "./components/ProductHeader";
+import { QueryConsole } from "./components/QueryConsole";
 import { ReceiptPanel } from "./components/ReceiptPanel";
 import { ResultTable } from "./components/ResultTable";
 import { ScenarioRail } from "./components/ScenarioRail";
@@ -42,6 +44,11 @@ export function App() {
       ) : null}
 
       <main className="judge-layout">
+        <div className="main-column">
+          <QueryConsole />
+          <AgentLoop />
+        </div>
+
         <div className="left-column">
           <ScenarioRail
             scenarios={session.scenarios}

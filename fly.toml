@@ -1,0 +1,60 @@
+# Fly.io deployment for the public judge interface.
+# 
+# This runs FIXTURE mode on purpose. The synthetic warehouse contains no real people, so the
+# interface can stay open with no credential handed out, and every decision a reviewer sees is
+# still produced by the real pipeline: real parser, real policy engine, real read-only DuckDB,
+# real verification, real receipts. Live DataHub mode is a different deployment with its own
+# secrets and a reachable GMS endpoint — see docs/deploy-public.md.
+
+app = "toxicjoin"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  TOXICJOIN_HOST = "0.0.0.0"
+  TOXICJOIN_PORT = "8000"
+  TOXICJOIN_RUNTIME_DIR = "/var/lib/toxicjoin"
+  TOXICJOIN_WEB_DIST = "/app/apps/web/dist"
+
+  # Reviewers arrive in bursts and click through several presets each. The defaults are tuned
+  # for a credentialed API, not a public demo, and would make two simultaneous visitors refuse
+  # each other's requests.
+  TOXICJOIN_RATE_LIMIT_REQUESTS = "240"
+  TOXICJOIN_MAX_CONCURRENT_PER_PRINCIPAL = "8"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  # Always keep one machine warm: a cold start would seed the warehouse while a judge waits.
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 40
+    hard_limit = 80
+
+[[http_service.checks]]
+  grace_period = "20s"
+  interval = "15s"
+  method = "GET"
+  timeout = "4s"
+  path = "/api/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+# Receipts and the disclosure ledger live under TOXICJOIN_RUNTIME_DIR. The image bootstraps
+# that directory on first request, so this volume is about persistence, not writability:
+# without it, every restart discards receipts and resets each principal's disclosure budget.
+# Tolerable for a demo; not for a live deployment, where receipts are audit evidence.
+#
+# Create it once before the first deploy:
+#   fly volumes create toxicjoin_runtime --region fra --size 1
+[[mounts]]
+  source = "toxicjoin_runtime"
+  destination = "/var/lib/toxicjoin"

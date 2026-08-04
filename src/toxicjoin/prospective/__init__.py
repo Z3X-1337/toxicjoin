@@ -1,4 +1,16 @@
-"""Prospective privacy-model primitives for ToxicJoin vNext."""
+"""Prospective privacy-model primitives for ToxicJoin vNext.
+
+EXPERIMENTAL — not wired into the HTTP runtime.
+
+Prospective Privacy Model Checking explores what an agent could disclose across *future*
+queries using bounded BFS over a Future Action Grammar. It is real code with exact-revision
+tests and CI evidence, but no request path invokes it: the shipped pipeline decides on the
+query in front of it, not on a search over hypothetical successors.
+
+It stays in-tree because the benchmark hard-gate evidence depends on it and because the
+search is the intended next step for the product. `tests/security/test_runtime_module_boundary.py`
+enforces this status so it cannot drift silently in either direction.
+"""
 
 from toxicjoin.prospective.twin import (
     ColumnExposureRole,

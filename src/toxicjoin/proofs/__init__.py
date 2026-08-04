@@ -1,4 +1,15 @@
-"""Machine-verifiable privacy proof artifacts."""
+"""Machine-verifiable privacy proof artifacts.
+
+PARTIALLY WIRED — models are imported by the execution boundary; the proof path is inactive.
+
+`DuckDBExecutor` accepts an optional `PreExecutionPrivacyProof` and refuses one unless the
+bound authority is the strict `ProofBoundExecutionAuthorizer`. The shipped pipeline never
+supplies a proof, so in practice this is a closed door with a type attached to it: the
+canonical runtime has not migrated to proof-bound execution and does not claim to have.
+
+Keeping the parameter present rather than absent is deliberate — it makes the unmigrated
+state explicit at the boundary instead of leaving a silent gap to fill later.
+"""
 
 from toxicjoin.proofs.agent_handoff import (
     AgentPreExecutionProofCapsule,

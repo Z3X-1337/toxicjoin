@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
@@ -26,16 +28,59 @@ _SUBJECT_CATEGORIES = {
     SensitivityCategory.DIRECT_IDENTIFIER,
     SensitivityCategory.STABLE_PSEUDONYM,
 }
+DISCLOSURE_BUDGET_ENV = "TOXICJOIN_DISCLOSURE_MAX_PROTECTED_RELEASES"
+DISCLOSURE_BUDGET_WINDOW_ENV = "TOXICJOIN_DISCLOSURE_BUDGET_WINDOW_SECONDS"
 
 
 class CompositionRule(StrEnum):
     UNPROTECTED_RELEASE = "UNPROTECTED_RELEASE"
     FIRST_PROTECTED_RELEASE = "FIRST_PROTECTED_RELEASE"
+    PROTECTED_RELEASE_WITHIN_BUDGET = "PROTECTED_RELEASE_WITHIN_BUDGET"
     REPEAT_IDENTICAL_RELEASE = "REPEAT_IDENTICAL_RELEASE"
     REPEAT_PROTECTED_RELEASE_BLOCK = "REPEAT_PROTECTED_RELEASE_BLOCK"
     IDEMPOTENT_REPLAY = "IDEMPOTENT_REPLAY"
     CUMULATIVE_VARIATION_BLOCK = "CUMULATIVE_VARIATION_BLOCK"
+    CUMULATIVE_BUDGET_EXHAUSTED = "CUMULATIVE_BUDGET_EXHAUSTED"
     LEGACY_HISTORY_BLOCK = "LEGACY_HISTORY_BLOCK"
+
+
+class DisclosureBudget(StrictModel):
+    """Bounded cumulative-release allowance for one privacy scope.
+
+    This is an exposure *bound*, not a non-inference proof. ToxicJoin does not claim
+    differential privacy: two aggregates over overlapping populations can always be
+    differenced. Capping how many protected releases a scope may make inside a rolling window
+    limits how far that differencing can go, and makes the remaining risk an explicit,
+    configurable number rather than an unstated one.
+
+    The predecessor of this model allowed exactly one protected release per scope for the
+    lifetime of the ledger, which bounded the risk to almost nothing and the product's
+    usefulness with it: the second analytical query a principal ever ran was refused.
+    """
+
+    max_protected_releases: int = Field(default=5, ge=1, le=1000)
+    window_seconds: float = Field(default=86_400.0, gt=0, le=31_536_000.0)
+
+    @classmethod
+    def from_environment(
+        cls,
+        environ: Mapping[str, str] | None = None,
+    ) -> "DisclosureBudget":
+        source: Mapping[str, str] = os.environ if environ is None else environ
+        values: dict[str, Any] = {}
+        raw_max = source.get(DISCLOSURE_BUDGET_ENV)
+        raw_window = source.get(DISCLOSURE_BUDGET_WINDOW_ENV)
+        try:
+            if raw_max is not None:
+                values["max_protected_releases"] = int(raw_max)
+            if raw_window is not None:
+                values["window_seconds"] = float(raw_window)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("disclosure budget configuration must be numeric") from exc
+        try:
+            return cls.model_validate(values)
+        except Exception as exc:
+            raise ValueError("disclosure budget configuration is invalid") from exc
 
 
 class GovernedColumn(StrictModel):

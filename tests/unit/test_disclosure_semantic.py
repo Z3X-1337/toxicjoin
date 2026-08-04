@@ -77,7 +77,7 @@ def test_scope_changes_for_different_principal_agent_or_subject_namespace() -> N
     assert base.scope_sha256 != different_agent.scope_sha256
 
 
-def test_subject_key_must_be_governed_identifier_and_participate_in_query() -> None:
+def test_subject_key_must_be_a_governed_identifier() -> None:
     catalog = default_fixture_catalog()
 
     with pytest.raises(DisclosureSemanticError, match="direct identifier or stable"):
@@ -87,11 +87,48 @@ def test_subject_key_must_be_governed_identifier_and_participate_in_query() -> N
             source_datasets=("orders",),
         )
 
-    with pytest.raises(DisclosureSemanticError, match="must participate"):
+
+def test_subject_namespace_spans_datasets_that_share_the_identifier() -> None:
+    """The namespace is (field_path, category), so the declared dataset need not be a source.
+
+    Requiring it to be one rejected ordinary queries that reach the same subject population
+    through another governed table, which blocked even the public order-count scenario.
+    """
+
+    domain = resolve_governed_subject_domain(
+        default_fixture_catalog(),
+        subject_key=ColumnRef(dataset="customers", field_path="customer_id"),
+        source_datasets=("orders",),
+    )
+
+    assert domain.field_path == "customer_id"
+    assert domain.category is SensitivityCategory.STABLE_PSEUDONYM
+
+
+def test_subject_absent_from_every_source_still_fails_closed() -> None:
+    """Relaxing the dataset check must not let a subject be assumed into a query."""
+
+    catalog = FixtureCatalog.model_validate(
+        {
+            "version": "test",
+            "datasets": {
+                "people": {
+                    "urn": "urn:li:dataset:people",
+                    "fields": {"person_id": {"category": "STABLE_PSEUDONYM"}},
+                },
+                "weather": {
+                    "urn": "urn:li:dataset:weather",
+                    "fields": {"station": {"category": "PUBLIC_OR_LOW_RISK"}},
+                },
+            },
+        }
+    )
+
+    with pytest.raises(DisclosureSemanticError, match="no governed subject identifier"):
         resolve_governed_subject_domain(
             catalog,
-            subject_key=ColumnRef(dataset="customers", field_path="customer_id"),
-            source_datasets=("orders",),
+            subject_key=ColumnRef(dataset="people", field_path="person_id"),
+            source_datasets=("weather",),
         )
 
 

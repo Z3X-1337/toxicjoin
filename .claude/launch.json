@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "toxicjoin",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "--frozen", "toxicjoin-api"],
+      "port": 8000
+    }
+  ]
+}

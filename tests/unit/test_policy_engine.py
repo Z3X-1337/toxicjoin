@@ -41,12 +41,28 @@ def build_input(
     threshold: int | None = None,
     threshold_subject: ColumnRef | None = None,
     expected_subject: ColumnRef | None = None,
+    subject_category: SensitivityCategory = SensitivityCategory.STABLE_PSEUDONYM,
 ) -> PolicyInput:
     refs = tuple(item.ref for item in projected)
     if grouped and expected_subject is None:
         expected_subject = ref("customers", "customer_id")
     if threshold is not None and threshold_subject is None:
         threshold_subject = expected_subject
+
+    # A query that counts a subject necessarily references it, and the policy engine now
+    # reads the subject's governed category from the resolved context. Model that here so
+    # threshold tests exercise the threshold rather than an unresolved subject.
+    resolved_referenced = referenced if referenced is not None else projected
+    if expected_subject is not None and not any(
+        item.ref.key == expected_subject.key for item in resolved_referenced
+    ):
+        resolved_referenced = resolved_referenced + (
+            context(
+                expected_subject.dataset,
+                expected_subject.field_path,
+                subject_category,
+            ),
+        )
 
     return PolicyInput(
         task_purpose="Test governed analytics",
@@ -59,7 +75,7 @@ def build_input(
             is_grouped=grouped,
         ),
         projected_context=projected,
-        all_referenced_context=referenced or projected,
+        all_referenced_context=resolved_referenced,
         subject_key=expected_subject,
         minimum_group_size_present=threshold,
     )
@@ -171,6 +187,66 @@ def test_threshold_on_wrong_subject_rewrites() -> None:
 
     assert result.decision == Decision.REWRITE
     assert result.evidence["threshold_subject_matches"] is False
+
+
+def test_non_identifier_subject_key_blocks_instead_of_trusting_threshold() -> None:
+    """A public column cannot witness k-anonymity even when the threshold syntax is valid."""
+
+    result = engine().evaluate(
+        build_input(
+            (
+                context("customers", "region", SensitivityCategory.QUASI_IDENTIFIER),
+                context(
+                    "retention_scores",
+                    "avg_churn_score",
+                    SensitivityCategory.SENSITIVE_ATTRIBUTE,
+                ),
+            ),
+            grouped=True,
+            threshold=20,
+            expected_subject=ref("orders", "order_id"),
+            subject_category=SensitivityCategory.PUBLIC_OR_LOW_RISK,
+        )
+    )
+
+    assert result.decision == Decision.BLOCK
+    assert result.reason_codes == (ReasonCode.UNTRUSTED_SUBJECT_KEY,)
+    assert result.evidence["subject_is_governed_identifier"] is False
+
+
+def test_unresolved_subject_key_is_never_a_trusted_witness() -> None:
+    """A subject absent from resolved governance cannot be trusted by default."""
+
+    result = engine().evaluate(
+        build_input(
+            (
+                context("customers", "region", SensitivityCategory.QUASI_IDENTIFIER),
+                context(
+                    "retention_scores",
+                    "avg_churn_score",
+                    SensitivityCategory.SENSITIVE_ATTRIBUTE,
+                ),
+            ),
+            referenced=(
+                context("customers", "region", SensitivityCategory.QUASI_IDENTIFIER),
+                context(
+                    "retention_scores",
+                    "avg_churn_score",
+                    SensitivityCategory.SENSITIVE_ATTRIBUTE,
+                ),
+                context(
+                    "customers",
+                    "customer_id",
+                    SensitivityCategory.UNCLASSIFIED,
+                    resolved=False,
+                ),
+            ),
+            grouped=True,
+            threshold=20,
+        )
+    )
+
+    assert result.decision == Decision.BLOCK
 
 
 def test_unclassified_column_fails_closed() -> None:

@@ -12,6 +12,7 @@ from toxicjoin.context import FixtureContextResolver
 from toxicjoin.demo import default_fixture_catalog
 from toxicjoin.disclosure import (
     CompositionRule,
+    DisclosureBudget,
     DisclosureLedger,
     DisclosureLedgerIntegrityError,
     build_composition_metadata,
@@ -57,6 +58,14 @@ def _event(
         receipt_id=f"tj_{receipt_index:016x}",
         policy_version="0.2.0",
     )
+
+
+# These regressions were written when the gate permitted exactly one protected release per
+# scope for the lifetime of the ledger. That limit is now a configurable budget, so they pin
+# the budget to one release and keep testing the same boundary: the release that exceeds the
+# allowance is refused, and refused releases never append history.
+SINGLE_RELEASE_BUDGET = DisclosureBudget(max_protected_releases=1)
+
 
 
 def _sensitive_sql(literal: str, *, alias: str = "avg_purchase") -> str:
@@ -127,7 +136,7 @@ def test_limited_query_order_changes_cohort_identity() -> None:
 def test_first_protected_release_is_reserved_and_new_identical_release_is_blocked(
     tmp_path: Path,
 ) -> None:
-    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3")
+    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3", budget=SINGLE_RELEASE_BUDGET)
     first_sql = _sensitive_sql("alpha", alias="first_alias")
     repeat_sql = (
         "SELECT AVG(o.purchase_amount) AS renamed_alias "
@@ -142,14 +151,14 @@ def test_first_protected_release_is_reserved_and_new_identical_release_is_blocke
     assert first.commitment is not None
     assert ledger.release_state(first.commitment) == "PENDING"
     assert repeat.allowed is False
-    assert repeat.rule == CompositionRule.REPEAT_PROTECTED_RELEASE_BLOCK
+    assert repeat.rule == CompositionRule.CUMULATIVE_BUDGET_EXHAUSTED
     assert repeat.prior_protected_count == 1
     assert repeat.commitment is None
     assert ledger.verify_all() == 1
 
 
 def test_changed_cohort_is_blocked_without_append(tmp_path: Path) -> None:
-    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3")
+    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3", budget=SINGLE_RELEASE_BUDGET)
     first_sql = _sensitive_sql("alpha")
     changed_sql = _sensitive_sql("beta")
     first_event = _event(first_sql, 3)
@@ -160,7 +169,7 @@ def test_changed_cohort_is_blocked_without_append(tmp_path: Path) -> None:
 
     assert allowed.allowed is True
     assert blocked.allowed is False
-    assert blocked.rule == CompositionRule.CUMULATIVE_VARIATION_BLOCK
+    assert blocked.rule == CompositionRule.CUMULATIVE_BUDGET_EXHAUSTED
     assert blocked.commitment is None
     assert ledger.verify_all() == 1
     with pytest.raises(KeyError):
@@ -168,7 +177,7 @@ def test_changed_cohort_is_blocked_without_append(tmp_path: Path) -> None:
 
 
 def test_changed_sensitive_release_family_is_blocked(tmp_path: Path) -> None:
-    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3")
+    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3", budget=SINGLE_RELEASE_BUDGET)
     first_sql = _sensitive_sql("alpha")
     changed_sql = (
         "SELECT MAX(o.purchase_amount) AS max_purchase "
@@ -180,12 +189,12 @@ def test_changed_sensitive_release_family_is_blocked(tmp_path: Path) -> None:
 
     assert first.allowed is True
     assert changed.allowed is False
-    assert changed.rule == CompositionRule.CUMULATIVE_VARIATION_BLOCK
+    assert changed.rule == CompositionRule.CUMULATIVE_BUDGET_EXHAUSTED
     assert ledger.verify_all() == 1
 
 
 def test_public_nonaggregate_variation_remains_unprotected(tmp_path: Path) -> None:
-    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3")
+    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3", budget=SINGLE_RELEASE_BUDGET)
     first_sql = "SELECT o.category FROM orders o WHERE o.category = 'alpha'"
     second_sql = "SELECT o.category FROM orders o WHERE o.category = 'beta'"
 
@@ -202,7 +211,7 @@ def test_public_nonaggregate_variation_remains_unprotected(tmp_path: Path) -> No
 
 
 def test_concurrent_different_protected_cohorts_cannot_both_commit(tmp_path: Path) -> None:
-    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3", busy_timeout_ms=20_000)
+    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3", busy_timeout_ms=20_000, budget=SINGLE_RELEASE_BUDGET)
     sql_a = _sensitive_sql("alpha")
     sql_b = _sensitive_sql("beta")
     event_a = _event(sql_a, 9)
@@ -217,7 +226,7 @@ def test_concurrent_different_protected_cohorts_cannot_both_commit(tmp_path: Pat
         )
 
     assert sum(result.allowed for result in results) == 1
-    assert sum(result.rule == CompositionRule.CUMULATIVE_VARIATION_BLOCK for result in results) == 1
+    assert sum(result.rule == CompositionRule.CUMULATIVE_BUDGET_EXHAUSTED for result in results) == 1
     assert ledger.verify_all() == 1
 
 
@@ -227,34 +236,34 @@ def test_history_survives_restart_and_blocks_new_protected_release(
     path = tmp_path / "disclosures.sqlite3"
     first_sql = _sensitive_sql("alpha")
     changed_sql = _sensitive_sql("beta")
-    ledger = DisclosureLedger(path)
+    ledger = DisclosureLedger(path, budget=SINGLE_RELEASE_BUDGET)
     first = ledger.evaluate_and_commit(_event(first_sql, 11), sql=first_sql)
     assert first.allowed
     key_path = ledger.cohort_key_path
 
-    restarted = DisclosureLedger(path)
+    restarted = DisclosureLedger(path, budget=SINGLE_RELEASE_BUDGET)
     repeat = restarted.evaluate_and_commit(_event(first_sql, 12), sql=first_sql)
     changed = restarted.evaluate_and_commit(_event(changed_sql, 13), sql=changed_sql)
     assert repeat.allowed is False
-    assert repeat.rule == CompositionRule.REPEAT_PROTECTED_RELEASE_BLOCK
+    assert repeat.rule == CompositionRule.CUMULATIVE_BUDGET_EXHAUSTED
     assert changed.allowed is False
-    assert changed.rule == CompositionRule.CUMULATIVE_VARIATION_BLOCK
+    assert changed.rule == CompositionRule.CUMULATIVE_BUDGET_EXHAUSTED
 
     original_key = key_path.read_bytes()
     key_path.unlink()
     with pytest.raises(DisclosureLedgerIntegrityError, match="cohort key is missing"):
-        DisclosureLedger(path)
+        DisclosureLedger(path, budget=SINGLE_RELEASE_BUDGET)
 
     key_path.write_bytes(os.urandom(32))
     with pytest.raises(DisclosureLedgerIntegrityError, match="does not match ledger metadata"):
-        DisclosureLedger(path)
+        DisclosureLedger(path, budget=SINGLE_RELEASE_BUDGET)
 
     key_path.write_bytes(original_key)
-    assert DisclosureLedger(path).verify_all() == 1
+    assert DisclosureLedger(path, budget=SINGLE_RELEASE_BUDGET).verify_all() == 1
 
 
 def test_aborted_release_does_not_poison_future_composition(tmp_path: Path) -> None:
-    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3")
+    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3", budget=SINGLE_RELEASE_BUDGET)
     first_sql = _sensitive_sql("alpha")
     second_sql = _sensitive_sql("beta")
 
@@ -272,7 +281,7 @@ def test_aborted_release_does_not_poison_future_composition(tmp_path: Path) -> N
 
 def test_release_state_journal_is_append_only(tmp_path: Path) -> None:
     path = tmp_path / "disclosures.sqlite3"
-    ledger = DisclosureLedger(path)
+    ledger = DisclosureLedger(path, budget=SINGLE_RELEASE_BUDGET)
     sql = _sensitive_sql("alpha")
     decision = ledger.evaluate_and_commit(_event(sql, 21), sql=sql)
     assert decision.commitment is not None
@@ -287,7 +296,7 @@ def test_release_state_journal_is_append_only(tmp_path: Path) -> None:
 
 
 def test_legacy_protected_history_blocks_new_protected_release(tmp_path: Path) -> None:
-    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3")
+    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3", budget=SINGLE_RELEASE_BUDGET)
     first_sql = _sensitive_sql("alpha")
     next_sql = _sensitive_sql("alpha")
     ledger.append(_event(first_sql, 14))
@@ -300,7 +309,7 @@ def test_legacy_protected_history_blocks_new_protected_release(tmp_path: Path) -
 
 
 def test_commitment_verification_rejects_sql_or_event_mutation(tmp_path: Path) -> None:
-    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3")
+    ledger = DisclosureLedger(tmp_path / "disclosures.sqlite3", budget=SINGLE_RELEASE_BUDGET)
     sql = _sensitive_sql("alpha")
     event = _event(sql, 16)
     decision = ledger.evaluate_and_commit(event, sql=sql)
@@ -323,7 +332,7 @@ def test_commitment_verification_rejects_sql_or_event_mutation(tmp_path: Path) -
 
 def test_authorization_claim_is_append_only_and_bound_to_commitment(tmp_path: Path) -> None:
     path = tmp_path / "disclosures.sqlite3"
-    ledger = DisclosureLedger(path)
+    ledger = DisclosureLedger(path, budget=SINGLE_RELEASE_BUDGET)
     sql = _sensitive_sql("alpha")
     decision = ledger.evaluate_and_commit(_event(sql, 17), sql=sql)
     assert decision.commitment is not None
@@ -379,7 +388,7 @@ def test_literal_and_raw_sql_are_not_persisted_in_ledger(tmp_path: Path) -> None
     marker = "LOW_ENTROPY_LITERAL_MUST_NOT_PERSIST"
     sql = _sensitive_sql(marker)
     path = tmp_path / "disclosures.sqlite3"
-    ledger = DisclosureLedger(path)
+    ledger = DisclosureLedger(path, budget=SINGLE_RELEASE_BUDGET)
     result = ledger.evaluate_and_commit(_event(sql, 18), sql=sql)
     assert result.allowed is True
 
