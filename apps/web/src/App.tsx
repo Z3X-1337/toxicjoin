@@ -44,6 +44,11 @@ export function App() {
       ) : null}
 
       <main className="judge-layout">
+        <div className="main-column">
+          <QueryConsole />
+          <AgentLoop />
+        </div>
+
         <div className="left-column">
           <ScenarioRail
             scenarios={session.scenarios}
@@ -56,8 +61,6 @@ export function App() {
         </div>
 
         <div className="main-column">
-          <QueryConsole />
-          <AgentLoop />
           <DecisionHero
             scenario={session.selectedScenario}
             result={session.result}

@@ -344,3 +344,44 @@ Suite: **955 passed, 1 skipped** in 100s. `ruff check src tests` clean.
 | `TOXICJOIN_DATAHUB_ASSET_MAP` | URN manifest (default `config/datahub-assets.json`) |
 | `TOXICJOIN_DATAHUB_SNAPSHOT_MAX_AGE_SECONDS` | freshness window (default 300) |
 | `TOXICJOIN_DATABASE` | governed warehouse; must exist in live mode |
+
+---
+
+## Phase 7 — Interface redesign
+
+### D19 — Show the composition, do not describe it
+
+Every panel reported a verdict; none showed *why* one was possible. The product's entire
+argument is that individually acceptable fields combine into an unsafe disclosure, and that
+argument lands far harder when a reviewer sees a stable pseudonym sitting beside two
+quasi-identifiers and a sensitive attribute than when they read the sentence.
+
+`GovernanceStrip` renders every governed column the query touched, coloured by its DataHub
+classification and **sorted riskiest first**, so the reason for the verdict is the first thing
+met rather than something hunted for among public columns. The contrast across presets carries
+the story on its own: the low-risk aggregate resolves one public column, the blocked
+composition resolves five protected ones.
+
+### D20 — One column, no ambient decoration
+
+The old shell put a scenario sidebar beside a SQL editor and layered a grid texture and two
+blurred glows behind it. Both split attention away from the evidence. The layout is now a
+single 1080px column reading top to bottom — console, agent loop, then the supporting panels —
+and the decoration is gone.
+
+The palette moved from teal-on-navy to near-black with one decisive hue per verdict, and all
+technical content (verdicts, column names, reason codes, hashes) is monospaced. It should read
+as an enforcement tool, not a landing page.
+
+### Verified in-browser against the running API
+
+| Preset | Verdict | Rows | Governed columns shown |
+| --- | --- | --- | --- |
+| Allow — low-risk aggregate | ALLOW | 4 | 1 |
+| Rewrite — add a subject threshold | ALLOW after rewrite | 3 | 4 |
+| Block — compositional re-identification | BLOCK | 0 | 5 |
+| Attack — fabricated subject_count | BLOCK | 0 | 5 |
+| Attack — caller-chosen weak subject | BLOCK | 0 | 6 |
+
+Agent loop: BLOCK → adapt → ALLOW. No console errors. No horizontal overflow at 375px or
+1280px. Typecheck clean, 24 frontend tests, production build succeeds.

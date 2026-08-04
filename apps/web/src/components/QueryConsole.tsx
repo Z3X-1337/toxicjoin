@@ -1,4 +1,5 @@
 import { CONSOLE_ENDPOINTS } from "../lib/console";
+import { GovernanceStrip } from "./GovernanceStrip";
 import { presetById } from "../data/presets";
 import { useQueryConsole } from "../hooks/useQueryConsole";
 import type { Decision, PipelineResponse } from "../types";
@@ -41,6 +42,8 @@ function ConsoleResult({ result }: { result: PipelineResponse }) {
           <li key={code}>{code}</li>
         ))}
       </ul>
+
+      <GovernanceStrip receipt={result.receipt} />
 
       {result.safe_sql ? (
         <details className="console-block" open>

@@ -3,31 +3,39 @@
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --bg: #061014;
-  --bg-elevated: rgba(10, 26, 32, 0.82);
-  --bg-solid: #0b1b21;
-  --panel: rgba(11, 29, 35, 0.86);
-  --panel-strong: rgba(13, 35, 41, 0.96);
-  --border: rgba(146, 190, 191, 0.15);
-  --border-strong: rgba(146, 190, 191, 0.28);
-  --text: #edf8f5;
-  --muted: #8aa5a7;
-  --subtle: #587477;
-  --teal: #4bd5c0;
-  --teal-soft: rgba(75, 213, 192, 0.14);
-  --blue: #6c9fff;
-  --blue-soft: rgba(108, 159, 255, 0.14);
-  --gold: #d8b66a;
-  --gold-soft: rgba(216, 182, 106, 0.14);
-  --red: #ff6d74;
-  --red-soft: rgba(255, 109, 116, 0.14);
-  --green: #57d995;
-  --green-soft: rgba(87, 217, 149, 0.14);
-  --shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
-  --radius: 20px;
-  --radius-small: 12px;
+
+  /* Near-black with a cold cast: this is an enforcement tool, not a landing page. */
+  --bg: #08090c;
+  --bg-elevated: #0e1016;
+  --bg-solid: #0b0d12;
+  --panel: #0e1016;
+  --panel-strong: #12141c;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --text: #f2f4f8;
+  --muted: #8b93a7;
+  --subtle: #5b6376;
+
+  /* One decisive hue per verdict. Nothing else competes for the same attention. */
+  --teal: #3ddc97;
+  --teal-soft: rgba(61, 220, 151, 0.10);
+  --blue: #6ea8ff;
+  --blue-soft: rgba(110, 168, 255, 0.10);
+  --gold: #ffb84d;
+  --gold-soft: rgba(255, 184, 77, 0.10);
+  --red: #ff5f6d;
+  --red-soft: rgba(255, 95, 109, 0.10);
+  --green: #3ddc97;
+  --green-soft: rgba(61, 220, 151, 0.10);
+  --violet: #b48cff;
+  --violet-soft: rgba(180, 140, 255, 0.10);
+
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 18px 48px rgba(0, 0, 0, 0.5);
+  --radius: 14px;
+  --radius-small: 9px;
 }
 
 * {
@@ -90,7 +98,7 @@ summary:focus-visible {
   overflow: hidden;
 }
 
-.ambient-grid {
+.ambient-grid { display: none;
   position: fixed;
   inset: 0;
   z-index: -3;
@@ -103,7 +111,7 @@ summary:focus-visible {
   mask-image: linear-gradient(to bottom, black, transparent 88%);
 }
 
-.ambient-glow {
+.ambient-glow { display: none;
   position: fixed;
   z-index: -2;
   border-radius: 50%;
@@ -282,22 +290,22 @@ summary:focus-visible {
 
 .judge-layout {
   display: grid;
-  grid-template-columns: minmax(270px, 330px) minmax(0, 1fr);
-  gap: 22px;
-  width: min(1520px, calc(100% - 36px));
-  margin: 28px auto 56px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  width: min(1080px, calc(100% - 40px));
+  margin: 32px auto 72px;
   align-items: start;
 }
 
-.left-column,
-.main-column {
+.left-column {
   display: grid;
-  gap: 22px;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
 }
 
-.left-column {
-  position: sticky;
-  top: 102px;
+.main-column {
+  display: grid;
+  gap: 20px;
 }
 
 .scenario-rail,
@@ -2127,4 +2135,142 @@ summary:focus-visible {
   font-size: 0.76rem;
   line-height: 1.55;
   color: var(--teal);
+}
+
+/* ------------------------------------------------------------------ */
+/* Governed evidence strip — the composition made visible              */
+/* ------------------------------------------------------------------ */
+
+.governance-strip {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--bg);
+  padding: 0.85rem 0.95rem;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.governance-strip-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.governance-strip-head h3 {
+  margin: 0;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--subtle);
+  font-weight: 600;
+}
+
+.governance-strip-head p {
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.governance-columns {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.gov-chip {
+  display: grid;
+  gap: 0.12rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-small);
+  border: 1px solid currentColor;
+  background: var(--bg-elevated);
+  min-width: 0;
+}
+
+.gov-chip-field {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.gov-chip-dataset {
+  color: var(--subtle);
+}
+
+.gov-chip-category {
+  font-size: 0.63rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: currentColor;
+  font-weight: 600;
+}
+
+.gov-chip-warn {
+  font-size: 0.63rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--red);
+}
+
+.gov-direct     { color: var(--red); background: var(--red-soft); }
+.gov-pseudonym  { color: var(--violet); background: var(--violet-soft); }
+.gov-sensitive  { color: var(--gold); background: var(--gold-soft); }
+.gov-quasi      { color: var(--blue); background: var(--blue-soft); }
+.gov-public     { color: var(--subtle); background: transparent; }
+.gov-unknown    { color: var(--red); background: var(--red-soft); }
+
+/* ------------------------------------------------------------------ */
+/* Console refinements for the focused single-column shell             */
+/* ------------------------------------------------------------------ */
+
+.console-panel {
+  background: var(--panel);
+  padding: 1.4rem 1.5rem;
+}
+
+.console-header h2 {
+  font-size: 1.35rem;
+  letter-spacing: -0.015em;
+  font-weight: 650;
+}
+
+.console-verdict {
+  font-family: var(--mono);
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding: 0.5rem 1.15rem;
+  border-radius: var(--radius-small);
+  border: 1px solid currentColor;
+}
+
+.console-result-head {
+  padding: 0.35rem 0;
+}
+
+.console-field textarea {
+  min-height: 12rem;
+  background: var(--bg);
+  border-color: var(--border-strong);
+}
+
+.console-preset {
+  background: var(--bg);
+}
+
+.console-preset.preset-attack {
+  border-style: dashed;
+}
+
+.console-submit {
+  letter-spacing: 0.01em;
+}
+
+.product-header {
+  backdrop-filter: blur(12px);
 }
