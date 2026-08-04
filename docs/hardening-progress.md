@@ -242,3 +242,35 @@ than trusting a changelog. Verified in-browser against the running API:
 | Attack — caller-chosen weak subject | BLOCK `UNTRUSTED_SUBJECT_KEY` | 0 |
 
 Agent loop, all three goals: BLOCK → adapt → ALLOW, 3 rows released on the final attempt.
+
+---
+
+## Phase 5 — Final verification
+
+### D15 — README leads with the problem, not the disclaimers
+
+The previous opening spent its first twenty lines on what the project does *not* claim. The
+honesty is worth keeping, but it made a reviewer work to find out what the thing is. The first
+fifteen lines are now: the compositional-risk problem, one command to run it, and the measured
+claims. Claim boundaries moved down and into `docs/`.
+
+The Agent Skill's threshold rule was also stale — it said a threshold is untrusted only when
+"weakened by an `OR` path", which is exactly the gap the `NOT`/`CASE` bypass used. It now states
+the full rule, including that the caller-supplied subject must be validated against governance.
+
+### Stability
+
+Two consecutive full runs: **930 passed, 1 skipped** in 99s and 97s. `ruff check src tests`
+clean. Frontend: typecheck clean, 24 tests, production build succeeds.
+
+### Probe results after all phases
+
+| Probe | Before | After |
+| --- | --- | --- |
+| Inverted `HAVING` (`NOT`, `CASE`) | trusted as threshold 20 | untrusted, `UNTRUSTED_GROUP_THRESHOLD_NON_CONJUNCTIVE` |
+| Bypass A — weak subject, fixture mode | ALLOW, 11 rows released | BLOCK, 0 rows |
+| Bypass A — `/api/analyze`, authenticated | ALLOW | BLOCK |
+| Bypass C — `/api/execute-safe`, authenticated + stateful | ALLOW, 15 rows released | BLOCK, 0 rows |
+| Six compositional attacks (CTE, transform, `MIN()`, group-by-pseudonym, `WHERE` singling) | BLOCK | BLOCK (unchanged) |
+| Public aggregate on an authenticated deployment | BLOCK, opaque error | ALLOW, rows released |
+| Four consecutive protected queries, stateful | 1 allowed then permanently blocked | all four allowed within budget |

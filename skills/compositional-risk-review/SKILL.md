@@ -85,8 +85,13 @@ The deterministic ToxicJoin policy applies these core precedence rules:
 2. A direct identifier combined with a sensitive attribute at row level is blocked.
 3. A stable pseudonym combined with multiple quasi-identifiers and a sensitive attribute is blocked at individual granularity.
 4. A grouped sensitive result without a trusted minimum distinct-subject threshold is eligible for a constrained rewrite when the supported SQL profile permits it.
-5. A threshold is trusted only when it counts the expected subject key, is at least the configured minimum, and is not weakened by an `OR` path.
+5. A threshold is trusted only when **all** of the following hold:
+   - it counts the expected subject key;
+   - that subject key is classified by governance as a direct identifier or stable pseudonym — a distinct count over a public column such as an order id satisfies the syntax while leaving the protected cohort arbitrarily small;
+   - it is at least the configured minimum;
+   - it appears as a top-level `AND` conjunct of `HAVING`. A comparison nested under `OR`, `NOT`, `CASE`, or a function call can be inverted or discarded and proves nothing.
 6. Missing metadata, unsupported SQL, ambiguous source binding, rewrite failure, and verification failure are blocked.
+7. The privacy subject is caller-supplied and therefore untrusted input. Validate it against governance; never let the requester's declaration decide who the protected population is.
 
 Do not weaken these rules merely to make a query execute.
 
@@ -122,6 +127,9 @@ For an executable final query:
 - verify any required subject threshold;
 - inspect the complete grouped result when group-size safety is part of the decision;
 - confirm observed group sizes meet the configured minimum;
+- prove the subject-count output by its lineage, not by its column name. A column *named*
+  `subject_count` may be a literal or any unrelated expression; require that the output's
+  governed lineage is a distinct count over the subject key itself;
 - fail closed if verification is incomplete or execution errors.
 
 ### 8. Persist sanitized institutional memory
