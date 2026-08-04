@@ -512,3 +512,55 @@ machine-specific content) and the already-tracked `.claude/launch.json` remain c
 Full suite re-run clean after every change in this phase: **962 passed, 1 skipped**,
 `ruff check src tests scripts` clean, `bandit -ll -r src` zero medium/high, `pip-audit` zero
 known vulnerabilities, frontend typecheck/test/build clean.
+
+---
+
+## Phase 10 — Merge readiness: three real CI failures found and fixed pre-merge
+
+`gh pr create` opened #140 cleanly, but its status checks showed 5 failures. Before merging,
+each was traced to a root cause rather than assumed benign.
+
+### Not caused by this branch — verified, not merged around blindly
+
+`python-audit (datahub)` and `dependency-review-fallback` both fail on `cryptography==49.0.0`
+(`CVE-2026-69247`, fixed in 50.0.0). Confirmed `main`'s `uv.lock` pins the identical version —
+this is a live vulnerability-database result against an unchanged lock, not something this
+branch introduced, and bumping a transitive dependency pulled in by `acryl-datahub` is a
+separate maintenance task or the project owner's call, not a drive-by inside this PR.
+
+### D28 — The disclosure-evidence generator still encoded the pre-Phase-2 model
+
+`cumulative-disclosure-evidence` failed because `benchmark/disclosure_sequences.py` builds
+four scenarios that all assume a single protected release blocks the very next one — exactly
+the "one release, ever" behaviour Phase 2 deliberately replaced with a bounded, configurable
+budget. That replacement was correct and stays; the evidence generator was simply proving the
+wrong thing against the new code.
+
+Rather than reopen the Phase 2 decision, each scenario's ledger is now built with
+`DisclosureBudget(max_protected_releases=1)` — the same pinning pattern already used for the
+unit/security tests Phase 2 touched. This reaches the exhaustion boundary in two calls instead
+of requiring five, and it demonstrates the real property (the gate fails closed once its
+budget is spent) rather than a number that is free to change independently of the enforcement
+logic being proven. The report's `model` field now says so explicitly, including the shipped
+default (5 per rolling 24h), so the evidence cannot be misread as describing what ships.
+
+`candidate-manifest` had no independent cause — its own log states it refuses to compose a
+release manifest when a required upstream evidence workflow fails. Fixing the above resolves
+it too.
+
+### D29 — Two inputs relied on label association a scripted check doesn't credit
+
+`production-browser-e2e` failed with `unnamed interactive controls detected`. The check's
+accessible-name computation (`aria-label` → `aria-labelledby` → `alt` → `title` →
+`textContent`) does not credit an `<input>` wrapped in a `<label>` with sibling text — which
+is how every field in the new console and agent panels was built. Real assistive technology
+resolves that association; this script does not, so every bare input, the SQL textarea, and
+both radio inputs needed an explicit `aria-label` matching their visible label text. Verified
+by running the exact check function against the live page before and after triggering a
+console query and an agent run — 28 interactive elements, zero unnamed, both times.
+
+### Verification
+
+Full suite re-run after all three fixes: **962 passed, 1 skipped**; `ruff check src tests
+scripts` clean; frontend typecheck/test/build clean; the exact CI assertion blocks for both
+fixed workflows replicated and passed locally before pushing.

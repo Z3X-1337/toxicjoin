@@ -12,7 +12,7 @@ from typing import Any
 from toxicjoin.auth import RequestIdentity, bind_request_identity
 from toxicjoin.context import FixtureContextResolver
 from toxicjoin.demo import default_fixture_catalog, seed_database
-from toxicjoin.disclosure import DisclosureLedger
+from toxicjoin.disclosure import DisclosureBudget, DisclosureLedger
 from toxicjoin.execute import DuckDBExecutor
 from toxicjoin.models import ColumnRef
 from toxicjoin.pipeline import PipelineRequest, ToxicJoinPipeline
@@ -22,6 +22,15 @@ from toxicjoin.receipts import ReceiptMode, ReceiptStore
 
 _SUBJECT = ColumnRef(dataset="customers", field_path="customer_id")
 _TASK = "Cumulative privacy evidence for approved aggregate analytics"
+
+# The shipped default budget is 5 protected releases per rolling 24h window (see
+# disclosure/models.py:DisclosureBudget) - a deliberate, documented bound on cross-query
+# exposure, not a claim of differential privacy. Every scenario below demonstrates that the
+# gate still fails closed once its allowance is exhausted; pinning to a floor of 1 makes that
+# boundary reachable in two calls instead of needing to first exhaust an arbitrary default,
+# which would make this evidence generator's demonstrated property depend on a number that is
+# free to change independently of the enforcement logic being proven.
+_PROBE_BUDGET = DisclosureBudget(max_protected_releases=1)
 
 
 def _sql(region: str, *, aggregate: str = "COUNT", alias: str = "subject_count") -> str:
@@ -69,7 +78,10 @@ def _pipeline(root: Path) -> ToxicJoinPipeline:
         receipt_store=ReceiptStore(root / "receipts"),
         mode=ReceiptMode.FIXTURE,
         executor=DuckDBExecutor(database),
-        disclosure_ledger=DisclosureLedger(root / "disclosures.sqlite3"),
+        disclosure_ledger=DisclosureLedger(
+            root / "disclosures.sqlite3",
+            budget=_PROBE_BUDGET,
+        ),
         stateful_privacy_required=True,
         include_sanitized_sql=False,
     )
@@ -209,7 +221,11 @@ def generate_report() -> dict[str, Any]:
         "schema_version": "1.1",
         "release_candidate_sha": os.getenv("TOXICJOIN_RELEASE_CANDIDATE_SHA"),
         "policy_version": load_policy().version,
-        "model": "single-protected-release cumulative composition",
+        "model": (
+            "bounded cumulative composition; demonstrated at the "
+            f"max_protected_releases={_PROBE_BUDGET.max_protected_releases} floor "
+            "(shipped default is 5 per rolling 24h window, see DisclosureBudget)"
+        ),
         "cases": cases,
         "passed": all(case["assertion"] for case in cases),
     }

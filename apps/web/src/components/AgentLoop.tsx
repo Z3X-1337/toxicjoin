@@ -125,6 +125,7 @@ export function AgentLoop() {
             maxLength={2000}
             onChange={(event) => setGoal(event.target.value)}
             placeholder="What should the agent try to find out?"
+            aria-label="Agent goal"
           />
         </label>
         <div className="console-actions">

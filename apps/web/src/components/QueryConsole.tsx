@@ -175,6 +175,7 @@ export function QueryConsole() {
             maxLength={2000}
             onChange={(event) => workbench.setTaskPurpose(event.target.value)}
             placeholder="Why this data is needed"
+            aria-label="Task purpose"
           />
         </label>
 
@@ -186,6 +187,7 @@ export function QueryConsole() {
             spellCheck={false}
             onChange={(event) => workbench.setSql(event.target.value)}
             placeholder="SELECT ..."
+            aria-label="Proposed SQL"
           />
         </label>
 
@@ -197,6 +199,7 @@ export function QueryConsole() {
               value={workbench.subjectDataset}
               onChange={(event) => workbench.setSubjectDataset(event.target.value)}
               placeholder="customers"
+              aria-label="Subject dataset"
             />
           </label>
           <label className="console-field">
@@ -206,6 +209,7 @@ export function QueryConsole() {
               value={workbench.subjectField}
               onChange={(event) => workbench.setSubjectField(event.target.value)}
               placeholder="customer_id"
+              aria-label="Subject field"
             />
           </label>
           <fieldset className="console-mode">
@@ -216,6 +220,7 @@ export function QueryConsole() {
                 name="console-mode"
                 checked={workbench.mode === "analyze"}
                 onChange={() => workbench.setMode("analyze")}
+                aria-label="Analyze only"
               />
               Analyze only
             </label>
@@ -225,6 +230,7 @@ export function QueryConsole() {
                 name="console-mode"
                 checked={workbench.mode === "execute"}
                 onChange={() => workbench.setMode("execute")}
+                aria-label="Execute safe"
               />
               Execute safe
             </label>
