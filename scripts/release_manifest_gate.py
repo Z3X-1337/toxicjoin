@@ -285,7 +285,8 @@ def build_release_manifest(
         "claim_boundaries": {
             "live_datahub": "exact-source-live-oss",
             "browser_e2e": "real-production-container",
-            "replay_is_live_execution": False,
+            "public_demo_uses_synthetic_fixture": True,
+            "static_runtime_fallback_enabled": False,
             "disclosure_state_topology": "SINGLE_NODE",
             "multi_replica_supported": False,
             "postgresql_canonical": False,

@@ -1,12 +1,11 @@
 import { humanizeCode, shortHash } from "../lib/presentation";
-import type { DecisionReceipt, SourceMode } from "../types";
+import type { DecisionReceipt } from "../types";
 
 interface ReceiptPanelProps {
   receipt: DecisionReceipt | null | undefined;
-  sourceMode: SourceMode;
 }
 
-export function ReceiptPanel({ receipt, sourceMode }: ReceiptPanelProps) {
+export function ReceiptPanel({ receipt }: ReceiptPanelProps) {
   return (
     <section className="panel receipt-panel" aria-labelledby="receipt-title">
       <div className="panel-heading compact-heading">
@@ -15,9 +14,7 @@ export function ReceiptPanel({ receipt, sourceMode }: ReceiptPanelProps) {
           <h2 id="receipt-title">Evidence that survives the demo</h2>
         </div>
         <span className={`writeback-state state-${receipt?.writeback.state ?? "pending"}`}>
-          {sourceMode === "replay"
-            ? "Replay — no live write claimed"
-            : humanizeCode(receipt?.writeback.state ?? "pending")}
+          {humanizeCode(receipt?.writeback.state ?? "pending")}
         </span>
       </div>
 

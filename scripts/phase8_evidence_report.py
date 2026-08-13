@@ -86,7 +86,7 @@ def build_proof_report(
         "claim_boundaries": {
             "phase9_release_required_for_large_binary_assets": True,
             "postgresql_canonical": False, "pr118_modified": False,
-            "vercel_mutated": False, "devpost_mutated": False,
+            "hosting_configuration_mutated": False, "devpost_mutated": False,
         },
     }
     payload["report_sha256"] = sha256_bytes(canonical_json_bytes(payload))

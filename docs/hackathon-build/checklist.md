@@ -89,8 +89,8 @@ Wow moment: a query built from individually acceptable datasets becomes unsafe o
 
 - [ ] **13. Complete Devpost handoff**
   Spec ref: `spec.md > Modes`, `Deployment`, and `Demo contract`
-  Historical completion record: Judge decision cockpit; clearly labeled deterministic Replay; evidence graph; SQL diff; verification and receipt panels; hardened Docker/FastAPI executable path; public Vercel replay; CI-produced interface assets; external Chrome verification at 1440×1000 and 390×844; committed Replay evidence and screenshot hashes; Devpost draft; real-interface cover; narration specification; and under-three-minute storyboard.
-  Hosted Replay result: https://toxicjoin-replay.vercel.app/ passed HTTP, immutable asset, desktop/mobile rendering, visible disclosure, REWRITE→ALLOW, benchmark, console, request, and overflow gates in GitHub Actions run `29980181195`.
+  Historical completion record: judge decision cockpit; evidence graph; SQL diff; verification and receipt panels; hardened Docker/FastAPI executable path; CI-produced interface assets; desktop/mobile browser verification; Devpost draft; real-interface cover; narration specification; and under-three-minute storyboard.
+  Current public result: the Render fixture deployment passes health, ALLOW/REWRITE/BLOCK, browser, header, and deployment-verifier gates.
   Remaining gates: complete security hardening milestone 12; receive and approve the Microsoft WAV; edit and publish the final video; replace the final video placeholder; complete the exact-version owner review; and stop for explicit submission approval.
   Acceptance: A judge understands and verifies the flagship flow within 90 seconds; security hardening and external validation are complete; video is under three minutes; repository and Apache 2.0 are public; owner approves the exact final packet.
-  Verify: Follow `docs/security/hardening-roadmap.md`, `docs/judge-testing.md`, `docs/evidence/hosted-replay.md`, and the current `production-readiness-plan.md`; track final video, Devpost, and owner approval in [Issue #1](https://github.com/Z3X-1337/toxicjoin/issues/1).
+  Verify: Follow `docs/security/hardening-roadmap.md`, `docs/judge-testing.md`, `docs/deploy-public.md`, and the current `production-readiness-plan.md`; track final video, Devpost, and owner approval in [Issue #1](https://github.com/Z3X-1337/toxicjoin/issues/1).

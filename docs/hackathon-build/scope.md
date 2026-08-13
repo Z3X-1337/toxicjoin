@@ -31,7 +31,7 @@ An agent requests a list of identifiable customers with financial-hardship suppo
 10. Produce a machine-readable execution receipt.
 11. Write a decision document and derived-risk metadata back to DataHub.
 12. Register safe-view lineage where a safe view is generated.
-13. Offer a public replay and a live local DataHub mode.
+13. Offer a public Render fixture and a live local DataHub mode.
 14. Include a benchmark of safe, rewrite, block, and adversarial cases.
 
 ## Explicit non-goals

@@ -1,4 +1,4 @@
-# ToxicJoin v0.1.0 reproducibility
+# ToxicJoin v0.2.0 reproducibility
 
 Release identity:
 
@@ -42,4 +42,4 @@ npm --prefix apps/web run build
 sha256sum --check SHA256SUMS
 ```
 
-The Release Manifest and final evidence index must both name commit `{{SOURCE_SHA}}`. SBOM files must declare CycloneDX format. Replay evidence must not be interpreted as live execution.
+The Release Manifest and final evidence index must both name commit `{{SOURCE_SHA}}`. SBOM files must declare CycloneDX format. The public synthetic fixture must not be interpreted as Live DataHub execution.

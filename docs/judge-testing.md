@@ -247,7 +247,7 @@ Historical release evidence:
 
 - [`evidence/release-candidate.md`](evidence/release-candidate.md)
 - [`evidence/final-security-blackbox.md`](evidence/final-security-blackbox.md)
-- [`evidence/hosted-replay.md`](evidence/hosted-replay.md)
+- [`deploy-public.md`](deploy-public.md)
 
 ## Security surfaces reviewers can inspect
 
@@ -266,7 +266,7 @@ Historical release evidence:
 
 - Rewrite supports a narrow, auditable subject-threshold remediation rather than arbitrary SQL repair.
 - The public SQLite disclosure state is single-node only; declared multi-replica use fails closed.
-- The hosted Vercel experience is a historical deterministic replay, not a build of current source.
+- The Render public demo uses a temporary synthetic fixture and is not a Live DataHub environment.
 - The complete vNext proof chain is staged architecture, not a claim about the canonical HTTP runtime.
 - ToxicJoin does not claim differential privacy, universal SQL repair, universal re-identification detection, formal verification, or legal-compliance certification.
 - Unsupported or ambiguous SQL fails closed.

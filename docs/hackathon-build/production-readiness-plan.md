@@ -12,8 +12,8 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 | Gate | Result | Interpretation |
 | --- | --- | --- |
 | Python lint | pass | `ruff check src tests` |
-| Python tests | 968 passed, 1 skipped, 5 warnings | functional baseline is green; warnings remain visible |
-| Frontend | 24 tests pass; typecheck and production build pass | current frontend builds |
+| Python tests | 978 passed, 5 warnings | exact Linux candidate baseline is green; warnings remain visible |
+| Frontend | 26 tests pass; typecheck and production build pass | Render-only redesigned frontend builds |
 | HTTP deployment verifier | pass | ALLOW, verified REWRITE, BLOCK, and both closed bypasses behave correctly |
 | Benchmark | 30/30; zero false allows; zero unsafe effective allows | bounded declared corpus is green |
 | Adversarial mutations | 144 cases; no gate failures | declared mutation corpus is green |
@@ -47,12 +47,8 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 ### P1 — Revalidate the canonical product
 
 - [x] Re-sync from exact locks after dependency changes.
-- [x] Run Python lint and all tests: 968 passed, 1 skipped, 5 warnings. The skipped test is
-  `tests/security/test_disclosure_ledger_security.py::test_ledger_file_is_owner_only_and_symlink_target_is_rejected`:
-  it deliberately skips only when the current platform cannot create a symbolic link. This
-  Windows environment could not create the test symlink, so the symlink-rejection assertion was
-  not altered merely to remove the platform-dependent skip.
-- [x] Run frontend typecheck, 24 tests, production build, and audit.
+- [x] Run Python lint and all tests: 978 passed, 5 warnings on the exact Linux candidate.
+- [x] Run frontend typecheck, 26 tests, production build, and audit.
 - [x] Re-run benchmark, adversarial, governance, ablation, PPMC, and HTTP black-box
   verification.
 - [x] Review the final diff for security-boundary changes and stale measured claims.
@@ -89,8 +85,22 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 - [x] Record the public URL, fixture data mode, policy version, health/readiness result, browser
   ALLOW/BLOCK evidence, and idle cold-start result in the deployment PR. The external verification
   date is 2026-08-13; exact source revisions remain in the PR and deployment record.
-- [x] Keep the Vercel URL labeled **Historical Deterministic Replay** and separate from the current
-  public demo.
+- [x] Remove the secondary static host from source, workflows, supply-chain artifacts, release
+  contracts, retained current evidence, and documentation. Repository scans return no provider
+  name, retired URL, or old static-host workflow reference.
+- [ ] Delete the retired project from the owner's external hosting account. This is an account-level
+  destructive action, separate from the repository cleanup, and requires owner-side dashboard access.
+
+### P3.1 — Render-only interface redesign candidate
+
+- [x] Replace the prior visual system and page hierarchy with a new responsive design.
+- [x] Make Render/same-origin API results the only interactive runtime source.
+- [x] Fail explicitly with reconnect/retry controls when bootstrap or execution is unavailable.
+- [x] Verify desktop 1440×1000 and mobile 390×844: no horizontal overflow, console error, page
+  error, or unexpected alert; the real fixture path produced REWRITE → ALLOW.
+- [x] Prepare `v0.2.0` release identity and no-side-effect Phase 9 preview contracts.
+- [ ] Merge, publish `v0.2.0`, and manually deploy the resulting exact `main` commit to Render only
+  after owner review and explicit approval.
 
 ### P4 — Judge and submission finish
 
@@ -102,12 +112,12 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 
 ## Current owner-controlled delivery tasks
 
-No active technical blocker remains for the published v0.1.0 release or current public fixture demo.
-Final video publication, live desktop/mobile review, and Devpost synchronization remain
-owner-controlled delivery tasks.
+No active technical blocker remains in the `v0.2.0` redesign candidate. Merge/release, manual Render
+deployment, deletion of the retired external hosting project, final video publication, and Devpost
+synchronization remain owner-controlled delivery tasks.
 
 1. A future public **Live DataHub** deployment requires its own authenticated account, governed
    credentials, and persistent audit/privacy state. It is separate from the zero-cost fixture demo.
 2. Video upload and Devpost mutation require the owner's accounts and final approval.
 
-These tasks do not justify substituting mock evidence or relabeling the historical replay.
+These tasks do not justify substituting mock evidence or relabeling historical artifacts.

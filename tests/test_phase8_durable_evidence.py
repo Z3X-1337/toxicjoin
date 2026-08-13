@@ -25,12 +25,11 @@ def test_content_addressed_json_is_forced_to_lf() -> None:
 def test_committed_catalog_is_content_addressed_and_complete() -> None:
     verified = DURABLE.verify_catalog(root=ROOT, catalog_path=CATALOG)
     assert verified.payload["store"]["independent_of_actions_expiry"] is True
-    assert len(verified.objects) >= 4
+    assert len(verified.objects) >= 3
     assert {item.lifecycle for item in verified.objects} == {"current", "historical"}
     assert {item.purpose for item in verified.objects} == {
         "operational",
         "preview",
-        "replay-only",
         "submission",
     }
 

@@ -186,7 +186,7 @@ The current architecture does not claim that:
 - local process state is distributed replay prevention;
 - local SQLite is horizontally shared disclosure state;
 - the in-process traffic limiter is distributed;
-- the historical hosted replay is current-main live execution evidence;
+- historical browser evidence is current-main live execution evidence;
 - PostgreSQL disclosure state is available on current `main` or in production.
 
 ## 14. Deployment topology limitations

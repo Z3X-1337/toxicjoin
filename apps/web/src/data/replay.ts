@@ -46,7 +46,7 @@ ORDER BY o.category`;
 export const replayHealth: HealthResponse = {
   status: "ok",
   version: "0.1.0",
-  mode: "replay",
+  mode: "fixture",
   policy_version: "0.1.0",
   database_ready: true,
   receipt_store_ready: true,
@@ -224,7 +224,7 @@ function receipt(
     schema_version: "1.0",
     receipt_id: id,
     created_at: "2026-07-22T22:00:00+00:00",
-    mode: "replay",
+    mode: "fixture",
     task_purpose: "Deterministic judge replay",
     initial_decision: initial.decision,
     initial_reason_codes: initial.reason_codes,

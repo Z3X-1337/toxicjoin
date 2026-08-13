@@ -20,7 +20,7 @@ import {
   sha256File,
   writeJson,
 } from "./phase6_browser_common.mjs";
-import { runBrowserMatrix, runFailureDisclosure, runReplayTruthfulness } from "./phase6_browser_paths.mjs";
+import { runBootstrapFailureDisclosure, runBrowserMatrix, runFailureDisclosure } from "./phase6_browser_paths.mjs";
 
 const HARD_TIMEOUT_MS = 15 * 60 * 1000;
 const hardTimeout = setTimeout(() => {
@@ -71,7 +71,7 @@ async function main() {
   const browserOptions = { ...options, outputDir };
   const matrix = await runBrowserMatrix(browserOptions, shared);
   const failureDisclosure = await runFailureDisclosure(browserOptions);
-  const replayTruthfulness = await runReplayTruthfulness(browserOptions);
+  const bootstrapFailure = await runBootstrapFailureDisclosure(browserOptions);
   await writeJson(path.join(outputDir, "security-headers.json"), shared.securityHeaders);
 
   execFileSync("git", ["diff", "--exit-code"], { stdio: "inherit" });
@@ -91,7 +91,7 @@ async function main() {
     source: sourceIdentity,
     production_container: containerEvidence,
     matrix,
-    negative_paths: { failure_disclosure: failureDisclosure, replay_truthfulness: replayTruthfulness, missing_receipt: shared.missingReceipt },
+    negative_paths: { failure_disclosure: failureDisclosure, bootstrap_failure: bootstrapFailure, missing_receipt: shared.missingReceipt },
     security_headers: shared.securityHeaders,
     coverage: {
       production_frontend_and_api: true,
@@ -106,7 +106,8 @@ async function main() {
       receipt_lookup: true,
       receipt_integrity_on_read: true,
       failure_disclosure: true,
-      replay_labels_truthful: true,
+      unavailable_api_fails_explicitly: true,
+      synthetic_fallback_used: false,
       security_headers: true,
       accessibility: true,
       responsive_layout: true,
@@ -117,7 +118,7 @@ async function main() {
       phase7_started: false,
       pr118_modified: false,
       postgresql_claim_changed: false,
-      vercel_mutated: false,
+      hosting_configuration_mutated: false,
       devpost_mutated: false,
       release_tag_created: false,
       repository_cleanup_performed: false,

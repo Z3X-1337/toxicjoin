@@ -66,7 +66,7 @@ performs them all.
 1. Evidence outranks assumptions and existing documentation.
 2. Inspect before editing. Reproduce before fixing.
 3. Preserve good code and proven tests; do not rewrite the kernel for visual novelty.
-4. Core flows must not depend on canned success responses or silent replay fallback.
+4. Core flows must not depend on canned success responses or a silent static fallback.
 5. Unknown SQL, unresolved governance, stale context, failed authorization, failed verification,
    and missing runtime requirements fail closed with stable reason codes.
 6. The agent proposes; deterministic authorities decide; only an effective ALLOW may release

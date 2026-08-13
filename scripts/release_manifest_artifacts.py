@@ -365,7 +365,7 @@ GATE_SPECS: dict[str, GateSpec] = {
     "Supply Chain Security": GateSpec(
         required_artifacts=(
             "web-supply-chain",
-            "hosted-replay-supply-chain",
+            "browser-tools-supply-chain",
             "python-supply-chain-agent-registry",
             "python-supply-chain-datahub",
             "dependency-review-api-status",

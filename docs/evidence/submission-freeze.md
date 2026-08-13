@@ -44,14 +44,18 @@ The generated release workflow remains the revision-level release authority. Thi
 
 ## Current verified release identity
 
-The current release authority is [ToxicJoin v0.1.0](https://github.com/Z3X-1337/toxicjoin/releases/tag/v0.1.0):
+The last published release recorded by this submission snapshot is [ToxicJoin v0.1.0](https://github.com/Z3X-1337/toxicjoin/releases/tag/v0.1.0):
 
 - the annotated `v0.1.0` tag resolves to `4bf3a46dcbf6cf6a184067263102475e140abb04`, the exact `main` commit used for publication;
 - the [Generated Release Manifest](https://github.com/Z3X-1337/toxicjoin/actions/runs/31699422703) completed in release mode for that exact SHA;
 - [Phase 9](https://github.com/Z3X-1337/toxicjoin/actions/runs/31699794721) verified the tag, Release, attached assets, checksums, and exact source identity at publication time;
 - the [Exact-SHA Live DataHub run](https://github.com/Z3X-1337/toxicjoin/actions/runs/31699350889) completed successfully for the same SHA.
 
-The earlier submission-documentation SHA `1aead67c339c218f5858a9eb9de05868cdc3a0e5` and the Phase 16 SHAs above remain historical provenance, not current release identity. Later documentation-only commits may advance `main` without changing the frozen `v0.1.0` identity. The release is described as exact-SHA and evidence-bound; this document does not claim that GitHub's immutable-release setting is enabled or that the annotated tag is cryptographically signed.
+The source now declares the `v0.2.0` Render-only redesign candidate. It becomes a release identity
+only if Phase 9 publishes and verifies that exact `main` commit. The earlier submission-documentation
+SHA, Phase 16 SHAs, and `v0.1.0` remain historical provenance. Releases are described as exact-SHA
+and evidence-bound; this document does not claim that GitHub's immutable-release setting is enabled
+or that an annotated tag is cryptographically signed.
 
 ## Product claim
 
@@ -137,15 +141,12 @@ Not claimed on current `main`:
 
 Draft PR #118 contains an off-main PostgreSQL shared-authoritative implementation and evidence workflow. It is not present on current `main`, not wired into the canonical HTTP runtime, and not a production-supported capability.
 
-## Historical replay boundary
+## Historical evidence boundary
 
-The repository preserves the earlier release evidence, production-image black-box report, and hosted deterministic replay provenance.
-
-Those artifacts remain valuable evidence, but their historical SHAs must not be presented as current repository identity.
-
-The hosted Vercel experience is explicitly a **Historical Deterministic Replay** and is not represented as a build of current `main` or as a live DataHub mutation environment. Its retained policy identity is `0.1.0`; current product policy is `0.2.0`.
-
-The current repository replay source stores valid SQL clause order and no longer applies an in-memory corrective transform. This source correction does not redeploy or alter the historical public assets.
+The repository preserves earlier release and production-image black-box evidence. Those artifacts
+remain valuable for provenance, but their historical SHAs must not be presented as current
+repository identity. The current public browser path is the Render fixture service and is not
+represented as a Live DataHub environment.
 
 ## Submission requirements audit
 
@@ -159,7 +160,7 @@ For **Build with DataHub: The Agent Hackathon**:
 - judge testing guide;
 - sample outputs under `examples/`;
 - current public synthetic-fixture demo at https://toxicjoin-public-demo.onrender.com/;
-- historical deterministic replay URL, explicitly labeled as historical;
+- current Render public demo with a synthetic fixture boundary;
 - published [v0.1.0 release](https://github.com/Z3X-1337/toxicjoin/releases/tag/v0.1.0) with exact-SHA evidence assets;
 - real DataHub OSS + official MCP evidence on the release SHA;
 - DataHub Skill;
@@ -202,7 +203,7 @@ Before submission, the Devpost write-up must ensure that:
 - DataHub write-back plus fresh read-back is prominent;
 - the open DataHub Skills contribution is described as open/pending review, not merged;
 - the Current Public Demo is described as a temporary synthetic fixture over the real protected path, not Live DataHub;
-- the Vercel replay is labeled historical and policy `0.1.0`;
+- the Render public demo is labeled fixture mode and temporary state;
 - PR #118 is described only as off-main draft work when mentioned;
 - the video URL is public and under three minutes.
 

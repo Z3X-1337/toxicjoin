@@ -33,7 +33,7 @@ A different patch version is not silently accepted. Update the contract and rege
 | Surface | Lock | Required consumer |
 |---|---|---|
 | Python runtime and profiles | `uv.lock` | `uv sync --frozen` and `uv run --frozen` |
-| Hosted replay verification tooling | `package-lock.json` | `npm ci` |
+| Production browser E2E tooling | `package-lock.json` | `npm ci` |
 | Judge interface | `apps/web/package-lock.json` | `npm ci` |
 
 The only bootstrap exception is installing the package manager itself as exact `uv==0.8.4` before `uv.lock` can be consumed. That exception may not install ToxicJoin or any project dependency.
@@ -103,5 +103,5 @@ Phase 3 does not:
 - change the canonical runtime architecture;
 - create a release tag or GitHub Release;
 - change the release-manifest completeness gate;
-- deploy Vercel or relabel the historical replay;
+- change public hosting or deployment identity;
 - submit Devpost.

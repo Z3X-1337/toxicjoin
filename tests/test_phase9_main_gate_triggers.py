@@ -230,8 +230,8 @@ def test_phase9_preview_preserves_preexisting_release_state() -> None:
 
 def test_phase9_immutable_release_identity_is_fixed() -> None:
     config = json.loads(PHASE9_CONFIG.read_text(encoding="utf-8"))
-    assert config["version"] == "0.1.0"
-    assert config["tag"] == "v0.1.0"
+    assert config["version"] == "0.2.0"
+    assert config["tag"] == "v0.2.0"
     assert config["draft"] is False
     assert config["prerelease"] is False
     assert config["immutable_identity"] is True

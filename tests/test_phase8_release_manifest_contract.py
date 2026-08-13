@@ -60,7 +60,6 @@ def test_release_manifest_validator_requires_durable_retrieval() -> None:
             "purpose_classes": [
                 "operational",
                 "preview",
-                "replay-only",
                 "submission",
             ],
             "large_binary_policy": "digest-indexed-release-asset-in-phase9",

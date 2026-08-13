@@ -120,7 +120,6 @@ jobs:
           assert set(payload["retention"]["purpose_classes"]) == {
               "operational",
               "preview",
-              "replay-only",
               "submission",
           }
           assert payload["retrieval"]["verified"] is True

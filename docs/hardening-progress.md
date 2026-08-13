@@ -214,7 +214,7 @@ with it.
 
 ## Phase 4 — Interactive GUI
 
-The public link was a static replay. Two live panels now sit at the top of the interface:
+The public Render service exposes two live panels through the same-origin API:
 
 **Live console** (`QueryConsole.tsx`) — SQL textarea, task purpose, subject dataset/field,
 analyze-vs-execute toggle, and five one-click presets. Renders the decision, reason codes,
@@ -261,7 +261,7 @@ the full rule, including that the caller-supplied subject must be validated agai
 ### Stability
 
 Two consecutive full runs: **930 passed, 1 skipped** in 99s and 97s. `ruff check src tests`
-clean. Frontend: typecheck clean, 24 tests, production build succeeds.
+clean. Frontend: typecheck clean, 26 tests, production build succeeds.
 
 ### Probe results after all phases
 

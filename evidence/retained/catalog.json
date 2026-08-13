@@ -1,6 +1,6 @@
 {
   "baseline_main_sha": "64d4fbbb59f954e66e0e2bdcceb7dc08e2a1a6f2",
-  "catalog_sha256": "c86ed7654cada7f181cee3f3c71c0d7c581f2e649e3fc820cb777a90e542373f",
+  "catalog_sha256": "692cc4c768b333afdc635bb09701dad707c2d5fd996402bf5804ec3eec1c1b2b",
   "classification_taxonomy": {
     "lifecycle": [
       "current",
@@ -9,7 +9,6 @@
     "purpose": [
       "operational",
       "preview",
-      "replay-only",
       "submission"
     ]
   },
@@ -77,35 +76,6 @@
       "size_bytes": 1199,
       "source_sha": "cee507e865238b5cafe68e5af18eda930fdca888",
       "status": "verified"
-    },
-    {
-      "id": "replay-claim-boundary",
-      "lifecycle": "current",
-      "media_type": "application/json",
-      "path": "evidence/retained/objects/sha256/b1/b146d9c023f17afbfacc6b8eb353fba6f4ad1c4a8e91a1b7e62ce8b61290495a.json",
-      "provenance": {
-        "commands": [
-          "git show 64d4fbbb:docs/release-manifest.md",
-          "git show 64d4fbbb:README.md"
-        ],
-        "environment": {
-          "hosting_mode": "historical-deterministic-replay",
-          "network_mutation": "none"
-        },
-        "timestamps": {
-          "observed_at": "2026-07-31T21:02:00Z",
-          "retained_at": "2026-07-31T21:02:00Z"
-        },
-        "tool_versions": {
-          "retention_schema": "1.0"
-        }
-      },
-      "purpose": "replay-only",
-      "related_main_sha": "64d4fbbb59f954e66e0e2bdcceb7dc08e2a1a6f2",
-      "sha256": "b146d9c023f17afbfacc6b8eb353fba6f4ad1c4a8e91a1b7e62ce8b61290495a",
-      "size_bytes": 371,
-      "source_sha": "64d4fbbb59f954e66e0e2bdcceb7dc08e2a1a6f2",
-      "status": "verified-boundary"
     },
     {
       "id": "submission-readiness-boundary",

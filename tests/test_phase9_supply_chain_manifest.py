@@ -47,7 +47,7 @@ def test_release_excludes_only_pr_range_artifact() -> None:
     )
     assert set(release.required_artifacts) == {
         "web-supply-chain",
-        "hosted-replay-supply-chain",
+        "browser-tools-supply-chain",
         "python-supply-chain-agent-registry",
         "python-supply-chain-datahub",
     }

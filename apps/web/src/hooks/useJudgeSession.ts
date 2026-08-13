@@ -10,11 +10,9 @@ import type {
   DemoScenario,
   HealthResponse,
   PipelineResponse,
-  SourceMode,
 } from "../types";
 
 interface JudgeSessionState {
-  sourceMode: SourceMode;
   health: HealthResponse | null;
   scenarios: DemoScenario[];
   benchmark: BenchmarkSummary | null;
@@ -22,7 +20,6 @@ interface JudgeSessionState {
   result: PipelineResponse | null;
   bootstrapping: boolean;
   running: boolean;
-  notice: string | null;
   error: string | null;
 }
 
@@ -46,7 +43,6 @@ interface AutomaticRunState {
 const DEFAULT_SCENARIO = "rewrite-churn-regions";
 
 const INITIAL_STATE: JudgeSessionState = {
-  sourceMode: "replay",
   health: null,
   scenarios: [],
   benchmark: null,
@@ -54,7 +50,6 @@ const INITIAL_STATE: JudgeSessionState = {
   result: null,
   bootstrapping: true,
   running: false,
-  notice: null,
   error: null,
 };
 
@@ -80,26 +75,40 @@ export function useJudgeSession(): JudgeSessionController {
       bootstrapping: true,
       error: null,
     }));
-    const loaded = await bootstrapJudgeSession();
-    const selectedScenarioId = loaded.scenarios.some(
-      (scenario) => scenario.scenario_id === DEFAULT_SCENARIO,
-    )
-      ? DEFAULT_SCENARIO
-      : (loaded.scenarios[0]?.scenario_id ?? "");
+    try {
+      const loaded = await bootstrapJudgeSession();
+      const selectedScenarioId = loaded.scenarios.some(
+        (scenario) => scenario.scenario_id === DEFAULT_SCENARIO,
+      )
+        ? DEFAULT_SCENARIO
+        : (loaded.scenarios[0]?.scenario_id ?? "");
 
-    setState((current) => ({
-      ...current,
-      sourceMode: loaded.sourceMode,
-      health: loaded.health,
-      scenarios: loaded.scenarios,
-      benchmark: loaded.benchmark,
-      selectedScenarioId,
-      result: null,
-      bootstrapping: false,
-      running: false,
-      notice: loaded.warning,
-      error: null,
-    }));
+      setState((current) => ({
+        ...current,
+        health: loaded.health,
+        scenarios: loaded.scenarios,
+        benchmark: loaded.benchmark,
+        selectedScenarioId,
+        result: null,
+        bootstrapping: false,
+        running: false,
+        error: null,
+      }));
+    } catch (error) {
+      const message = error instanceof ToxicJoinApiError
+        ? error.message
+        : "The Render API could not be reached.";
+      setState((current) => ({
+        ...current,
+        health: null,
+        scenarios: [],
+        benchmark: null,
+        result: null,
+        bootstrapping: false,
+        running: false,
+        error: message,
+      }));
+    }
   }, []);
 
   useEffect(() => {
@@ -122,7 +131,7 @@ export function useJudgeSession(): JudgeSessionController {
         error: null,
       }));
       try {
-        const result = await executeScenario(scenario, state.sourceMode);
+        const result = await executeScenario(scenario);
         setState((current) => ({
           ...current,
           result,
@@ -141,7 +150,7 @@ export function useJudgeSession(): JudgeSessionController {
         }));
       }
     },
-    [state.sourceMode],
+    [],
   );
 
   useEffect(() => {

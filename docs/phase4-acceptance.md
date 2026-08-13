@@ -8,5 +8,5 @@ Phase 4 closes only when all of the following are proven on one exact head revis
 4. Linux and Windows collect the same test inventory and produce the same normalized outcomes and result counts for each Python minor.
 5. Exception context and cause remain detached and the secret marker is absent from every target-frame local set.
 6. Evidence records exact commit, tree, operating system, Python version, pytest inventory/outcome hashes, worktree state, and SHA-256 checksums.
-7. No Live DataHub, Phase 5, PR #118, PostgreSQL, Vercel, Devpost, release-tag, or repository-cleanup work is performed.
+7. No Live DataHub, Phase 5, PR #118, PostgreSQL, public hosting, Devpost, release-tag, or repository-cleanup work is performed.
 8. The pull request remains unmerged until explicit authorization tied to the exact final head SHA.

@@ -3,7 +3,7 @@
 Status: **Normative product-architecture authority**  
 Baseline reviewed: `1aead67c339c218f5858a9eb9de05868cdc3a0e5`
 
-This document is the single normative authority for ToxicJoin product architecture and claim boundaries. It describes what is canonical, executable, staged, historical, replay-only, or off-main. It does not upgrade a capability merely because code, tests, roadmap material, or retained evidence exists for it.
+This document is the single normative authority for ToxicJoin product architecture and claim boundaries. It describes what is canonical, executable, staged, historical, or off-main. It does not upgrade a capability merely because code, tests, roadmap material, or retained evidence exists for it.
 
 ## 1. Document authority
 
@@ -91,25 +91,21 @@ The retained tested launcher contract is pinned to `mcp-server-datahub==0.6.0`.
 
 The repository retains exact-revision live evidence. It does **not** currently possess Live DataHub evidence executed on final `main` `1aead67c339c218f5858a9eb9de05868cdc3a0e5`. Retained evidence proves its recorded revision; unchanged-source applicability arguments are not equivalent to an exact-final-SHA live rerun.
 
-## 6. Hosted deterministic replay
+## 6. Public Render surface
 
-The public site is a deterministic historical replay. It is useful for judge access but is not:
+The public site and API are served together by one Render Docker Web Service. It executes the real
+fixture pipeline with synthetic data and temporary single-node state. It is not a Live DataHub
+environment, a durable audit store, or evidence of multi-replica support.
 
-- a live FastAPI backend;
-- DuckDB execution;
-- DataHub mutation;
-- current-main build identity;
-- current policy-version evidence.
+Render is the only supported public hosting target. Exact deployment identity comes from the Render
+deployment record plus external verification; repository configuration alone does not prove which
+commit is live.
 
-Generic Vercel build instructions describe how a new deployment may be built. They must not be confused with the provenance of the currently hosted site.
+## 7. Runtime failure boundary
 
-The current product policy is `0.2.0`. The retained public replay identity is `0.1.0` and must be labeled historical unless a new deployment is generated and verified from exact current evidence.
-
-## 7. Replay source and materialization
-
-The current repository replay source stores the safe SQL in valid clause order, and `judgeReplay.ts` re-exports that source without an in-memory corrective transform.
-
-This source correction does not alter or redeploy the historical public Vercel assets. The hosted replay remains governed by its retained provenance and historical policy identity until separately rebuilt and verified.
+The browser interface depends on the same-origin API for health, scenarios, benchmark evidence, and
+decisions. If that API is unavailable, the interface fails explicitly and offers reconnection. No
+static scenario result is substituted into a production session.
 
 ## 8. Historical evidence
 

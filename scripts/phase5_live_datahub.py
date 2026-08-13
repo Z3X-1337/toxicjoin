@@ -203,7 +203,7 @@ def command_finalize(args: argparse.Namespace) -> None:
             "phase6_started": False,
             "pr_118_modified": False,
             "postgresql_claim_changed": False,
-            "vercel_mutated": False,
+            "hosting_configuration_mutated": False,
             "devpost_mutated": False,
             "release_tag_created": False,
             "main_modified_directly": False,

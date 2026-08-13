@@ -74,8 +74,10 @@ def validate_manifest(manifest: dict[str, Any], source_sha: str, mode: str) -> s
         raise ValueError("unexpected disclosure topology")
     if boundaries.get("postgresql_canonical") is not False:
         raise ValueError("PostgreSQL must not be claimed as canonical")
-    if boundaries.get("replay_is_live_execution") is not False:
-        raise ValueError("Replay must not be represented as live execution")
+    if boundaries.get("public_demo_uses_synthetic_fixture") is not True:
+        raise ValueError("public demo fixture boundary is missing")
+    if boundaries.get("static_runtime_fallback_enabled") is not False:
+        raise ValueError("static runtime fallback must remain disabled")
     return manifest_hash
 
 
@@ -92,7 +94,7 @@ def validate_config(config: dict[str, Any], root: Path) -> None:
     if config.get("source_branch") != "main":
         raise ValueError("immutable release source branch must be main")
     if config.get("draft") is not False or config.get("prerelease") is not False:
-        raise ValueError("v0.1.0 must be a published stable release")
+        raise ValueError("configured version must be a published stable release")
     if config.get("immutable_identity") is not True:
         raise ValueError("immutable identity flag must be true")
     sboms = config.get("required_sboms")

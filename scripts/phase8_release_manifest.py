@@ -49,7 +49,6 @@ def validate_phase8(
     if set(retention.get("purpose_classes", [])) != {
         "operational",
         "preview",
-        "replay-only",
         "submission",
     }:
         raise ValueError("Phase 8 purpose classification is incomplete")

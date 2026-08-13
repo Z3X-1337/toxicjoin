@@ -3,10 +3,8 @@ import type { PipelineRequest, PipelineResponse } from "../types";
 /**
  * Live console transport.
  *
- * Unlike the scenario rail, this module never falls back to the deterministic replay
- * bundle. A console that silently answered from canned data would misrepresent a dead
- * backend as a working privacy firewall, so every failure surfaces as an error the
- * operator can see.
+ * A console that silently answered from canned data would misrepresent a dead backend
+ * as a working privacy firewall, so every failure surfaces as an error the operator can see.
  */
 
 const CONSOLE_TIMEOUT_MS = 20_000;

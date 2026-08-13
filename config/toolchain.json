@@ -79,7 +79,7 @@
     },
     {
       "path": "package-lock.json",
-      "consumer": "npm ci"
+      "consumer": "npm ci (production browser E2E)"
     },
     {
       "path": "apps/web/package-lock.json",
@@ -90,7 +90,6 @@
     "run.sh",
     "run.ps1",
     "Dockerfile",
-    "vercel.json",
     ".github/workflows/ci.yml"
   ]
 }

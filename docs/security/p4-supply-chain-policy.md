@@ -4,7 +4,7 @@
 
 - Python dependency resolution is committed in `uv.lock` and CI uses `uv sync --frozen`.
 - Web dependency resolution is committed in `apps/web/package-lock.json` and CI/Docker use `npm ci`.
-- Hosted Replay browser tooling is committed in the root `package-lock.json` and verification uses `npm ci`.
+- Production browser E2E tooling is committed in the root `package-lock.json` and verification uses `npm ci`.
 - Production Docker base images are pinned by immutable SHA-256 digest.
 - Third-party GitHub Actions are pinned to full 40-character commit SHAs.
 
@@ -17,7 +17,7 @@ Every production candidate must pass:
 - Bandit focused Python SAST;
 - CodeQL `security-extended` for Python and JavaScript/TypeScript;
 - Dependency Review protection for introduced dependency risk;
-- CycloneDX SBOM generation for both Python profiles, the web application, and Hosted Replay tooling.
+- CycloneDX SBOM generation for both Python profiles, the web application, and production browser tooling.
 
 ### Dependency Review availability
 

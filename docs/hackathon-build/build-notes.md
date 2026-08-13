@@ -133,7 +133,7 @@ Committed evidence:
 - `docs/evidence/datahub-live-seed.json`
 - `docs/evidence/datahub-live-spike.json`
 - `docs/evidence/datahub-agent-registry.md` for the separate preview-only Agent Registry graph
-- `docs/evidence/hosted-replay.md` for the independently verified public Replay
+- `docs/deploy-public.md` for the independently verified Render public demo
 
 The stable SDK/MCP path remains independent of the preview Agent Registry capability. Fixture, live, and replay evidence remain explicitly distinguished.
 

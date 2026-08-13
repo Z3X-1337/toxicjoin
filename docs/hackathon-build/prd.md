@@ -81,7 +81,7 @@ Acceptance criteria:
 - Missing table resolution blocks.
 - Missing critical classification blocks.
 - Unsupported SQL blocks.
-- DataHub unavailability blocks live execution but allows clearly labeled replay mode.
+- DataHub unavailability blocks live execution; the public fixture remains a separate explicit mode.
 
 ### Epic D — Safe rewriting and execution
 
@@ -128,7 +128,7 @@ Acceptance criteria:
 - Decision document is written to DataHub in live mode.
 - Derived-risk tag or property is attached to the relevant entity or safe view.
 - Write-back result is independently verified.
-- Replay mode clearly labels captured evidence as recorded, not live.
+- Render fixture mode clearly identifies synthetic data and temporary state, not Live DataHub.
 
 #### E3. Register safe-view lineage
 As a data platform engineer, I want the safe output asset connected to its source assets.
@@ -140,13 +140,13 @@ Acceptance criteria:
 
 ### Epic F — Judge experience
 
-#### F1. Run a public replay
+#### F1. Run a public fixture demo
 As a judge, I want to understand the full workflow without installing DataHub.
 
 Acceptance criteria:
-- Public replay opens without authentication.
-- Replay explicitly identifies itself as recorded evidence.
-- Judge can run the flagship flow and inspect SQL diff, decision, verification, and write-back proof.
+- Render public demo opens without authentication.
+- Fixture mode explicitly identifies its synthetic data boundary.
+- Judge can run the flagship flow and inspect SQL diff, decision, verification, and receipt proof.
 
 #### F2. Run locally
 As a technical judge, I want a reproducible local path.
@@ -189,7 +189,7 @@ Acceptance criteria:
 - Public repository.
 - Apache 2.0 license at root.
 - Public demo video under three minutes.
-- Public replay or hosted demo.
+- Public Render demo.
 - Complete README and judge-testing guide.
 - Sample queries, decisions, rewrites, and receipts in examples/.
 - DataHub technologies explicitly documented.

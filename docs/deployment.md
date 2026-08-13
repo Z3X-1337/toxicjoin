@@ -6,41 +6,35 @@ Deployment claims are subordinate to the normative product architecture in [`arc
 
 | Surface | Status | Executes DuckDB? | Uses live DataHub? | Claim boundary |
 |---|---|---:|---:|---|
-| Current public hosted replay | Historical deterministic replay | No | No | Retained UI and provenance only; not current-main or current-policy evidence |
-| Newly built static replay | Buildable from repository source | No | No | Exact deployment revision must be recorded and externally verified |
-| Fixture container | Canonical executable judge path | Yes, read-only | No | Deterministic BLOCK / REWRITE / ALLOW, verification, state, and receipts |
+| Render public demo | Current public fixture path | Yes, read-only | No | Synthetic data, temporary state, real policy and verification pipeline |
+| Local fixture container | Canonical executable judge path | Yes, read-only | No | Deterministic BLOCK / REWRITE / ALLOW, verification, state, and receipts |
 | Live DataHub environment | Stable integration path | Yes, read-only | Yes | Exact-revision metadata, lineage, Decision write, and fresh read-back evidence |
 | PostgreSQL disclosure backend | Off-main draft PR #118 | Not wired into canonical API | No | Staged implementation only; not a current-main or production capability |
 
-The UI must display its source mode. A replay must never be presented as live execution or a DataHub write.
+The UI obtains its scenarios and results from the same-origin API. If the API is unavailable, the
+interface reports the failure and offers reconnection; it never substitutes static results.
 
-## Current public hosted replay
+## Current public Render demo
 
-The public URL is:
+The only supported public browser URL is:
 
 ```text
-https://toxicjoin-replay.vercel.app/
+https://toxicjoin-public-demo.onrender.com/
 ```
 
-It is a **historical deterministic replay**. Its retained identity is policy `0.1.0`; the current product policy on `main` is `0.2.0`.
+The repository defines exactly one free Docker Web Service in `render.yaml`, sourced from `main`
+with automatic deployment disabled. The deployment uses fixture mode, contains no organization
+data or credentials, and has no database, disk, add-on, or paid resource.
 
-The public deployment is not:
+Before claiming an exact deployed revision, verify the commit shown in Render and run:
 
-- a build of current `main`;
-- a live FastAPI backend;
-- DuckDB execution;
-- a live DataHub session or mutation;
-- current-policy or current-release evidence.
+```bash
+python scripts/verify_deployment.py --base-url https://toxicjoin-public-demo.onrender.com
+```
 
-See [`evidence/hosted-replay.md`](evidence/hosted-replay.md) for the revision-bound provenance, side-lineage relationship, immutable asset checks, and browser verification.
+## Building the web interface
 
-## Building a new static replay
-
-The repository includes `vercel.json`, which can build `apps/web` and serve the static interface. These instructions describe how to create a **new** deployment; they do not describe the provenance of the currently hosted historical site.
-
-Because no API is deployed with the static target, the frontend enters replay mode and displays a disclosure that no live execution or DataHub write is being claimed.
-
-Build locally with the committed lock:
+Build locally with the committed application lock:
 
 ```bash
 cd apps/web
@@ -50,36 +44,8 @@ npm test -- --run
 npm run build
 ```
 
-Vercel project settings when imported manually:
-
-- Repository: `Z3X-1337/toxicjoin`
-- Framework preset: Other
-- Root directory: repository root
-- Build command: read from `vercel.json`
-- Output directory: read from `vercel.json`
-
-A new public deployment must record:
-
-- exact source commit;
-- generated asset hashes;
-- replay policy identity;
-- deployment provenance;
-- desktop and mobile browser verification;
-- explicit replay disclosure.
-
-It must not silently inherit the historical public site's evidence.
-
-## Replay source integrity
-
-The repository replay source stores the safe rewrite SQL in valid order:
-
-```text
-GROUP BY
-HAVING
-ORDER BY
-```
-
-`apps/web/src/data/judgeReplay.ts` re-exports the source without an in-memory corrective transformation. This source correction does not redeploy or change the retained public Vercel assets.
+A public rollout must record the exact source commit, Render deployment event, health/readiness
+responses, protected execution verification, browser paths, security headers, and resource cost.
 
 ## Full fixture execution with Docker
 
@@ -209,7 +175,7 @@ The same-origin FastAPI deployment sets:
 - `Cross-Origin-Resource-Policy: same-origin`
 - restrictive `Permissions-Policy`
 
-API responses use `no-store`. Fingerprinted Vite assets use immutable caching. HTML uses no-cache. Static replay deployments apply equivalent policy through `vercel.json`.
+API responses use `no-store`. Fingerprinted Vite assets use immutable caching. HTML uses no-cache.
 
 ## Failure disclosure
 

@@ -27,7 +27,7 @@ Task + SQL
 2. Unknown SQL, unresolved metadata, and failed verification are fail-closed states.
 3. Raw data rows are never sent to an LLM.
 4. DataHub is the source of governed context and persistent decision memory.
-5. Replay mode must be clearly labeled and generated from a captured live run.
+5. Public fixture mode must be clearly labeled and must use only synthetic data.
 6. Every decision contains machine-readable evidence.
 
 ## 3. Components
@@ -261,11 +261,11 @@ Uses checked-in DataHub-shaped metadata and synthetic DuckDB data. It supports d
 
 ### Live mode
 
-Reads governed context through DataHub MCP and performs verified write-back. This is the source of the captured replay.
+Reads governed context through DataHub MCP and performs verified write-back.
 
-### Replay mode
+### Public Render fixture mode
 
-Displays a signed/captured live run without requiring judge credentials. The UI must label it as a recorded run.
+Runs the real protected pipeline over deterministic synthetic data without judge credentials. The UI and receipts must label it as fixture mode, and API failure must not substitute static results.
 
 ## 8. Error strategy
 
@@ -346,9 +346,9 @@ Benchmark:
 ## 12. Deployment
 
 - local live mode for DataHub integration;
-- public hosted replay for judges;
+- public Render fixture for judges;
 - GitHub Actions for lint and tests;
-- no production credentials in the hosted replay.
+- no production credentials in the public fixture.
 
 ## 13. Demo contract
 

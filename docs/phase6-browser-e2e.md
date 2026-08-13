@@ -30,8 +30,8 @@ Each cell runs the three authoritative scenarios through `/api/execute-safe`, co
 
 Two negative paths are isolated from the production-success cells:
 
-1. `execute-safe` is intentionally returned as `503` to prove the UI discloses failure and offers retry without silently switching to Replay.
-2. Bootstrap API calls are intentionally made unavailable to prove the interface uses the exact Replay wording and never calls live execution while in Replay mode.
+1. `execute-safe` is intentionally returned as `503` to prove the UI discloses failure and offers retry.
+2. Bootstrap API calls are intentionally made unavailable to prove the interface reports Render/API unavailability, offers reconnection, emits no synthetic receipt, and never calls protected execution.
 
 Route interception is used only to create these negative conditions. It is never used to fabricate successful ALLOW, REWRITE, BLOCK, receipt, or security-header evidence.
 

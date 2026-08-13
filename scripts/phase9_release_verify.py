@@ -77,7 +77,7 @@ def verify(
     if release.get("draft") is not False or release.get("prerelease") is not False:
         raise ValueError("release is not published stable identity")
     body = str(release.get("body", ""))
-    required_text = [source_sha, manifest_sha256, "SINGLE_NODE", "PostgreSQL", "Replay"]
+    required_text = [source_sha, manifest_sha256, "SINGLE_NODE", "PostgreSQL", "Render"]
     if any(value not in body for value in required_text):
         raise ValueError("release notes do not bind identity and claim boundaries")
     checksums = verify_checksums(asset_dir)
