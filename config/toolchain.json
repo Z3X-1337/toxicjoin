@@ -39,7 +39,7 @@
     "validated_on": "ubuntu-24.04",
     "client_version": "28.0.4",
     "server_version": "28.0.4",
-    "buildx_version": "0.36.1",
+    "buildx_versions": ["0.35.0", "0.36.1"],
     "compose_version": "2.38.2"
   },
   "datahub": {
