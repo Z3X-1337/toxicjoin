@@ -8,6 +8,7 @@ on:
       - "config/phase9-release.json"
       - "scripts/phase9_release_*.py"
       - "tests/test_phase9_release_bundle.py"
+      - "tests/test_phase9_main_gate_triggers.py"
       - "docs/releases/v0.1.0.md"
       - "docs/reproducibility.md"
       - "docs/phase9-acceptance.md"
@@ -50,8 +51,11 @@ jobs:
           uv run --frozen ruff check \
             scripts/phase9_release_bundle.py \
             scripts/phase9_release_verify.py \
-            tests/test_phase9_release_bundle.py
-          uv run --frozen pytest -q tests/test_phase9_release_bundle.py
+            tests/test_phase9_release_bundle.py \
+            tests/test_phase9_main_gate_triggers.py
+          uv run --frozen pytest -q \
+            tests/test_phase9_release_bundle.py \
+            tests/test_phase9_main_gate_triggers.py
           python - <<'PY'
           import json
           import tomllib
@@ -212,7 +216,7 @@ jobs:
       github.event_name == 'workflow_run' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.event == 'push'
+      github.event.workflow_run.event == 'workflow_run'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
