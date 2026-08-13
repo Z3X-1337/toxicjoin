@@ -29,10 +29,10 @@ toxicjoin-proof-verify = "toxicjoin.proofs.cli:main"
 [project.optional-dependencies]
 datahub = [
   "mcp>=1.27,<3",
-  "acryl-datahub==1.6.0.15",
+  "acryl-datahub==1.7.0.2rc3",
 ]
 agent-registry = [
-  "acryl-datahub==1.6.0.16rc3",
+  "acryl-datahub==1.7.0.2rc3",
 ]
 dev = [
   "pytest>=9.1.1,<10",
