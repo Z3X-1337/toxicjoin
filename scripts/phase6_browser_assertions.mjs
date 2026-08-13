@@ -82,7 +82,7 @@ export async function assertUiMatchesPayload(page, payload, scenario) {
   requireCondition(effective === scenario.effective, `${scenario.id}: UI effective decision mismatch`);
   requireCondition(display === scenario.effective, `${scenario.id}: UI outcome display mismatch`);
   requireCondition((await page.getByRole("alert").count()) === 0, `${scenario.id}: unexpected UI error`);
-  requireCondition((await page.getByText("Historical deterministic replay", { exact: true }).count()) === 0, `${scenario.id}: API path fell back to replay`);
+  requireCondition((await page.getByText("Render API is not ready", { exact: true }).count()) === 0, `${scenario.id}: healthy API path reported unavailable`);
 }
 
 export async function verifyReceiptLookup(context, origin, payload) {

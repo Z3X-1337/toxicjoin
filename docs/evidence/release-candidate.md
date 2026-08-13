@@ -158,25 +158,11 @@ Run `30137303763`: PASS.
 
 This remains frozen external validation of an earlier deep-security baseline. It is deliberately not regenerated or relabeled as current-main evidence.
 
-## Hosted replay relationship after Phase 0 revalidation
+## Retired public surface
 
-The public browser experience at `https://toxicjoin-replay.vercel.app/` remains explicitly labeled **Deterministic Replay**. It does not claim live DuckDB execution or live DataHub mutation.
-
-Phase 0 revalidated the live deployment against exact repository state `25a18b872d21ed91abdec3ad1893c07b5f424621` in validation-only PR #100 and classified it as:
-
-```text
-HISTORICAL_VERIFIED_DIVERGED_LINEAGE_WITH_PROVENANCE_SHAPE_DRIFT
-```
-
-The live replay's critical source identity fields remain consistent with the retained replay provenance, and its two immutable jsDelivr asset bytes exactly match the replay assets retained by the validated repository state. However:
-
-- source commit `bd8085c300a0065cc714d6e86f62f657df2d84c9` is on a Git lineage diverged from the validation target;
-- materialized asset commit `183571534a35be6a5ae85ed9d75308ada6eba41e` is also on a diverged lineage;
-- live provenance drops `artifact_name` and adds `materialized_commit` relative to the committed provenance representation.
-
-See [`hosted-replay.md`](hosted-replay.md) for the exact Phase 0 run, artifact digests, merge bases, unique-commit counts, browser checks, and asset hashes.
-
-The public replay therefore remains useful historical deterministic evidence, but it must not be described as a build of current `main`.
+An earlier static browser surface and its repository integration were retired before the `v0.2.0`
+candidate. It is not a supported product URL or release gate. The current browser path is the
+same-origin Render application documented in [`../deploy-public.md`](../deploy-public.md).
 
 ## Historical supply-chain posture
 
@@ -202,7 +188,7 @@ It supports statements about exact historical SHAs, runs, artifacts, and the bou
 - `e1192edc…` is current `main`;
 - `536c37c…` is the current runtime head;
 - historical CI/DataHub/black-box runs validate later vNext source changes;
-- the hosted replay is generated from current `main`;
+- a historical browser artifact is generated from current `main`;
 - historical release freeze remains active.
 
 Current release identity should be derived from exact repository state and machine-generated release evidence. Manual documentation is downstream explanatory material, not the source of revision truth.

@@ -181,7 +181,7 @@ The reference implementation does not claim:
 - arbitrary SQL repair;
 - differential privacy;
 - a hosted multi-tenant production control plane;
-- that the deterministic hosted Replay is live execution;
+- that a static browser artifact is live execution;
 - that organization-specific IAM, network, or warehouse authorization is solved by the demo package.
 
 The final exact-head validation record is in [`evidence/release-candidate.md`](evidence/release-candidate.md).

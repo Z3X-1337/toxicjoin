@@ -53,7 +53,7 @@ def test_public_health_is_liveness_only_and_fixture_ready_is_detailed(tmp_path) 
     assert ready.status_code == 200
     assert ready.json() == {
         "status": "ok",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "mode": "fixture",
         "policy_version": load_policy().version,
         "database_ready": True,

@@ -1,22 +1,22 @@
 {
   "schema_version": "1.0",
-  "version": "0.1.0",
-  "tag": "v0.1.0",
-  "release_name": "ToxicJoin v0.1.0",
+  "version": "0.2.0",
+  "tag": "v0.2.0",
+  "release_name": "ToxicJoin v0.2.0",
   "source_branch": "main",
   "draft": false,
   "prerelease": false,
   "immutable_identity": true,
-  "release_notes_template": "docs/releases/v0.1.0.md",
+  "release_notes_template": "docs/releases/v0.2.0.md",
   "reproducibility_template": "docs/reproducibility.md",
   "required_sboms": {
     "web-supply-chain": {
       "member": "sbom.cdx.json",
       "output": "toxicjoin-web.sbom.cdx.json"
     },
-    "hosted-replay-supply-chain": {
-      "member": "sbom-hosted-replay.cdx.json",
-      "output": "toxicjoin-hosted-replay.sbom.cdx.json"
+    "browser-tools-supply-chain": {
+      "member": "sbom-browser-tools.cdx.json",
+      "output": "toxicjoin-browser-tools.sbom.cdx.json"
     },
     "python-supply-chain-datahub": {
       "member": "sbom-python-datahub.cdx.json",

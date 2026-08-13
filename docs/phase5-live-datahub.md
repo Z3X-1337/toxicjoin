@@ -56,4 +56,4 @@ The reports are sanitized. Raw diagnostics may contain local ephemeral service i
 
 ## Explicit non-scope
 
-Phase 5 does not start browser E2E, alter PR #118 or PostgreSQL work, deploy Vercel, mutate Devpost, create a tag or release, configure repository rulesets, clean historical refs, or merge its own pull request.
+Phase 5 does not start browser E2E, alter PR #118 or PostgreSQL work, change public hosting, mutate Devpost, create a tag or release, configure repository rulesets, clean historical refs, or merge its own pull request.

@@ -22,11 +22,10 @@ export function ScenarioRail({
 
   return (
     <aside className="scenario-rail" aria-label="Judge scenarios">
-      <div className="section-eyebrow">Decision lab</div>
-      <h2>Choose the agent request</h2>
+      <div className="section-eyebrow">Test cases</div>
+      <h3>Choose a request</h3>
       <p className="section-copy">
-        Three deterministic paths prove that ToxicJoin blocks risk, remediates safe
-        work, and avoids unnecessary denial.
+        Three bounded cases cover safe access, enforceable repair, and fail-closed denial.
       </p>
 
       <nav className="scenario-list" aria-label="Available scenarios">
@@ -60,15 +59,12 @@ export function ScenarioRail({
         disabled={!selected || running}
         onClick={onRun}
       >
-        <span className="run-icon" aria-hidden="true">
-          {running ? "⋯" : "▶"}
-        </span>
-        {running ? "Evaluating protected execution" : "Run protected execution"}
+        {running ? "Evaluating…" : "Run selected case"}
       </button>
 
       <div className="rail-note">
-        <strong>Deterministic authority</strong>
-        <span>The policy engine decides. An LLM cannot override the result.</span>
+        <strong>Authority stays with policy</strong>
+        <span>The agent can revise its request. It cannot override a decision.</span>
       </div>
     </aside>
   );

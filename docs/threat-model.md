@@ -13,7 +13,7 @@
 2. ToxicJoin to DataHub MCP/SDK.
 3. ToxicJoin to DuckDB or warehouse.
 4. Deterministic policy engine to optional LLM explanation layer.
-5. Live mode to public replay mode.
+5. Live mode to public synthetic-fixture mode.
 6. Verifier/authorizer to the execution boundary.
 7. Post-execution verifier to public result release.
 8. Runtime mode label to the metadata resolver that supplies governed context.

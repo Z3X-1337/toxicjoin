@@ -10,7 +10,7 @@ from typing import Any
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
 LIFECYCLES = {"current", "historical"}
-PURPOSES = {"operational", "preview", "replay-only", "submission"}
+PURPOSES = {"operational", "preview", "submission"}
 PROVENANCE = {"commands", "environment", "timestamps", "tool_versions"}
 
 

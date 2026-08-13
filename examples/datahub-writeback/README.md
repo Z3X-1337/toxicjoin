@@ -1,6 +1,6 @@
 # Real DataHub OSS: read, act, write, read back
 
-The live integration gate runs against a real ephemeral DataHub OSS quickstart. It is separate from the hosted deterministic Replay.
+The live integration gate runs against a real ephemeral DataHub OSS quickstart. It is separate from the public synthetic-fixture demo.
 
 The official DataHub SDK seeds a small synthetic governance graph. ToxicJoin then launches the pinned official MCP server, discovers its tools and schemas, reads governed entities and lineage, writes a DataHub `Decision`, closes that MCP process, starts a fresh process, and independently reads the persisted document back.
 

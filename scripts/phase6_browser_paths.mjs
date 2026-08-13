@@ -1,6 +1,6 @@
 import { chromium, firefox, webkit } from "playwright-core";
 import { SCENARIOS, VIEWPORTS, auditAccessibilityAndLayout, captureScreenshot, requireCondition } from "./phase6_browser_common.mjs";
-import { assertUiMatchesPayload, isExecuteResponse, readReceiptId, verifyHeaders, verifyMissingReceipt, verifyReceiptLookup, verifySourceModeIndicator } from "./phase6_browser_assertions.mjs";
+import { assertUiMatchesPayload, isExecuteResponse, verifyHeaders, verifyMissingReceipt, verifyReceiptLookup, verifySourceModeIndicator } from "./phase6_browser_assertions.mjs";
 
 const BROWSERS = Object.freeze([["chromium", chromium], ["firefox", firefox], ["webkit", webkit]]);
 
@@ -36,10 +36,9 @@ async function runProductionCell(browserName, browserType, viewport, options, sh
   requireCondition(readyPayload.database_ready === true && readyPayload.receipt_store_ready === true, "production state not ready");
   const sourceModeIndicator = await verifySourceModeIndicator(
     page,
-    "Fixture execution",
-    viewport.width > 900,
+    "Fixture API online",
+    true,
   );
-  requireCondition((await page.locator(".mode-notice").count()) === 0, "unexpected replay notice on API path");
 
   const scenarioResults = [];
   const defaultResponse = await defaultResponsePromise;
@@ -123,9 +122,8 @@ export async function runFailureDisclosure(options) {
   const alert = page.getByRole("alert");
   await alert.waitFor({ state: "visible", timeout: 30_000 });
   const text = (await alert.textContent())?.replace(/\s+/g, " ").trim() ?? "";
-  requireCondition(text.includes("Protected execution did not complete") && text.includes("Request failed: 503"), "failure disclosure drift");
-  const sourceModeIndicator = await verifySourceModeIndicator(page, "Fixture execution", true);
-  requireCondition((await page.locator(".mode-notice").count()) === 0, "failure disclosure incorrectly claimed replay");
+  requireCondition(text.includes("Protected execution did not complete") && text.includes("HTTP 503"), "failure disclosure drift");
+  const sourceModeIndicator = await verifySourceModeIndicator(page, "Fixture API online", true);
   requireCondition(intercepted === 1, `expected one intercepted execute request, got ${intercepted}`);
   const screenshot = await captureScreenshot(page, options.outputDir, "negative-failure-disclosure.png");
   await context.close();
@@ -133,7 +131,7 @@ export async function runFailureDisclosure(options) {
   return { browser: "chromium", browser_version: browserVersion, source_mode: "api", source_mode_indicator: sourceModeIndicator, intercepted_execute_requests: intercepted, alert_text: text, retry_control_present: true, screenshot };
 }
 
-export async function runReplayTruthfulness(options) {
+export async function runBootstrapFailureDisclosure(options) {
   const browser = await chromium.launch({ headless: true });
   const browserVersion = browser.version();
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, colorScheme: "dark", locale: "en-US" });
@@ -147,35 +145,30 @@ export async function runReplayTruthfulness(options) {
     await route.abort("failed");
   });
   await page.goto(options.origin, { waitUntil: "domcontentloaded" });
-  const sourceModeIndicator = await verifySourceModeIndicator(
-    page,
-    "Historical deterministic replay",
-    false,
-  );
-  const notice = page.locator(".mode-notice");
-  await notice.waitFor({ state: "visible" });
-  const noticeText = (await notice.textContent())?.replace(/\s+/g, " ").trim() ?? "";
-  requireCondition(noticeText.includes("clearly labeled deterministic replay"), "replay notice lacks truthful label");
-  requireCondition(noticeText.includes("no live execution or DataHub write is being claimed"), "replay notice overclaims live behavior");
-  await page.getByText("Replay — no live write claimed", { exact: true }).waitFor({ timeout: 30_000 });
-  const receiptId = await readReceiptId(page);
-  requireCondition(receiptId !== null, "replay did not render deterministic receipt");
-  requireCondition(executeSafeRequests === 0 && bootstrapRequests >= 1, "replay network boundary failed");
+  const sourceModeIndicator = await verifySourceModeIndicator(page, "Connecting", true);
+  const alert = page.getByRole("alert");
+  await alert.waitFor({ state: "visible" });
+  const alertText = (await alert.textContent())?.replace(/\s+/g, " ").trim() ?? "";
+  requireCondition(alertText.includes("Render API is not ready"), "bootstrap failure was not disclosed");
+  requireCondition(alertText.includes("unreachable"), "bootstrap failure reason was not disclosed");
+  await page.getByRole("button", { name: "Reconnect" }).waitFor({ state: "visible" });
+  requireCondition((await page.locator(".receipt-grid").count()) === 0, "bootstrap failure rendered a synthetic receipt");
+  requireCondition(executeSafeRequests === 0 && bootstrapRequests >= 1, "bootstrap failure network boundary failed");
   const accessibilityAndLayout = await auditAccessibilityAndLayout(page, VIEWPORTS[1]);
-  const screenshot = await captureScreenshot(page, options.outputDir, "negative-replay-truthful-mobile.png");
+  const screenshot = await captureScreenshot(page, options.outputDir, "negative-render-unavailable-mobile.png");
   await context.close();
   await browser.close();
   return {
     browser: "chromium",
     browser_version: browserVersion,
     viewport: VIEWPORTS[1],
-    source_mode: "replay",
+    source_mode: "unavailable",
     source_mode_indicator: sourceModeIndicator,
     bootstrap_requests_failed: bootstrapRequests,
     execute_safe_requests: executeSafeRequests,
-    notice_text: noticeText,
-    receipt_id: receiptId,
-    no_live_write_claimed: true,
+    alert_text: alertText,
+    receipt_id: null,
+    synthetic_fallback_used: false,
     accessibility_and_layout: accessibilityAndLayout,
     screenshot,
   };

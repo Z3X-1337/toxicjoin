@@ -197,11 +197,6 @@ def manifest_errors(value: dict[str, Any]) -> list[str]:
         if value["containers"][key] not in dockerfile:
             errors.append(f"Dockerfile missing exact {key} identity")
 
-    vercel = json.loads((ROOT / "vercel.json").read_text(encoding="utf-8"))
-    command = vercel.get("buildCommand", "")
-    if "npm ci" not in command or re.search(r"\bnpm\s+install\b", command):
-        errors.append("vercel.json must use npm ci")
-
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     for key, runner in value["github_runners"].items():
         for version in value["python"]["supported_by_platform"][key]:
@@ -339,7 +334,7 @@ def verify(components: list[str]) -> dict[str, Any]:
 
 def bootstrap_files() -> list[Path]:
     files = [
-        ROOT / name for name in ("run.sh", "run.ps1", "Dockerfile", "vercel.json")
+        ROOT / name for name in ("run.sh", "run.ps1", "Dockerfile")
     ]
     files.extend(sorted((ROOT / ".github" / "workflows").glob("*.y*ml")))
     return [path for path in files if path.is_file()]
@@ -350,7 +345,6 @@ def exact_toolchain_paths() -> set[str]:
         "run.sh",
         "run.ps1",
         "Dockerfile",
-        "vercel.json",
         ".github/workflows/ci.yml",
     }
 

@@ -13,7 +13,6 @@
   "required_purpose_classes": [
     "operational",
     "preview",
-    "replay-only",
     "submission"
   ],
   "schema_version": "1.0",

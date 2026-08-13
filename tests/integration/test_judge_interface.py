@@ -107,7 +107,7 @@ def test_service_root_discloses_when_frontend_is_not_built(tmp_path: Path) -> No
     assert response.status_code == 200
     assert response.json() == {
         "name": "ToxicJoin",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "judge_interface": "not_built",
         "api_docs": "/docs",
     }

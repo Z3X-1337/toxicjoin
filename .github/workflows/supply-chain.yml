@@ -99,7 +99,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  hosted-replay-audit:
+  browser-tools-audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -108,26 +108,26 @@ jobs:
           node-version: "22.16.0"
           cache: npm
           cache-dependency-path: package-lock.json
-      - name: Install exact hosted replay tool lock
+      - name: Install exact browser E2E tool lock
         run: npm ci --no-audit --no-fund
-      - name: Audit hosted replay tool graph
+      - name: Audit browser E2E tool graph
         shell: bash
         run: |
           set -euo pipefail
           set +e
-          npm audit --package-lock-only --json > npm-audit-hosted-replay.json
+          npm audit --package-lock-only --json > npm-audit-browser-tools.json
           AUDIT_RC=$?
           set -e
           echo "npm audit exit code: $AUDIT_RC"
-          python3 scripts/validate_dependency_audit.py npm --audit-json npm-audit-hosted-replay.json
-      - name: Generate hosted replay CycloneDX SBOM
-        run: npm sbom --package-lock-only --sbom-format cyclonedx > sbom-hosted-replay.cdx.json
+          python3 scripts/validate_dependency_audit.py npm --audit-json npm-audit-browser-tools.json
+      - name: Generate browser E2E CycloneDX SBOM
+        run: npm sbom --package-lock-only --sbom-format cyclonedx > sbom-browser-tools.cdx.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: hosted-replay-supply-chain
+          name: browser-tools-supply-chain
           path: |
-            npm-audit-hosted-replay.json
-            sbom-hosted-replay.cdx.json
+            npm-audit-browser-tools.json
+            sbom-browser-tools.cdx.json
           if-no-files-found: error
           retention-days: 30
 
@@ -270,14 +270,14 @@ jobs:
         run: |
           set -euo pipefail
           set +e
-          npm audit --package-lock-only --json > fallback-npm-audit-hosted-replay.json
+          npm audit --package-lock-only --json > fallback-npm-audit-browser-tools.json
           ROOT_RC=$?
           (cd apps/web && npm audit --package-lock-only --json > ../../fallback-npm-audit-web.json)
           WEB_RC=$?
           set -e
-          echo "hosted replay npm audit exit code: $ROOT_RC"
+          echo "browser tools npm audit exit code: $ROOT_RC"
           echo "web npm audit exit code: $WEB_RC"
-          python3 scripts/validate_dependency_audit.py npm --audit-json fallback-npm-audit-hosted-replay.json
+          python3 scripts/validate_dependency_audit.py npm --audit-json fallback-npm-audit-browser-tools.json
           python3 scripts/validate_dependency_audit.py npm --audit-json fallback-npm-audit-web.json
       - name: Write local dependency-review evidence
         shell: bash
@@ -312,7 +312,7 @@ jobs:
             dependency-review-fallback-summary.json
             fallback-pip-audit-datahub.json
             fallback-pip-audit-agent-registry.json
-            fallback-npm-audit-hosted-replay.json
+            fallback-npm-audit-browser-tools.json
             fallback-npm-audit-web.json
           if-no-files-found: error
           retention-days: 30

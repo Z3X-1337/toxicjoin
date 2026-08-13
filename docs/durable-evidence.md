@@ -15,7 +15,6 @@ Lifecycle and purpose are separate dimensions.
 
 - `current` and `historical` describe whether an evidence record represents the current product boundary or a prior exact revision.
 - `preview` is candidate or pull-request evidence and is not an immutable release identity.
-- `replay-only` is deterministic hosted replay evidence and must not be represented as live execution.
 - `submission` records submission readiness without claiming that Devpost was submitted.
 - `operational` records current repository and retention state.
 

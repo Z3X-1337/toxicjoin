@@ -38,5 +38,5 @@ historical or documentation-only SHA cannot become the release identity.
 
 ## Preserved boundaries
 
-Phase 8 is not started. PR #118/PostgreSQL is not modified. No Vercel, Devpost, tag, release,
+Phase 8 is not started. PR #118/PostgreSQL is not modified. No hosting provider, Devpost, tag, release,
 ruleset, cleanup, or direct `main` mutation occurs. No immutable release is created in Phase 7.

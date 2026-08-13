@@ -24,9 +24,15 @@
         "Re-evaluate immediately when acryl-datahub removes setuptools<82.0.0"
       ],
       "accepted_on": "2026-07-25",
-      "expires_on": "2026-08-15",
+      "expires_on": "2026-09-12",
       "owner": "ToxicJoin security release gate",
-      "status": "temporary_upstream_blocked"
+      "status": "temporary_upstream_blocked",
+      "last_reviewed_on": "2026-08-13",
+      "review_evidence": [
+        "https://github.com/datahub-project/datahub/blob/master/metadata-ingestion/setup.py",
+        "https://github.com/advisories/GHSA-h35f-9h28-mq5c"
+      ],
+      "review_outcome": "Upstream DataHub still requires setuptools<82 because runtime dependencies use pkg_resources; the advisory remains fixed only in setuptools 83.0.0. Existing Linux-only, locked-artifact, no-sdist controls remain applicable."
     }
   ]
 }

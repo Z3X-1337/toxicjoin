@@ -1,6 +1,5 @@
 export type Decision = "ALLOW" | "REWRITE" | "BLOCK";
-export type ReceiptMode = "fixture" | "live" | "replay";
-export type SourceMode = "api" | "replay";
+export type ReceiptMode = "fixture" | "live";
 
 export interface ColumnRef {
   dataset: string;
@@ -177,7 +176,6 @@ export interface BenchmarkSummary {
 }
 
 export interface JudgeSession {
-  sourceMode: SourceMode;
   health: HealthResponse;
   scenarios: DemoScenario[];
   benchmark: BenchmarkSummary;

@@ -1,6 +1,6 @@
 {
-  "name": "toxicjoin-ci-tools",
-  "version": "0.1.0",
+  "name": "toxicjoin-browser-e2e-tools",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "packageManager": "npm@10.9.2",

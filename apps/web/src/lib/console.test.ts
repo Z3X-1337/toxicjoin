@@ -55,7 +55,7 @@ describe("console transport", () => {
     expect(calls).toEqual([CONSOLE_ENDPOINTS.analyze, CONSOLE_ENDPOINTS.execute]);
   });
 
-  it("never substitutes replay data when the API is unreachable", async () => {
+  it("never substitutes static data when the API is unreachable", async () => {
     stubFetch((async () => {
       throw new TypeError("network down");
     }) as typeof fetch);

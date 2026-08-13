@@ -179,15 +179,11 @@ def validate_static() -> None:
         raise SystemExit("CI does not contain the complete Phase 3 gate")
     _validate_phase3_matrix(ci)
 
-    hosted = (ROOT / ".github/workflows/verify-hosted-replay.yml").read_text(encoding="utf-8")
-    if "npm ci --no-audit --no-fund" not in hosted:
-        raise SystemExit("Hosted Replay does not consume the root npm lock")
-
     supply = (ROOT / ".github/workflows/supply-chain.yml").read_text(encoding="utf-8")
     required_supply_tokens = (
         "python-audit:",
         "web-audit:",
-        "hosted-replay-audit:",
+        "browser-tools-audit:",
         "bandit:",
         "dependency-review-probe:",
         "dependency-review:",

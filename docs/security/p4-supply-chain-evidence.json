@@ -63,7 +63,7 @@
     "fallback_controls": [
       "record dependency manifest diff from pull-request base to exact head",
       "re-run pip-audit for locked datahub and agent-registry profiles",
-      "re-run npm audit for root Hosted Replay lock and apps/web lock",
+      "re-run npm audit for root browser E2E lock and apps/web lock",
       "reject every finding not covered by the single machine-validated temporary exception",
       "fail closed for any Dependency Review API status other than 200 or 403"
     ],

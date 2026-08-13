@@ -41,10 +41,10 @@ describe("judge-facing components", () => {
     expect(html).toContain("Minimum observed group size is 40");
   });
 
-  it("labels replay receipts without claiming a live write", () => {
+  it("renders a fixture receipt without storing raw rows", () => {
     const receipt = replayResults["rewrite-churn-regions"]?.receipt;
-    const html = render(<ReceiptPanel receipt={receipt} sourceMode="replay" />);
-    expect(html).toContain("Replay — no live write claimed");
+    const html = render(<ReceiptPanel receipt={receipt} />);
+    expect(html).toContain("Not Attempted");
     expect(html).toContain("never raw result rows");
   });
 

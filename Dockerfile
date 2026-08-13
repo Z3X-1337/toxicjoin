@@ -14,7 +14,7 @@ WORKDIR /app
 COPY config/toolchain.json ./config/toolchain.json
 COPY scripts/bootstrap.py ./scripts/bootstrap.py
 COPY .github/workflows/ci.yml ./.github/workflows/ci.yml
-COPY pyproject.toml uv.lock README.md LICENSE package.json package-lock.json vercel.json Dockerfile ./
+COPY pyproject.toml uv.lock README.md LICENSE package.json package-lock.json Dockerfile ./
 COPY apps/web/package.json apps/web/package-lock.json ./apps/web/
 RUN python scripts/bootstrap.py verify --components python,locks \
     && python -m pip install --no-cache-dir 'uv==0.8.4' \

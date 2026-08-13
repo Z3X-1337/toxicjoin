@@ -12,22 +12,36 @@ ToxicJoin evaluates proposed SQL **before execution**, grounds every field in go
 bash run.sh
 ```
 
-Then open `http://127.0.0.1:8000` and use the **live console**: paste SQL, pick an action, and watch the real decision, verification checks, released rows and signed receipt. The **Governed Agent loop** below it shows an agent being refused, reading the reason code, and adapting until its query is safe. Both panels call the real API — there is no replay fallback in either.
+Then open `http://127.0.0.1:8000` and use the **live console**: paste SQL, pick an action,
+and inspect the decision, verification checks, released rows, and signed receipt. The **Governed
+Agent loop** shows an agent reading a refusal reason and adapting its request without gaining policy
+authority. Every interactive panel calls the real API; an unavailable service produces an explicit
+error and reconnect action instead of substituting static results.
 
 Windows: `.\run.ps1`. Full walkthrough: [`docs/judge-testing.md`](docs/judge-testing.md).
 
 ## Current Public Demo
 
 [**Open the Current Public Demo**](https://toxicjoin-public-demo.onrender.com/) — last externally
-verified on **2026-08-13**. It is a Render Free web service running the hardened Docker image in
+verified on **2026-08-13**. It is the sole public deployment: a Render Free web service running the hardened Docker image in
 explicit `fixture` mode: the deterministic synthetic judge warehouse goes through the real parser,
 policy engine, read-only executor, independent verification, and authenticated-receipt path. It is
-not a mock, a replay, a Live DataHub deployment, or a source of organization data or credentials.
+not a mock, a Live DataHub deployment, or a source of organization data or credentials.
 
 The Free service may sleep after inactivity and cold-start on the next request. Its local fixture
 database, receipts, and disclosure ledger are deliberately temporary and can reset after sleep,
 restart, or redeploy; that is expected demo behavior, not a loss of production audit evidence.
 The deployment PR records the exact deployed source revision and zero-cost verification details.
+
+## Release identity
+
+The source declares version `0.2.0`. The [Phase 9 workflow](.github/workflows/phase9-immutable-release.yml)
+publishes a version only after the generated release manifest binds every required gate to the exact
+`main` commit. It then verifies the annotated tag, GitHub Release, asset set, and every SHA-256 entry.
+
+[GitHub Releases](https://github.com/Z3X-1337/toxicjoin/releases) is the durable release history.
+Each release proves only its recorded source commit. Pull-request previews assemble the same bundle
+with `release_side_effects=false`; they do not create or modify a tag or Release.
 
 ## What is proven
 
@@ -36,13 +50,13 @@ The deployment PR records the exact deployed source revision and zero-cost verif
 - **Two privacy bypasses found by adversarial review and closed**, each with regressions that fail against the unfixed source — reproducible live from the console's two attack presets:
   - a literal aliased as `subject_count` combined with a `NOT`-inverted `HAVING`;
   - a caller declaring a public column (`orders.order_id`) as the privacy subject.
-- **968 passed, 1 skipped, 5 warnings** across unit, integration and security regressions.
+- **978 passed, 5 warnings** across the exact local unit, integration, security, and release-contract regressions.
 
 Measurement scope and limits: [`docs/evidence/benchmark.md`](docs/evidence/benchmark.md). This is a regression corpus for a declared SQL/policy profile, not a claim of universal privacy detection.
 
 ## Architecture authority
 
-[`docs/architecture.md`](docs/architecture.md) is the normative product-architecture and claim-boundary authority. Security, threat-model, deployment, judge, evidence, replay, vNext, and submission documents are subordinate or revision-bound views and may not upgrade a fixture, historical, replay-only, staged, off-main, or roadmap capability into a current product claim.
+[`docs/architecture.md`](docs/architecture.md) is the normative product-architecture and claim-boundary authority. Security, threat-model, deployment, judge, evidence, vNext, and submission documents are subordinate or revision-bound views and may not upgrade a fixture, historical, staged, off-main, or roadmap capability into a current product claim.
 
 Recent hardening decisions and their rationale: [`docs/hardening-progress.md`](docs/hardening-progress.md).
 
@@ -63,7 +77,9 @@ The post-submission improvement window is governed by the measured
      that run.
 6. **Inspect retained production-image black-box evidence:** [`docs/evidence/final-security-blackbox.md`](docs/evidence/final-security-blackbox.md).
 
-A retained static replay of an earlier build remains at https://toxicjoin-replay.vercel.app/ — it is labelled **Historical Deterministic Replay**, carries policy identity `0.1.0` rather than current `0.2.0`, and is not live execution. Use the Current Public Demo above for a public interactive review, or `run.sh` for a local run.
+The Current Public Demo above is the only supported public browser surface. Its interface and API are
+served together from Render; the repository contains no secondary static hosting configuration or
+runtime data fallback.
 
 The shortest product proof chain is:
 
@@ -276,7 +292,8 @@ See [`SECURITY.md`](SECURITY.md), [`docs/threat-model.md`](docs/threat-model.md)
 
 The repository retains the earlier pre-vNext release evidence for provenance. It is intentionally labelled historical and must not be used as current repository identity.
 
-See [`docs/evidence/release-candidate.md`](docs/evidence/release-candidate.md), [`docs/evidence/final-security-blackbox.md`](docs/evidence/final-security-blackbox.md), and [`docs/evidence/hosted-replay.md`](docs/evidence/hosted-replay.md).
+See [`docs/evidence/release-candidate.md`](docs/evidence/release-candidate.md) and
+[`docs/evidence/final-security-blackbox.md`](docs/evidence/final-security-blackbox.md).
 
 ## Repository map
 

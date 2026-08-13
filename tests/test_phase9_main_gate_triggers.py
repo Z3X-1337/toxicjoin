@@ -195,10 +195,43 @@ def test_phase9_publish_event_eligibility_matrix(
     ) is expected
 
 
+
+def test_phase9_preview_preserves_preexisting_release_state() -> None:
+    workflow = _load_github_actions_yaml(PHASE9_WORKFLOW)
+    jobs = workflow["jobs"]
+    assert isinstance(jobs, dict)
+    preview = jobs["release-preview"]
+    assert isinstance(preview, dict)
+    steps = preview["steps"]
+    assert isinstance(steps, list)
+
+    before = next(
+        step
+        for step in steps
+        if step["name"] == "Snapshot configured tag and Release before preview"
+    )
+    after = next(
+        step
+        for step in steps
+        if step["name"] == "Verify pull-request run did not mutate tag or Release"
+    )
+    before_run = str(before["run"])
+    after_run = str(after["run"])
+    content = PHASE9_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "release-state-before/tag.json" in before_run
+    assert "release-state-before/release.json" in before_run
+    assert "release-state-after/tag.json" in after_run
+    assert "release-state-after/release.json" in after_run
+    assert 'if ! cmp -s "$before" "$after"; then' in after_run
+    assert "Configured tag and Release state remained unchanged" in after_run
+    assert "Refusing preview: tag" not in content
+    assert "Refusing preview: Release" not in content
+
 def test_phase9_immutable_release_identity_is_fixed() -> None:
     config = json.loads(PHASE9_CONFIG.read_text(encoding="utf-8"))
-    assert config["version"] == "0.1.0"
-    assert config["tag"] == "v0.1.0"
+    assert config["version"] == "0.2.0"
+    assert config["tag"] == "v0.2.0"
     assert config["draft"] is False
     assert config["prerelease"] is False
     assert config["immutable_identity"] is True

@@ -81,9 +81,8 @@ def test_phase6_script_covers_required_browser_and_product_paths() -> None:
         "receipt lookup failed",
         "RECEIPT_NOT_FOUND",
         "Protected execution did not complete",
-        "Historical deterministic replay",
-        "Replay — no live write claimed",
-        "no live execution or DataHub write is being claimed",
+        "Render API is not ready",
+        "synthetic_fallback_used: false",
         "content-security-policy",
         "x-frame-options",
         "permissions-policy",
@@ -101,7 +100,7 @@ def test_phase6_script_covers_required_browser_and_product_paths() -> None:
     assert 'page.route("**/api/execute-safe"' in script
     assert 'page.route("**/api/**"' in script
     assert "source_mode: \"api\"" in script
-    assert "source_mode: \"replay\"" in script
+    assert "source_mode: \"unavailable\"" in script
     assert "git\", [\"diff\", \"--exit-code\"]" in script
     assert "git\", [\"diff\", \"--cached\", \"--exit-code\"]" in script
     assert "waitForFunction" not in script
@@ -124,7 +123,7 @@ def test_phase6_acceptance_preserves_future_phase_boundaries() -> None:
         "security headers",
         "accessibility",
         "responsive",
-        "Replay",
+        "Render",
         "exact candidate SHA",
     ):
         assert requirement in acceptance
@@ -133,7 +132,7 @@ def test_phase6_acceptance_preserves_future_phase_boundaries() -> None:
         "Phase 7",
         "PR #118",
         "PostgreSQL",
-        "Vercel",
+        "hosting provider",
         "Devpost",
         "tag",
         "release",

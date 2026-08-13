@@ -18,12 +18,12 @@ Authoritative release index: [`release-candidate.md`](release-candidate.md).
 | Audit evidence does not become another privacy leak | Receipts are content-hashed, ownership-scoped, tamper-detected, and exclude raw result rows | [Security model](../../SECURITY.md) · [black-box pentest](release-candidate.md#exact-release-candidate-black-box-pentest) |
 | The release was independently exercised beyond normal CI | Frozen external 24-task replay PASS; exact-image black-box pentest 24/24 PASS | [Release index](release-candidate.md) |
 | Software supply-chain controls are part of the release | Frozen locks, audits, Bandit, CodeQL, SBOMs, immutable Action pins, digest-pinned Docker bases, Dependabot | [Release index](release-candidate.md#supply-chain-closure) · [P4 policy](../security/p4-supply-chain-policy.md) |
-| The hosted browser experience is represented honestly | Public site is explicitly deterministic Replay; it does not claim live DuckDB/DataHub execution | [Hosted Replay](hosted-replay.md) |
+| The hosted browser experience is represented honestly | Render runs the real fixture pipeline and does not claim Live DataHub execution | [Public deployment](../deploy-public.md) |
 | A reusable DataHub-native skill/agent graph exists | Preview proof independently read back 1 Agent Skill, 1 AI Agent, 5 MCP tool API entities, and 5 governed dataset dependencies | [Agent Registry preview](datahub-agent-registry.md) |
 
 ## Fast reviewer path
 
-1. Open https://toxicjoin-replay.vercel.app/ to understand the product surface.
+1. Open https://toxicjoin-public-demo.onrender.com/ to understand the product surface.
 2. Read [`release-candidate.md`](release-candidate.md) for the exact release SHA and complete validation chain.
 3. Follow [`../judge-testing.md`](../judge-testing.md) for the executable fixture path.
 4. Read [`datahub-live.md`](datahub-live.md) for real DataHub OSS/MCP read → write → fresh-process read-back.
@@ -32,4 +32,4 @@ Authoritative release index: [`release-candidate.md`](release-candidate.md).
 
 ## Scope discipline
 
-These are bounded, declared evaluations. ToxicJoin does not claim universal SQL support, universal re-identification detection, differential privacy, or legal-compliance certification. Unsupported or ambiguous cases fail closed, and the hosted Replay is not represented as a live DataHub deployment.
+These are bounded, declared evaluations. ToxicJoin does not claim universal SQL support, universal re-identification detection, differential privacy, or legal-compliance certification. Unsupported or ambiguous cases fail closed, and the public Render fixture is not represented as a Live DataHub deployment.
