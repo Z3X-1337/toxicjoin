@@ -25,7 +25,7 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 | Web npm audit | fail on baseline | High `nanoid` advisory; remediation in this branch |
 | Python audit | fail on baseline | `cryptography 49.0.0` advisory; remediation in this branch |
 | Python lock consistency | fail on baseline | `pyproject.toml` disagrees with the committed DataHub lock profiles |
-| Exact-SHA Live DataHub | pass | [Phase 5 run 31656287879](https://github.com/Z3X-1337/toxicjoin/actions/runs/31656287879) verified this branch's source SHA and published its evidence artifact |
+| Exact-SHA Live DataHub | pass | Previous verified PR candidate `45afaaebcfe47dbf306b70a5dfa8137b8d3bc1e1` passed [Phase 5 run 31657292789](https://github.com/Z3X-1337/toxicjoin/actions/runs/31657292789); the PR description and checks identify the newest current-head evidence |
 | Current public live deployment | pending | the retained Vercel URL is historical replay, not current live execution |
 
 ## Prioritized execution
@@ -59,15 +59,18 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 ### P2 — Produce current real DataHub evidence
 
 - [x] Publish the branch and open [Draft PR #153](https://github.com/Z3X-1337/toxicjoin/pull/153).
-- [x] Run [Phase 5 Exact-SHA Live DataHub](https://github.com/Z3X-1337/toxicjoin/actions/runs/31656287879)
-  successfully on the branch source SHA `5455ae29999ee95bf77e8f13c6c62b4628e59450`.
-- [x] Run [Live DataHub](https://github.com/Z3X-1337/toxicjoin/actions/runs/31656287876) and
-  [Live DataHub Agent Registry](https://github.com/Z3X-1337/toxicjoin/actions/runs/31656287894)
-  successfully for that candidate.
-- [x] Inspect the uploaded `phase5-exact-sha-live-datahub-evidence` artifact: it records an exact
-  source checkout, real DataHub OSS services, read-only discovery, a writer limited to
-  `save_document`, and a successful fresh-process read-back. Its sanitization report records no
-  credential values, no raw warehouse rows, and zero GMS URL reflections.
+- [x] Run [Phase 5 Exact-SHA Live DataHub](https://github.com/Z3X-1337/toxicjoin/actions/runs/31657292789)
+  successfully on the previous verified PR candidate SHA
+  `45afaaebcfe47dbf306b70a5dfa8137b8d3bc1e1`.
+- [x] Run [Live DataHub](https://github.com/Z3X-1337/toxicjoin/actions/runs/31657292807) and
+  [Live DataHub Agent Registry](https://github.com/Z3X-1337/toxicjoin/actions/runs/31657292831)
+  successfully for that previous candidate.
+- [x] Inspect the uploaded `phase5-exact-sha-live-datahub-evidence` artifact for that previous
+  candidate: it records an exact source checkout, real DataHub OSS services, read-only discovery,
+  a writer limited to `save_document`, and a successful fresh-process read-back. Its sanitization
+  report records no credential values, no raw warehouse rows, and zero GMS URL reflections.
+- [x] Keep the newest Exact-SHA evidence for the current PR head in the PR description and checks;
+  this plan does not claim a `main` evidence run before merge.
 - [x] Update current-evidence documentation only after the live gate passes.
 
 ### P3 — Replace the historical public-only experience

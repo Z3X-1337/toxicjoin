@@ -43,8 +43,14 @@ The post-submission improvement window is governed by the measured
 2. **Reproduce the closed bypasses:** the two `Attack —` presets in the console.
 3. **Inspect the claim boundary:** [`docs/evidence/submission-freeze.md`](docs/evidence/submission-freeze.md).
 4. **Inspect sample outputs:** [`examples/`](examples/README.md).
-5. **Inspect retained real DataHub OSS + official MCP evidence:** [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md).
-   - Exact-revision evidence; it was not rerun on the final `main` commit.
+5. **Inspect retained historical DataHub OSS + official MCP evidence:** [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md).
+   - These retained files prove their recorded revision and environment. The most recently
+     verified PR #153 candidate before this documentation-only change was
+     `45afaaebcfe47dbf306b70a5dfa8137b8d3bc1e1`, which passed
+     [Phase 5 run 31657292789](https://github.com/Z3X-1337/toxicjoin/actions/runs/31657292789).
+     The PR description and checks identify the newest Exact-SHA evidence for the current branch
+     head. None of this is evidence for `main`; that requires merge and a workflow run on the
+     resulting `main` commit.
 6. **Inspect retained production-image black-box evidence:** [`docs/evidence/final-security-blackbox.md`](docs/evidence/final-security-blackbox.md).
 
 A retained static replay of an earlier build remains at https://toxicjoin-replay.vercel.app/ — it is labelled **Historical Deterministic Replay**, carries policy identity `0.1.0` rather than current `0.2.0`, and is not live execution. Prefer `run.sh`.
@@ -98,7 +104,7 @@ read DataHub context
   -> fresh reader inherits the result
 ```
 
-See [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md) and [`docs/datahub-live-integration.md`](docs/datahub-live-integration.md). The retained live run proves its recorded revision and environment; it is not an exact-final-SHA live rerun.
+See [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md) and [`docs/datahub-live-integration.md`](docs/datahub-live-integration.md) for retained historical evidence. The latest Exact-SHA artifact for the active PR head is linked from PR #153's description and checks; it proves that PR revision only. Evidence for `main` is available only after merge and an Exact-SHA workflow run on the resulting `main` commit.
 
 ## Reusable DataHub Skill
 
