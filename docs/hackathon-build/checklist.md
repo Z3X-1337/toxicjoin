@@ -1,5 +1,9 @@
 # ToxicJoin Build Checklist
 
+> Historical build checklist. Its unchecked boxes are not a current readiness assessment.
+> Use [`production-readiness-plan.md`](production-readiness-plan.md) for the measured
+> post-submission execution state.
+
 Build mode: autonomous, with review through draft pull requests.
 Verification: automated checks at every item; no automatic merge until the milestone is green.
 Git cadence: one focused branch/PR per milestone.

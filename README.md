@@ -23,7 +23,7 @@ Windows: `.\run.ps1`. Full walkthrough: [`docs/judge-testing.md`](docs/judge-tes
 - **Two privacy bypasses found by adversarial review and closed**, each with regressions that fail against the unfixed source — reproducible live from the console's two attack presets:
   - a literal aliased as `subject_count` combined with a `NOT`-inverted `HAVING`;
   - a caller declaring a public column (`orders.order_id`) as the privacy subject.
-- **931 tests** covering unit, integration and security regressions, running in ~90 seconds.
+- **968 tests** covering unit, integration and security regressions.
 
 Measurement scope and limits: [`docs/evidence/benchmark.md`](docs/evidence/benchmark.md). This is a regression corpus for a declared SQL/policy profile, not a claim of universal privacy detection.
 
@@ -32,6 +32,10 @@ Measurement scope and limits: [`docs/evidence/benchmark.md`](docs/evidence/bench
 [`docs/architecture.md`](docs/architecture.md) is the normative product-architecture and claim-boundary authority. Security, threat-model, deployment, judge, evidence, replay, vNext, and submission documents are subordinate or revision-bound views and may not upgrade a fixture, historical, replay-only, staged, off-main, or roadmap capability into a current product claim.
 
 Recent hardening decisions and their rationale: [`docs/hardening-progress.md`](docs/hardening-progress.md).
+
+The post-submission improvement window is governed by the measured
+[`production-readiness plan`](docs/hackathon-build/production-readiness-plan.md) and its
+[`autonomous execution contract`](docs/hackathon-build/production-execution-prompt.md).
 
 ## Judge quick path
 

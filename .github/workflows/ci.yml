@@ -41,6 +41,9 @@ jobs:
       - name: Install exact uv bootstrap
         run: python -m pip install --disable-pip-version-check "uv==0.8.4"
 
+      - name: Verify project metadata matches the committed Python lock
+        run: uv lock --check
+
       - name: Verify machine-readable authority
         run: >-
           python scripts/bootstrap.py verify

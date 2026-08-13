@@ -168,6 +168,20 @@ def manifest_errors(value: dict[str, Any]) -> list[str]:
     if pyproject["project"].get("requires-python") != value["python"]["requires_python"]:
         errors.append("pyproject.toml requires-python differs from toolchain contract")
 
+    optional = pyproject["project"].get("optional-dependencies", {})
+    expected_datahub_pins = {
+        "datahub": f"acryl-datahub=={value['datahub']['sdk_version']}",
+        "agent-registry": (
+            "acryl-datahub==" + value["datahub"]["agent_registry_preview_version"]
+        ),
+    }
+    for profile, expected_pin in expected_datahub_pins.items():
+        if expected_pin not in optional.get(profile, []):
+            errors.append(
+                f"pyproject.toml {profile} profile differs from toolchain contract: "
+                f"expected {expected_pin}"
+            )
+
     for relative in ("package.json", "apps/web/package.json"):
         package = json.loads((ROOT / relative).read_text(encoding="utf-8"))
         if package.get("packageManager") != value["node"]["package_manager"]:

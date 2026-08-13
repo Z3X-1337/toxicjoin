@@ -170,6 +170,7 @@ def validate_static() -> None:
         "bootstrap-contract:",
         "bootstrap-native:",
         "matrix:\n        include:",
+        "uv lock --check",
         "scripts/bootstrap.py audit",
         "scripts/bootstrap.py evidence",
         "phase3-bootstrap-${{ matrix.os }}-python-${{ matrix.python }}",
