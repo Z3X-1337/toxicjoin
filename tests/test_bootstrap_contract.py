@@ -4,6 +4,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -88,3 +89,36 @@ def test_version_parser_rejects_unparseable_output() -> None:
         pass
     else:  # pragma: no cover
         raise AssertionError("unparseable tool version did not fail closed")
+
+
+def test_docker_verification_accepts_only_approved_buildx_versions(monkeypatch) -> None:
+    def fake_run(command: list[str], **_: object) -> SimpleNamespace:
+        if command[:2] == ["docker", "version"]:
+            return SimpleNamespace(stdout="28.0.4|28.0.4\n")
+        if command[:3] == ["docker", "buildx", "version"]:
+            return SimpleNamespace(stdout="github.com/docker/buildx v0.35.0\n")
+        if command[:3] == ["docker", "compose", "version"]:
+            return SimpleNamespace(stdout="2.38.2\n")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(
+        BOOTSTRAP,
+        "git_identity",
+        lambda: {"commit_sha": "test", "tree_sha": "test"},
+    )
+    monkeypatch.setattr(BOOTSTRAP, "run", fake_run)
+    assert BOOTSTRAP.verify(["docker"])["docker"]["buildx"] == "0.35.0"
+
+    def unapproved_buildx(command: list[str], **_: object) -> SimpleNamespace:
+        result = fake_run(command)
+        if command[:3] == ["docker", "buildx", "version"]:
+            return SimpleNamespace(stdout="github.com/docker/buildx v0.37.0\n")
+        return result
+
+    monkeypatch.setattr(BOOTSTRAP, "run", unapproved_buildx)
+    try:
+        BOOTSTRAP.verify(["docker"])
+    except BOOTSTRAP.BootstrapError:
+        pass
+    else:  # pragma: no cover
+        raise AssertionError("unapproved Docker Buildx version did not fail closed")

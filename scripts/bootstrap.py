@@ -168,6 +168,20 @@ def manifest_errors(value: dict[str, Any]) -> list[str]:
     if pyproject["project"].get("requires-python") != value["python"]["requires_python"]:
         errors.append("pyproject.toml requires-python differs from toolchain contract")
 
+    optional = pyproject["project"].get("optional-dependencies", {})
+    expected_datahub_pins = {
+        "datahub": f"acryl-datahub=={value['datahub']['sdk_version']}",
+        "agent-registry": (
+            "acryl-datahub==" + value["datahub"]["agent_registry_preview_version"]
+        ),
+    }
+    for profile, expected_pin in expected_datahub_pins.items():
+        if expected_pin not in optional.get(profile, []):
+            errors.append(
+                f"pyproject.toml {profile} profile differs from toolchain contract: "
+                f"expected {expected_pin}"
+            )
+
     for relative in ("package.json", "apps/web/package.json"):
         package = json.loads((ROOT / relative).read_text(encoding="utf-8"))
         if package.get("packageManager") != value["node"]["package_manager"]:
@@ -299,9 +313,17 @@ def verify(components: list[str]) -> dict[str, Any]:
             r"v?(\d+\.\d+\.\d+)",
             "Compose",
         )
-        if buildx != expected["buildx_version"] or compose != expected["compose_version"]:
+        buildx_versions = expected.get("buildx_versions")
+        if (
+            not isinstance(buildx_versions, list)
+            or not buildx_versions
+            or any(not isinstance(version, str) for version in buildx_versions)
+        ):
+            raise BootstrapError("Docker Buildx contract is missing approved versions")
+        if buildx not in buildx_versions or compose != expected["compose_version"]:
             raise BootstrapError(
-                f"Docker plugin mismatch: buildx={buildx}, compose={compose}"
+                "Docker plugin mismatch: "
+                f"buildx={buildx}, approved={buildx_versions}, compose={compose}"
             )
         result["docker"] = {
             "client": pair[0],
