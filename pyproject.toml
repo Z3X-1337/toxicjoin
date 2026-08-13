@@ -1,6 +1,6 @@
 [project]
 name = "toxicjoin"
-version = "0.2.0"
+version = "0.2.1"
 description = "Compositional privacy firewall for AI data agents"
 requires-python = ">=3.11,<3.13"
 dependencies = [

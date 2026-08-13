@@ -98,8 +98,10 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 - [x] Fail explicitly with reconnect/retry controls when bootstrap or execution is unavailable.
 - [x] Verify desktop 1440×1000 and mobile 390×844: no horizontal overflow, console error, page
   error, or unexpected alert; the real fixture path produced REWRITE → ALLOW.
-- [x] Prepare `v0.2.0` release identity and no-side-effect Phase 9 preview contracts.
-- [ ] Merge, publish `v0.2.0`, and manually deploy the resulting exact `main` commit to Render only
+- [x] Publish immutable historical release `v0.2.0`; its tag remains bound to its original commit.
+- [x] Prepare the `v0.2.1` runtime-version-provenance patch candidate and no-side-effect Phase 9
+  preview contracts.
+- [ ] Merge, publish `v0.2.1`, and manually deploy the resulting exact `main` commit to Render only
   after owner review and explicit approval.
 
 ### P4 — Judge and submission finish
@@ -112,7 +114,7 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 
 ## Current owner-controlled delivery tasks
 
-No active technical blocker remains in the `v0.2.0` redesign candidate. Merge/release, manual Render
+No active technical blocker remains in the `v0.2.1` runtime-version-provenance candidate. Merge/release, manual Render
 deployment, deletion of the retired external hosting project, final video publication, and Devpost
 synchronization remain owner-controlled delivery tasks.
 

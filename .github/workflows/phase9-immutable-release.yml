@@ -9,7 +9,7 @@ on:
       - "scripts/phase9_release_*.py"
       - "tests/test_phase9_release_bundle.py"
       - "tests/test_phase9_main_gate_triggers.py"
-      - "docs/releases/v0.2.0.md"
+      - "docs/releases/v0.2.1.md"
       - "docs/reproducibility.md"
       - "docs/phase9-acceptance.md"
       - "docs/durable-evidence.md"
