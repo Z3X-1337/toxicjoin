@@ -23,7 +23,7 @@ Windows: `.\run.ps1`. Full walkthrough: [`docs/judge-testing.md`](docs/judge-tes
 - **Two privacy bypasses found by adversarial review and closed**, each with regressions that fail against the unfixed source — reproducible live from the console's two attack presets:
   - a literal aliased as `subject_count` combined with a `NOT`-inverted `HAVING`;
   - a caller declaring a public column (`orders.order_id`) as the privacy subject.
-- **968 tests** covering unit, integration and security regressions.
+- **968 passed, 1 skipped, 5 warnings** across unit, integration and security regressions.
 
 Measurement scope and limits: [`docs/evidence/benchmark.md`](docs/evidence/benchmark.md). This is a regression corpus for a declared SQL/policy profile, not a claim of universal privacy detection.
 

@@ -12,8 +12,8 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 | Gate | Result | Interpretation |
 | --- | --- | --- |
 | Python lint | pass | `ruff check src tests` |
-| Python tests | 967 passed, 1 skipped, 5 warnings | functional baseline is green; warnings remain visible |
-| Frontend | 24 tests pass; typecheck and production build pass | current live UI builds |
+| Python tests | 968 passed, 1 skipped, 5 warnings | functional baseline is green; warnings remain visible |
+| Frontend | 24 tests pass; typecheck and production build pass | current frontend builds |
 | HTTP deployment verifier | pass | ALLOW, verified REWRITE, BLOCK, and both closed bypasses behave correctly |
 | Benchmark | 30/30; zero false allows; zero unsafe effective allows | bounded declared corpus is green |
 | Adversarial mutations | 144 cases; no gate failures | declared mutation corpus is green |
@@ -25,7 +25,7 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 | Web npm audit | fail on baseline | High `nanoid` advisory; remediation in this branch |
 | Python audit | fail on baseline | `cryptography 49.0.0` advisory; remediation in this branch |
 | Python lock consistency | fail on baseline | `pyproject.toml` disagrees with the committed DataHub lock profiles |
-| Exact-head Live DataHub | pending | requires the GitHub Actions Docker environment after branch publication |
+| Exact-SHA Live DataHub | pass | [Phase 5 run 31656287879](https://github.com/Z3X-1337/toxicjoin/actions/runs/31656287879) verified this branch's source SHA and published its evidence artifact |
 | Current public live deployment | pending | the retained Vercel URL is historical replay, not current live execution |
 
 ## Prioritized execution
@@ -46,7 +46,11 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 ### P1 — Revalidate the canonical product
 
 - [x] Re-sync from exact locks after dependency changes.
-- [x] Run Python lint and all tests: 968 passed.
+- [x] Run Python lint and all tests: 968 passed, 1 skipped, 5 warnings. The skipped test is
+  `tests/security/test_disclosure_ledger_security.py::test_ledger_file_is_owner_only_and_symlink_target_is_rejected`:
+  it deliberately skips only when the current platform cannot create a symbolic link. This
+  Windows environment could not create the test symlink, so the symlink-rejection assertion was
+  not altered merely to remove the platform-dependent skip.
 - [x] Run frontend typecheck, 24 tests, production build, and audit.
 - [x] Re-run benchmark, adversarial, governance, ablation, PPMC, and HTTP black-box
   verification.
@@ -54,11 +58,17 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 
 ### P2 — Produce current real DataHub evidence
 
-- [ ] Publish the branch and open a Draft PR.
-- [ ] Require the exact-SHA Phase 5 Live DataHub workflow.
-- [ ] Require the Live DataHub and Agent Registry workflows when affected paths trigger them.
-- [ ] Inspect the uploaded read/write/fresh-read-back evidence and source SHA binding.
-- [ ] Update current-evidence documentation only after the live gate passes.
+- [x] Publish the branch and open [Draft PR #153](https://github.com/Z3X-1337/toxicjoin/pull/153).
+- [x] Run [Phase 5 Exact-SHA Live DataHub](https://github.com/Z3X-1337/toxicjoin/actions/runs/31656287879)
+  successfully on the branch source SHA `5455ae29999ee95bf77e8f13c6c62b4628e59450`.
+- [x] Run [Live DataHub](https://github.com/Z3X-1337/toxicjoin/actions/runs/31656287876) and
+  [Live DataHub Agent Registry](https://github.com/Z3X-1337/toxicjoin/actions/runs/31656287894)
+  successfully for that candidate.
+- [x] Inspect the uploaded `phase5-exact-sha-live-datahub-evidence` artifact: it records an exact
+  source checkout, real DataHub OSS services, read-only discovery, a writer limited to
+  `save_document`, and a successful fresh-process read-back. Its sanitization report records no
+  credential values, no raw warehouse rows, and zero GMS URL reflections.
+- [x] Update current-evidence documentation only after the live gate passes.
 
 ### P3 — Replace the historical public-only experience
 
@@ -76,12 +86,12 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 - [ ] Synchronize the Devpost project with the exact verified release.
 - [ ] Request explicit owner review before merge or submission mutation.
 
-## Current blockers requiring external capability
+## Current owner-controlled delivery tasks
 
-1. Exact-head real DataHub evidence requires GitHub Actions or another Docker-capable host; the
-   current local environment has no Docker daemon.
-2. A current public URL requires an authenticated Fly.io, Render, or equivalent deployment
+No active blocker remains for PR merge readiness. Public live deployment, final video publication, and Devpost synchronization remain owner-controlled delivery tasks.
+
+1. A current public URL requires an authenticated Fly.io, Render, or equivalent deployment
    account and persistent storage configuration.
-3. Video upload and Devpost mutation require the owner's accounts and final approval.
+2. Video upload and Devpost mutation require the owner's accounts and final approval.
 
-These blockers do not justify substituting mock evidence or relabeling the historical replay.
+These tasks do not justify substituting mock evidence or relabeling the historical replay.
