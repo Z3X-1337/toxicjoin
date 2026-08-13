@@ -57,9 +57,10 @@ The post-submission improvement window is governed by the measured
 3. **Inspect the claim boundary:** [`docs/evidence/submission-freeze.md`](docs/evidence/submission-freeze.md).
 4. **Inspect sample outputs:** [`examples/`](examples/README.md).
 5. **Inspect retained historical DataHub OSS + official MCP evidence:** [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md).
-   - These retained files prove their recorded revision and environment. The current `main`
-     evidence is the successful [post-merge Phase 5 Exact-SHA run](https://github.com/Z3X-1337/toxicjoin/actions/runs/31659258883).
-     Its workflow record, not this document, holds the exact source revision and run details.
+   - These retained files prove their recorded revision and environment. For `main`, consult the
+     [Phase 5 Exact-SHA workflow history](https://github.com/Z3X-1337/toxicjoin/actions/workflows/phase5-live-datahub.yml?query=branch%3Amain).
+     Each workflow record, not this document, proves only the exact source revision recorded in
+     that run.
 6. **Inspect retained production-image black-box evidence:** [`docs/evidence/final-security-blackbox.md`](docs/evidence/final-security-blackbox.md).
 
 A retained static replay of an earlier build remains at https://toxicjoin-replay.vercel.app/ — it is labelled **Historical Deterministic Replay**, carries policy identity `0.1.0` rather than current `0.2.0`, and is not live execution. Use the Current Public Demo above for a public interactive review, or `run.sh` for a local run.
@@ -113,7 +114,7 @@ read DataHub context
   -> fresh reader inherits the result
 ```
 
-See [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md) and [`docs/datahub-live-integration.md`](docs/datahub-live-integration.md) for retained historical evidence. The successful [post-merge Phase 5 Exact-SHA run](https://github.com/Z3X-1337/toxicjoin/actions/runs/31659258883) is the current `main` evidence; its workflow record holds the exact source revision and run details. Branch-only evidence remains limited to the revision recorded by its own PR and workflow.
+See [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md) and [`docs/datahub-live-integration.md`](docs/datahub-live-integration.md) for retained historical evidence. For `main`, use the [Phase 5 Exact-SHA workflow history](https://github.com/Z3X-1337/toxicjoin/actions/workflows/phase5-live-datahub.yml?query=branch%3Amain); each run proves only the exact source revision recorded in that workflow. Branch-only evidence remains limited to the revision recorded by its own PR and workflow.
 
 ## Reusable DataHub Skill
 

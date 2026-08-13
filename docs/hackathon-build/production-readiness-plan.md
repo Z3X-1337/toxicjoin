@@ -25,7 +25,7 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 | Web npm audit | fail on baseline | High `nanoid` advisory; remediation in this branch |
 | Python audit | fail on baseline | `cryptography 49.0.0` advisory; remediation in this branch |
 | Python lock consistency | fail on baseline | `pyproject.toml` disagrees with the committed DataHub lock profiles |
-| Exact-SHA Live DataHub | pass | The post-merge [`Phase 5 run`](https://github.com/Z3X-1337/toxicjoin/actions/runs/31659258883) passed on `main`; its run record is the exact-revision authority |
+| Exact-SHA Live DataHub | pass | See the [Phase 5 workflow history](https://github.com/Z3X-1337/toxicjoin/actions/workflows/phase5-live-datahub.yml?query=branch%3Amain); each successful run is the exact-revision authority only for the SHA recorded in that run |
 | Current public demo | pass | [Render Free public demo](https://toxicjoin-public-demo.onrender.com/) last externally verified 2026-08-13; it is a synthetic fixture over the real execution path, not Live DataHub |
 
 ## Prioritized execution
@@ -60,8 +60,11 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 
 - [x] Publish and merge [PR #153](https://github.com/Z3X-1337/toxicjoin/pull/153) after its required
   checks passed.
-- [x] Run [Phase 5 Exact-SHA Live DataHub](https://github.com/Z3X-1337/toxicjoin/actions/runs/31659258883)
-  successfully on the post-merge `main` revision.
+- [x] Retain the historical [Phase 5 Exact-SHA Live DataHub run](https://github.com/Z3X-1337/toxicjoin/actions/runs/31659258883)
+  from the then-current post-PR #153 `main` revision; it proves only the SHA recorded in that
+  workflow.
+- [x] Use the [Phase 5 workflow history](https://github.com/Z3X-1337/toxicjoin/actions/workflows/phase5-live-datahub.yml?query=branch%3Amain)
+  for current `main` evidence; every run in that history proves only its recorded SHA.
 - [x] Run [Live DataHub](https://github.com/Z3X-1337/toxicjoin/actions/runs/31657292807) and
   [Live DataHub Agent Registry](https://github.com/Z3X-1337/toxicjoin/actions/runs/31657292831)
   successfully for that previous candidate.

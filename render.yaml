@@ -13,7 +13,7 @@ services:
     plan: free
     region: frankfurt
     healthCheckPath: /api/health
-    # Deploy manually from this branch after inspecting the Render creation screen. This
+    # Deploy manually from reviewed main after inspecting the Render creation screen. This
     # avoids an unreviewed deploy after a later push and never uses a keep-alive workaround.
     autoDeployTrigger: "off"
 

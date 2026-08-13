@@ -30,13 +30,15 @@ The retained Vercel URL, https://toxicjoin-replay.vercel.app/, remains a **Histo
 Deterministic Replay** only. It is not the current public demo and must not be described as live
 execution.
 
-### Render Free (this public-demo branch only)
+### Render Free (current public demo)
 
-This branch's `render.yaml` defines exactly one Docker **Web Service** with `plan: free`. It
-defines no Render Postgres database, persistent disk, add-on, secret, paid instance, or
-keep-alive process. Create the Blueprint from this branch only after the Render creation screen
-shows a total of **$0.00** and asks for no payment method. Keep manual deploys enabled; the
-service must not deploy automatically on subsequent pushes.
+The reviewed `main` configuration in `render.yaml` defines exactly one Docker **Web Service**
+with `plan: free`. It defines no Render Postgres database, persistent disk, add-on, secret, paid
+instance, or keep-alive process. The existing Render service still runs the previously reviewed
+image and has not yet been retargeted to `main`. Retargeting and a manual deployment from reviewed
+`main` are a separate deployment step. When that step is performed, keep manual deploys enabled;
+the service must not deploy automatically on subsequent pushes, and the Render screen must show a
+total of **$0.00** with no payment method requested.
 
 The service explicitly runs `TOXICJOIN_MODE=fixture`, so it initializes the deterministic
 synthetic judge warehouse using the real parser, policy engine, read-only executor, independent
