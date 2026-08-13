@@ -18,6 +18,18 @@ demo is not a mock — it is the real pipeline over data that cannot harm anyone
 
 ## 1. Public demo (recommended for judging)
 
+### Current Public Demo
+
+[**https://toxicjoin-public-demo.onrender.com/**](https://toxicjoin-public-demo.onrender.com/)
+is the current public judge link. It was externally verified on **2026-08-13** with health and
+readiness checks, the deployment verifier, ALLOW/BLOCK browser scenarios, and an idle cold-start.
+It runs a deterministic synthetic fixture through the real ToxicJoin execution path; it is neither
+a mock nor a Live DataHub service, and it has no organization data or credentials.
+
+The retained Vercel URL, https://toxicjoin-replay.vercel.app/, remains a **Historical
+Deterministic Replay** only. It is not the current public demo and must not be described as live
+execution.
+
 ### Render Free (this public-demo branch only)
 
 This branch's `render.yaml` defines exactly one Docker **Web Service** with `plan: free`. It
