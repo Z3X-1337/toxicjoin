@@ -18,12 +18,12 @@ import phase9_release_verify as verify  # noqa: E402
 def test_phase9_config_matches_project_version() -> None:
     config = bundle.load_json(ROOT / "config/phase9-release.json")
     bundle.validate_config(config, ROOT)
-    assert config["tag"] == "v0.2.0"
+    assert config["tag"] == "v0.2.1"
     assert len(config["required_sboms"]) == 4
 
 
 def test_templates_preserve_truth_boundaries() -> None:
-    notes = (ROOT / "docs/releases/v0.2.0.md").read_text(encoding="utf-8")
+    notes = (ROOT / "docs/releases/v0.2.1.md").read_text(encoding="utf-8")
     for term in (
         "SINGLE_NODE",
         "PostgreSQL",
@@ -60,12 +60,12 @@ def test_release_verifier_binds_annotated_tag_and_assets(tmp_path: Path) -> None
     (tmp_path / "SHA256SUMS").write_text(f"{digest}  {asset.name}\n", encoding="utf-8")
     source = "a" * 40
     manifest = "b" * 64
-    config = {"tag": "v0.2.0", "release_name": "ToxicJoin v0.2.0"}
+    config = {"tag": "v0.2.1", "release_name": "ToxicJoin v0.2.1"}
     release = {
         "id": 1,
         "html_url": "https://example.invalid/release",
-        "tag_name": "v0.2.0",
-        "name": "ToxicJoin v0.2.0",
+        "tag_name": "v0.2.1",
+        "name": "ToxicJoin v0.2.1",
         "draft": False,
         "prerelease": False,
         "body": f"{source} {manifest} SINGLE_NODE PostgreSQL Render",

@@ -35,7 +35,8 @@ The deployment PR records the exact deployed source revision and zero-cost verif
 
 ## Release identity
 
-The source declares version `0.2.0`. The [Phase 9 workflow](.github/workflows/phase9-immutable-release.yml)
+The source declares application version `0.2.1`. The policy version remains `0.2.0`: it identifies
+the policy and its evidence, not the application or release identity. The [Phase 9 workflow](.github/workflows/phase9-immutable-release.yml)
 publishes a version only after the generated release manifest binds every required gate to the exact
 `main` commit. It then verifies the annotated tag, GitHub Release, asset set, and every SHA-256 entry.
 

@@ -634,7 +634,7 @@ def _package_version() -> str:
     try:
         return version("toxicjoin")
     except PackageNotFoundError:
-        return "0.1.0"
+        return "unknown"
 
 
 app = create_app()

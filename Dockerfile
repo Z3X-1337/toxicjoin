@@ -21,6 +21,9 @@ RUN python scripts/bootstrap.py verify --components python,locks \
     && python scripts/bootstrap.py verify --components python,uv,locks,contract \
     && python scripts/bootstrap.py sync --no-install-project \
     && rm -rf /root/.cache/pip /root/.cache/uv
+COPY src/ ./src/
+RUN python scripts/bootstrap.py sync \
+    && rm -rf /root/.cache/pip /root/.cache/uv
 
 FROM python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -42,7 +45,7 @@ RUN useradd \
     && mkdir -p /var/lib/toxicjoin /app/apps/web/dist \
     && chown -R toxicjoin:toxicjoin /var/lib/toxicjoin /app
 COPY --from=python-deps /app/.venv /app/.venv
-COPY src/ ./src/
+COPY --from=python-deps /app/src/ ./src/
 COPY config/ ./config/
 COPY demo/ ./demo/
 COPY --from=web-builder /build/apps/web/dist/ /app/apps/web/dist/

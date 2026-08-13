@@ -3,7 +3,7 @@
 Phase 9 is accepted only when all of the following are proven against one exact `main` commit:
 
 1. the generated Release Manifest is in `release` mode and all required gates are verified;
-2. project version `0.2.0`, tag `v0.2.0`, release name, notes, and assets agree;
+2. project version `0.2.1`, tag `v0.2.1`, release name, notes, and assets agree;
 3. the annotated tag resolves to the exact release commit;
 4. the GitHub Release is published, not a draft, and not a prerelease;
 5. final evidence index, four CycloneDX SBOMs, reproducibility instructions, Release Manifest, deterministic evidence bundle, and `SHA256SUMS` are attached;

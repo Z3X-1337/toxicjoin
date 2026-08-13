@@ -1,13 +1,13 @@
 {
   "schema_version": "1.0",
-  "version": "0.2.0",
-  "tag": "v0.2.0",
-  "release_name": "ToxicJoin v0.2.0",
+  "version": "0.2.1",
+  "tag": "v0.2.1",
+  "release_name": "ToxicJoin v0.2.1",
   "source_branch": "main",
   "draft": false,
   "prerelease": false,
   "immutable_identity": true,
-  "release_notes_template": "docs/releases/v0.2.0.md",
+  "release_notes_template": "docs/releases/v0.2.1.md",
   "reproducibility_template": "docs/reproducibility.md",
   "required_sboms": {
     "web-supply-chain": {

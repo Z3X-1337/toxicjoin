@@ -230,8 +230,20 @@ def test_phase9_preview_preserves_preexisting_release_state() -> None:
 
 def test_phase9_immutable_release_identity_is_fixed() -> None:
     config = json.loads(PHASE9_CONFIG.read_text(encoding="utf-8"))
-    assert config["version"] == "0.2.0"
-    assert config["tag"] == "v0.2.0"
+    assert config["version"] == "0.2.1"
+    assert config["tag"] == "v0.2.1"
+    assert config["release_name"] == "ToxicJoin v0.2.1"
+    assert config["release_notes_template"] == "docs/releases/v0.2.1.md"
     assert config["draft"] is False
     assert config["prerelease"] is False
     assert config["immutable_identity"] is True
+
+
+def test_release_identity_docs_distinguish_historical_v020_from_current_v021() -> None:
+    notes = (ROOT / "docs/releases/v0.2.0.md").read_text(encoding="utf-8")
+    reproducibility = (ROOT / "docs/reproducibility.md").read_text(encoding="utf-8")
+    acceptance = (ROOT / "docs/phase9-acceptance.md").read_text(encoding="utf-8")
+
+    assert notes.startswith("# ToxicJoin v0.2.0\n")
+    assert reproducibility.startswith("# ToxicJoin v0.2.1 reproducibility\n")
+    assert "project version `0.2.1`, tag `v0.2.1`" in acceptance
