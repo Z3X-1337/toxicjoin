@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 
@@ -18,6 +19,9 @@ from toxicjoin.execute import DuckDBExecutor
 from toxicjoin.pipeline import ToxicJoinPipeline
 from toxicjoin.policy import PolicyEngine, load_policy
 from toxicjoin.receipts import ReceiptMode, ReceiptStore
+
+
+API_MODULE = importlib.import_module("toxicjoin.api.app")
 
 
 def _pipeline(tmp_path: Path) -> ToxicJoinPipeline:
@@ -60,6 +64,15 @@ def test_public_health_is_liveness_only_and_fixture_ready_is_detailed(tmp_path) 
         "receipt_store_ready": True,
         "governance_ready": True,
     }
+
+
+def test_package_version_fallback_is_not_a_historical_release(monkeypatch) -> None:
+    def _metadata_missing(_: str) -> str:
+        raise API_MODULE.PackageNotFoundError
+
+    monkeypatch.setattr(API_MODULE, "version", _metadata_missing)
+
+    assert API_MODULE._package_version() == "unknown"
 
 
 def test_demo_scenarios_are_curated_and_labeled(tmp_path) -> None:

@@ -41,6 +41,10 @@ def test_phase6_workflow_uses_exact_source_and_production_container() -> None:
     assert "--cap-drop ALL" in workflow
     assert "--security-opt no-new-privileges:true" in workflow
     assert "--mount type=volume,src=toxicjoin-phase6-runtime,dst=/var/lib/toxicjoin" in workflow
+    assert "Verify installed package identity" in workflow
+    assert 'importlib.metadata as m; print(m.version("toxicjoin"))' in workflow
+    assert 'assert payload["version"] == expected_version, payload' in workflow
+    assert 'tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))' in workflow
 
     assert "vite --host" not in workflow
     assert "npm run dev" not in workflow

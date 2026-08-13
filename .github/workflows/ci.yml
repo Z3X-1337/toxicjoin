@@ -329,6 +329,14 @@ jobs:
         run: |
           test "$(docker inspect --format '{{.Config.User}}' toxicjoin-ci)" = "10001:10001"
           test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' toxicjoin-ci)" = "true"
+          expected_version="$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          print(tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])
+          PY
+          )"
+          test "$(docker exec toxicjoin-ci python -c 'import importlib.metadata as m; print(m.version("toxicjoin"))')" = "$expected_version"
 
       - name: Wait for application liveness
         shell: bash
@@ -352,9 +360,14 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import tomllib
           import urllib.request
+          from pathlib import Path
 
           origin = "http://127.0.0.1:18000"
+          expected_version = tomllib.loads(
+              Path("pyproject.toml").read_text(encoding="utf-8")
+          )["project"]["version"]
 
           with urllib.request.urlopen(f"{origin}/", timeout=5) as response:
               html = response.read().decode("utf-8")
@@ -369,6 +382,7 @@ jobs:
           with urllib.request.urlopen(f"{origin}/api/ready", timeout=5) as response:
               ready = json.load(response)
               assert ready["status"] == "ok"
+              assert ready["version"] == expected_version
               assert ready["mode"] == "fixture"
               assert ready["policy_version"]
               assert ready["database_ready"] is True

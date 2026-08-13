@@ -84,6 +84,19 @@ jobs:
             --publish 18006:8000 \
             "$PHASE6_IMAGE"
 
+      - name: Verify installed package identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_version="$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          print(tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])
+          PY
+          )"
+          test "$(docker exec "$PHASE6_CONTAINER" python -c 'import importlib.metadata as m; print(m.version("toxicjoin"))')" = "$expected_version"
+
       - name: Wait for production readiness
         shell: bash
         run: |
@@ -94,10 +107,15 @@ jobs:
               > phase6-ready.json; then
               python - <<'PY'
           import json
+          import tomllib
           from pathlib import Path
 
           payload = json.loads(Path("phase6-ready.json").read_text(encoding="utf-8"))
+          expected_version = tomllib.loads(
+              Path("pyproject.toml").read_text(encoding="utf-8")
+          )["project"]["version"]
           assert payload["status"] == "ok", payload
+          assert payload["version"] == expected_version, payload
           assert payload["mode"] == "fixture", payload
           assert payload["database_ready"] is True, payload
           assert payload["receipt_store_ready"] is True, payload
