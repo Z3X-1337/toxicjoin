@@ -16,6 +16,19 @@ Then open `http://127.0.0.1:8000` and use the **live console**: paste SQL, pick 
 
 Windows: `.\run.ps1`. Full walkthrough: [`docs/judge-testing.md`](docs/judge-testing.md).
 
+## Current Public Demo
+
+[**Open the Current Public Demo**](https://toxicjoin-public-demo.onrender.com/) — last externally
+verified on **2026-08-13**. It is a Render Free web service running the hardened Docker image in
+explicit `fixture` mode: the deterministic synthetic judge warehouse goes through the real parser,
+policy engine, read-only executor, independent verification, and authenticated-receipt path. It is
+not a mock, a replay, a Live DataHub deployment, or a source of organization data or credentials.
+
+The Free service may sleep after inactivity and cold-start on the next request. Its local fixture
+database, receipts, and disclosure ledger are deliberately temporary and can reset after sleep,
+restart, or redeploy; that is expected demo behavior, not a loss of production audit evidence.
+The deployment PR records the exact deployed source revision and zero-cost verification details.
+
 ## What is proven
 
 - **30-case regression corpus:** 30/30 expected decisions, reason codes and effective outcomes; **zero false allows**.
@@ -44,16 +57,12 @@ The post-submission improvement window is governed by the measured
 3. **Inspect the claim boundary:** [`docs/evidence/submission-freeze.md`](docs/evidence/submission-freeze.md).
 4. **Inspect sample outputs:** [`examples/`](examples/README.md).
 5. **Inspect retained historical DataHub OSS + official MCP evidence:** [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md).
-   - These retained files prove their recorded revision and environment. The most recently
-     verified PR #153 candidate before this documentation-only change was
-     `45afaaebcfe47dbf306b70a5dfa8137b8d3bc1e1`, which passed
-     [Phase 5 run 31657292789](https://github.com/Z3X-1337/toxicjoin/actions/runs/31657292789).
-     The PR description and checks identify the newest Exact-SHA evidence for the current branch
-     head. None of this is evidence for `main`; that requires merge and a workflow run on the
-     resulting `main` commit.
+   - These retained files prove their recorded revision and environment. The current `main`
+     evidence is the successful [post-merge Phase 5 Exact-SHA run](https://github.com/Z3X-1337/toxicjoin/actions/runs/31659258883).
+     Its workflow record, not this document, holds the exact source revision and run details.
 6. **Inspect retained production-image black-box evidence:** [`docs/evidence/final-security-blackbox.md`](docs/evidence/final-security-blackbox.md).
 
-A retained static replay of an earlier build remains at https://toxicjoin-replay.vercel.app/ — it is labelled **Historical Deterministic Replay**, carries policy identity `0.1.0` rather than current `0.2.0`, and is not live execution. Prefer `run.sh`.
+A retained static replay of an earlier build remains at https://toxicjoin-replay.vercel.app/ — it is labelled **Historical Deterministic Replay**, carries policy identity `0.1.0` rather than current `0.2.0`, and is not live execution. Use the Current Public Demo above for a public interactive review, or `run.sh` for a local run.
 
 The shortest product proof chain is:
 
@@ -104,7 +113,7 @@ read DataHub context
   -> fresh reader inherits the result
 ```
 
-See [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md) and [`docs/datahub-live-integration.md`](docs/datahub-live-integration.md) for retained historical evidence. The latest Exact-SHA artifact for the active PR head is linked from PR #153's description and checks; it proves that PR revision only. Evidence for `main` is available only after merge and an Exact-SHA workflow run on the resulting `main` commit.
+See [`docs/evidence/datahub-live.md`](docs/evidence/datahub-live.md) and [`docs/datahub-live-integration.md`](docs/datahub-live-integration.md) for retained historical evidence. The successful [post-merge Phase 5 Exact-SHA run](https://github.com/Z3X-1337/toxicjoin/actions/runs/31659258883) is the current `main` evidence; its workflow record holds the exact source revision and run details. Branch-only evidence remains limited to the revision recorded by its own PR and workflow.
 
 ## Reusable DataHub Skill
 

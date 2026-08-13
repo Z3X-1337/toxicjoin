@@ -18,23 +18,37 @@ demo is not a mock — it is the real pipeline over data that cannot harm anyone
 
 ## 1. Public demo (recommended for judging)
 
-### Fly.io
+### Current Public Demo
 
-```bash
-fly launch --no-deploy --copy-config --name toxicjoin
-fly volumes create toxicjoin_runtime --region fra --size 1
-fly deploy
-```
+[**https://toxicjoin-public-demo.onrender.com/**](https://toxicjoin-public-demo.onrender.com/)
+is the current public judge link. It was externally verified on **2026-08-13** with health and
+readiness checks, the deployment verifier, ALLOW/BLOCK browser scenarios, and an idle cold-start.
+It runs a deterministic synthetic fixture through the real ToxicJoin execution path; it is neither
+a mock nor a Live DataHub service, and it has no organization data or credentials.
 
-`fly.toml` is committed and already sets the runtime directory, the web dist path, and traffic
-budgets suitable for a public audience. Adjust `app` and `primary_region` before the first
-launch if the name is taken.
+The retained Vercel URL, https://toxicjoin-replay.vercel.app/, remains a **Historical
+Deterministic Replay** only. It is not the current public demo and must not be described as live
+execution.
 
-### Render
+### Render Free (this public-demo branch only)
 
-Point a new Blueprint at the repository; `render.yaml` is committed and complete. Or create a
-Docker web service manually with health check path `/api/health` and the environment variables
-listed in that file.
+This branch's `render.yaml` defines exactly one Docker **Web Service** with `plan: free`. It
+defines no Render Postgres database, persistent disk, add-on, secret, paid instance, or
+keep-alive process. Create the Blueprint from this branch only after the Render creation screen
+shows a total of **$0.00** and asks for no payment method. Keep manual deploys enabled; the
+service must not deploy automatically on subsequent pushes.
+
+The service explicitly runs `TOXICJOIN_MODE=fixture`, so it initializes the deterministic
+synthetic judge warehouse using the real parser, policy engine, read-only executor, independent
+verification, and authenticated receipt code path. It cannot start the Live DataHub path because
+this deployment has no DataHub endpoint, token, warehouse, or write-back authority.
+
+Render Free services sleep after 15 idle minutes. The first incoming request after sleep is
+therefore expected to cold-start the service; no keep-alive or periodic ping is configured. The
+runtime directory is intentionally `/tmp/toxicjoin`, so the synthetic DuckDB file, receipts, and
+fixture disclosure ledger are recreated after a restart, redeploy, or idle spin-down. This is
+temporary demo state only, not persistent audit evidence and not a substitute for a Live DataHub
+deployment.
 
 ### Verify the deployment, do not assume it
 

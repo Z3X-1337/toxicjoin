@@ -25,8 +25,8 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 | Web npm audit | fail on baseline | High `nanoid` advisory; remediation in this branch |
 | Python audit | fail on baseline | `cryptography 49.0.0` advisory; remediation in this branch |
 | Python lock consistency | fail on baseline | `pyproject.toml` disagrees with the committed DataHub lock profiles |
-| Exact-SHA Live DataHub | pass | Previous verified PR candidate `45afaaebcfe47dbf306b70a5dfa8137b8d3bc1e1` passed [Phase 5 run 31657292789](https://github.com/Z3X-1337/toxicjoin/actions/runs/31657292789); the PR description and checks identify the newest current-head evidence |
-| Current public live deployment | pending | the retained Vercel URL is historical replay, not current live execution |
+| Exact-SHA Live DataHub | pass | The post-merge [`Phase 5 run`](https://github.com/Z3X-1337/toxicjoin/actions/runs/31659258883) passed on `main`; its run record is the exact-revision authority |
+| Current public demo | pass | [Render Free public demo](https://toxicjoin-public-demo.onrender.com/) last externally verified 2026-08-13; it is a synthetic fixture over the real execution path, not Live DataHub |
 
 ## Prioritized execution
 
@@ -58,10 +58,10 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 
 ### P2 — Produce current real DataHub evidence
 
-- [x] Publish the branch and open [Draft PR #153](https://github.com/Z3X-1337/toxicjoin/pull/153).
-- [x] Run [Phase 5 Exact-SHA Live DataHub](https://github.com/Z3X-1337/toxicjoin/actions/runs/31657292789)
-  successfully on the previous verified PR candidate SHA
-  `45afaaebcfe47dbf306b70a5dfa8137b8d3bc1e1`.
+- [x] Publish and merge [PR #153](https://github.com/Z3X-1337/toxicjoin/pull/153) after its required
+  checks passed.
+- [x] Run [Phase 5 Exact-SHA Live DataHub](https://github.com/Z3X-1337/toxicjoin/actions/runs/31659258883)
+  successfully on the post-merge `main` revision.
 - [x] Run [Live DataHub](https://github.com/Z3X-1337/toxicjoin/actions/runs/31657292807) and
   [Live DataHub Agent Registry](https://github.com/Z3X-1337/toxicjoin/actions/runs/31657292831)
   successfully for that previous candidate.
@@ -69,17 +69,22 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
   candidate: it records an exact source checkout, real DataHub OSS services, read-only discovery,
   a writer limited to `save_document`, and a successful fresh-process read-back. Its sanitization
   report records no credential values, no raw warehouse rows, and zero GMS URL reflections.
-- [x] Keep the newest Exact-SHA evidence for the current PR head in the PR description and checks;
-  this plan does not claim a `main` evidence run before merge.
+- [x] Keep the Exact-SHA evidence in its workflow run and release manifest; this plan does not
+  elevate historical or branch-only evidence beyond its recorded revision.
 - [x] Update current-evidence documentation only after the live gate passes.
 
-### P3 — Replace the historical public-only experience
+### P3 — Publish a current zero-cost public demo
 
-- [ ] Deploy the current hardened Docker image to a public container host with persistent runtime
-  storage.
-- [ ] Run `scripts/verify_deployment.py` against the deployed URL.
-- [ ] Record the exact candidate SHA, data mode, policy version, and verification output.
-- [ ] Keep the historical Vercel replay labeled and separate until the live URL is proven.
+- [x] Deploy the current hardened Docker image to a public Render Free web service in explicit
+  fixture mode, with no Postgres, persistent disk, add-on, paid instance, organization data, or
+  credentials.
+- [x] Run `scripts/verify_deployment.py` against the
+  [public URL](https://toxicjoin-public-demo.onrender.com/).
+- [x] Record the public URL, fixture data mode, policy version, health/readiness result, browser
+  ALLOW/BLOCK evidence, and idle cold-start result in the deployment PR. The external verification
+  date is 2026-08-13; exact source revisions remain in the PR and deployment record.
+- [x] Keep the Vercel URL labeled **Historical Deterministic Replay** and separate from the current
+  public demo.
 
 ### P4 — Judge and submission finish
 
@@ -91,10 +96,11 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 
 ## Current owner-controlled delivery tasks
 
-No active blocker remains for PR merge readiness. Public live deployment, final video publication, and Devpost synchronization remain owner-controlled delivery tasks.
+No active blocker remains for PR merge readiness. The current public fixture demo is verified;
+final video publication and Devpost synchronization remain owner-controlled delivery tasks.
 
-1. A current public URL requires an authenticated Fly.io, Render, or equivalent deployment
-   account and persistent storage configuration.
+1. A future public **Live DataHub** deployment requires its own authenticated account, governed
+   credentials, and persistent audit/privacy state. It is separate from the zero-cost fixture demo.
 2. Video upload and Devpost mutation require the owner's accounts and final approval.
 
 These tasks do not justify substituting mock evidence or relabeling the historical replay.
