@@ -43,7 +43,8 @@ and [Exact-SHA Live DataHub evidence](https://github.com/Z3X-1337/toxicjoin/acti
 all completed successfully for that exact commit. Phase 9 verifies the release identity and attached
 asset checksums at publication time. This is an exact-SHA, evidence-bound claim; it does not claim
 that GitHub's immutable-release setting is enabled or that the annotated tag is cryptographically
-signed.
+signed. Post-release pull-request previews snapshot the pre-existing tag and Release before
+assembling a no-side-effect candidate bundle, then fail if either identity changes.
 
 ## What is proven
 
