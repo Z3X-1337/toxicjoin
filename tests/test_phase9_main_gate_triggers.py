@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
+import pytest
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
+PHASE9_WORKFLOW = ROOT / ".github/workflows/phase9-immutable-release.yml"
+PHASE9_CONFIG = ROOT / "config/phase9-release.json"
 
 REQUIRED_RELEASE_GATES = {
     ".github/workflows/ci.yml": "CI",
@@ -65,3 +71,134 @@ def test_exact_sha_gates_keep_dispatch_and_source_binding() -> None:
 
         assert "  workflow_dispatch:" in trigger_block
         assert "github.event.pull_request.head.sha || github.sha" in content
+
+
+def _load_github_actions_yaml(path: Path) -> dict[str, object]:
+    """Parse GitHub Actions YAML without YAML 1.1 coercing ``on`` to ``True``."""
+
+    class GitHubActionsLoader(yaml.SafeLoader):
+        pass
+
+    GitHubActionsLoader.yaml_implicit_resolvers = {
+        key: [
+            (tag, pattern)
+            for tag, pattern in resolvers
+            if tag != "tag:yaml.org,2002:bool"
+        ]
+        for key, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+    }
+    GitHubActionsLoader.add_implicit_resolver(
+        "tag:yaml.org,2002:bool",
+        re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
+        list("tTfF"),
+    )
+
+    parsed = yaml.load(path.read_text(encoding="utf-8"), Loader=GitHubActionsLoader)
+    assert isinstance(parsed, dict)
+    return parsed
+
+
+def test_phase9_publish_contract_accepts_only_the_exact_main_manifest_chain() -> None:
+    workflow = _load_github_actions_yaml(PHASE9_WORKFLOW)
+    triggers = workflow["on"]
+    assert isinstance(triggers, dict)
+    assert set(triggers) == {"pull_request", "workflow_run"}
+
+    workflow_run = triggers["workflow_run"]
+    assert isinstance(workflow_run, dict)
+    assert workflow_run == {
+        "workflows": ["Generated Release Manifest"],
+        "types": ["completed"],
+    }
+
+    jobs = workflow["jobs"]
+    assert isinstance(jobs, dict)
+    publish = jobs["publish-and-verify-release"]
+    assert isinstance(publish, dict)
+    condition = " ".join(str(publish["if"]).split())
+    assert condition == (
+        "github.event_name == 'workflow_run' && "
+        "github.event.workflow_run.conclusion == 'success' && "
+        "github.event.workflow_run.head_branch == 'main' && "
+        "github.event.workflow_run.event == 'workflow_run'"
+    )
+
+    environment = publish["env"]
+    assert isinstance(environment, dict)
+    assert environment["PHASE9_SOURCE_SHA"] == "${{ github.event.workflow_run.head_sha }}"
+    assert environment["PHASE9_MANIFEST_RUN_ID"] == "${{ github.event.workflow_run.id }}"
+
+    steps = publish["steps"]
+    assert isinstance(steps, list)
+    identity = next(step for step in steps if step["name"] == "Verify exact current-main identity")
+    assert isinstance(identity, dict)
+    identity_run = str(identity["run"])
+    assert 'current_main="$(git ls-remote origin refs/heads/main | awk \'{print $1}\')"' in identity_run
+    assert 'test "$current_main" = "$PHASE9_SOURCE_SHA"' in identity_run
+
+
+def _publish_event_is_eligible(
+    *,
+    event_name: str,
+    conclusion: str,
+    head_branch: str,
+    triggering_event: str,
+    source_sha: str,
+    current_main_sha: str,
+) -> bool:
+    """Mirror the trigger clauses plus the checked runtime main-SHA binding."""
+
+    return (
+        event_name == "workflow_run"
+        and conclusion == "success"
+        and head_branch == "main"
+        and triggering_event == "workflow_run"
+        and source_sha == current_main_sha
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "event_name",
+        "conclusion",
+        "head_branch",
+        "triggering_event",
+        "source_sha",
+        "current_main_sha",
+        "expected",
+    ),
+    [
+        ("workflow_run", "success", "main", "workflow_run", "a" * 40, "a" * 40, True),
+        ("pull_request", "success", "main", "workflow_run", "a" * 40, "a" * 40, False),
+        ("workflow_run", "success", "feature", "workflow_run", "a" * 40, "a" * 40, False),
+        ("workflow_run", "failure", "main", "workflow_run", "a" * 40, "a" * 40, False),
+        ("workflow_run", "success", "main", "push", "a" * 40, "a" * 40, False),
+        ("workflow_run", "success", "main", "workflow_run", "a" * 40, "b" * 40, False),
+    ],
+)
+def test_phase9_publish_event_eligibility_matrix(
+    event_name: str,
+    conclusion: str,
+    head_branch: str,
+    triggering_event: str,
+    source_sha: str,
+    current_main_sha: str,
+    expected: bool,
+) -> None:
+    assert _publish_event_is_eligible(
+        event_name=event_name,
+        conclusion=conclusion,
+        head_branch=head_branch,
+        triggering_event=triggering_event,
+        source_sha=source_sha,
+        current_main_sha=current_main_sha,
+    ) is expected
+
+
+def test_phase9_immutable_release_identity_is_fixed() -> None:
+    config = json.loads(PHASE9_CONFIG.read_text(encoding="utf-8"))
+    assert config["version"] == "0.1.0"
+    assert config["tag"] == "v0.1.0"
+    assert config["draft"] is False
+    assert config["prerelease"] is False
+    assert config["immutable_identity"] is True

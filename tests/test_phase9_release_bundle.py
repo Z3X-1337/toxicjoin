@@ -24,7 +24,17 @@ def test_phase9_config_matches_project_version() -> None:
 
 def test_templates_preserve_truth_boundaries() -> None:
     notes = (ROOT / "docs/releases/v0.1.0.md").read_text(encoding="utf-8")
-    for term in ("SINGLE_NODE", "PostgreSQL", "Replay", "Devpost"):
+    for term in (
+        "SINGLE_NODE",
+        "PostgreSQL",
+        "Current Public Demo",
+        "synthetic",
+        "Render",
+        "Live DataHub",
+        "Vercel",
+        "video",
+        "Devpost",
+    ):
         assert term in notes
     assert "{{SOURCE_SHA}}" in notes
     assert "{{MANIFEST_SHA256}}" in notes
