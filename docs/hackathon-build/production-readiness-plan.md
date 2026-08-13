@@ -22,9 +22,10 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 | Static supply-chain policy | pass | locks, pinned Actions, and workflow surfaces meet current static policy |
 | Bandit release profile | pass | no medium/high issue at configured confidence |
 | Root npm audit | pass | no current finding |
-| Web npm audit | fail on baseline | High `nanoid` advisory; remediation in this branch |
-| Python audit | fail on baseline | `cryptography 49.0.0` advisory; remediation in this branch |
-| Python lock consistency | fail on baseline | `pyproject.toml` disagrees with the committed DataHub lock profiles |
+| Web npm audit | pass | remediated `nanoid` advisory; locked web audit is green |
+| Python audit | pass with one governed exception | `cryptography` is fixed at 50.0.0; the only accepted finding is the narrowly scoped, time-bound `setuptools` upstream exception |
+| Python lock consistency | pass | `uv lock --check` and the evidence-bound DataHub profiles agree |
+| Release identity | pass | [v0.1.0](https://github.com/Z3X-1337/toxicjoin/releases/tag/v0.1.0) resolves to `4bf3a46dcbf6cf6a184067263102475e140abb04`, the exact `main` commit used for publication; Phase 9 verified the release assets |
 | Exact-SHA Live DataHub | pass | See the [Phase 5 workflow history](https://github.com/Z3X-1337/toxicjoin/actions/workflows/phase5-live-datahub.yml?query=branch%3Amain); each successful run is the exact-revision authority only for the SHA recorded in that run |
 | Current public demo | pass | [Render Free public demo](https://toxicjoin-public-demo.onrender.com/) last externally verified 2026-08-13; it is a synthetic fixture over the real execution path, not Live DataHub |
 
@@ -65,6 +66,8 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
   workflow.
 - [x] Use the [Phase 5 workflow history](https://github.com/Z3X-1337/toxicjoin/actions/workflows/phase5-live-datahub.yml?query=branch%3Amain)
   for current `main` evidence; every run in that history proves only its recorded SHA.
+- [x] Verify the [release exact-SHA run](https://github.com/Z3X-1337/toxicjoin/actions/runs/31699350889)
+  on `4bf3a46dcbf6cf6a184067263102475e140abb04`, the same SHA used by `v0.1.0`.
 - [x] Run [Live DataHub](https://github.com/Z3X-1337/toxicjoin/actions/runs/31657292807) and
   [Live DataHub Agent Registry](https://github.com/Z3X-1337/toxicjoin/actions/runs/31657292831)
   successfully for that previous candidate.
@@ -91,16 +94,17 @@ the claim hierarchy in [`../architecture.md`](../architecture.md).
 
 ### P4 — Judge and submission finish
 
-- [ ] Reconcile stale test counts and release status across judge-facing documentation.
+- [x] Reconcile stale test counts and release status across judge-facing documentation.
 - [ ] Verify desktop/mobile browser behavior on the live URL.
 - [ ] Produce and publish the final video under three minutes.
 - [ ] Synchronize the Devpost project with the exact verified release.
-- [ ] Request explicit owner review before merge or submission mutation.
+- [ ] Request explicit owner approval before Devpost mutation or final submission.
 
 ## Current owner-controlled delivery tasks
 
-No active blocker remains for PR merge readiness. The current public fixture demo is verified;
-final video publication and Devpost synchronization remain owner-controlled delivery tasks.
+No active technical blocker remains for the published v0.1.0 release or current public fixture demo.
+Final video publication, live desktop/mobile review, and Devpost synchronization remain
+owner-controlled delivery tasks.
 
 1. A future public **Live DataHub** deployment requires its own authenticated account, governed
    credentials, and persistent audit/privacy state. It is separate from the zero-cost fixture demo.

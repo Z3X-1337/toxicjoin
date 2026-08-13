@@ -29,6 +29,22 @@ database, receipts, and disclosure ledger are deliberately temporary and can res
 restart, or redeploy; that is expected demo behavior, not a loss of production audit evidence.
 The deployment PR records the exact deployed source revision and zero-cost verification details.
 
+## Current Release
+
+[**ToxicJoin v0.1.0**](https://github.com/Z3X-1337/toxicjoin/releases/tag/v0.1.0) is the
+current evidence-bound release. The annotated `v0.1.0` tag resolves to
+[`4bf3a46dcbf6cf6a184067263102475e140abb04`](https://github.com/Z3X-1337/toxicjoin/commit/4bf3a46dcbf6cf6a184067263102475e140abb04),
+the exact `main` commit from which the release was published. Later documentation-only commits may
+advance `main` without changing the frozen release identity.
+
+The [Generated Release Manifest](https://github.com/Z3X-1337/toxicjoin/actions/runs/31699422703),
+[Phase 9 release verification](https://github.com/Z3X-1337/toxicjoin/actions/runs/31699794721),
+and [Exact-SHA Live DataHub evidence](https://github.com/Z3X-1337/toxicjoin/actions/runs/31699350889)
+all completed successfully for that exact commit. Phase 9 verifies the release identity and attached
+asset checksums at publication time. This is an exact-SHA, evidence-bound claim; it does not claim
+that GitHub's immutable-release setting is enabled or that the annotated tag is cryptographically
+signed.
+
 ## What is proven
 
 - **30-case regression corpus:** 30/30 expected decisions, reason codes and effective outcomes; **zero false allows**.

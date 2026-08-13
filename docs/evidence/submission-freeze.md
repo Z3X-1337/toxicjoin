@@ -42,13 +42,16 @@ The exact candidate head completed successfully:
 
 The generated release workflow remains the revision-level release authority. This document records the last engineering baseline; later documentation-only commits do not imply new runtime behavior.
 
-Final submission-documentation `main` audited before Phase 2:
+## Current verified release identity
 
-```text
-1aead67c339c218f5858a9eb9de05868cdc3a0e5
-```
+The current release authority is [ToxicJoin v0.1.0](https://github.com/Z3X-1337/toxicjoin/releases/tag/v0.1.0):
 
-That later SHA does not retroactively change the environment or revision identity of retained runtime or Live DataHub evidence.
+- the annotated `v0.1.0` tag resolves to `4bf3a46dcbf6cf6a184067263102475e140abb04`, the exact `main` commit used for publication;
+- the [Generated Release Manifest](https://github.com/Z3X-1337/toxicjoin/actions/runs/31699422703) completed in release mode for that exact SHA;
+- [Phase 9](https://github.com/Z3X-1337/toxicjoin/actions/runs/31699794721) verified the tag, Release, attached assets, checksums, and exact source identity at publication time;
+- the [Exact-SHA Live DataHub run](https://github.com/Z3X-1337/toxicjoin/actions/runs/31699350889) completed successfully for the same SHA.
+
+The earlier submission-documentation SHA `1aead67c339c218f5858a9eb9de05868cdc3a0e5` and the Phase 16 SHAs above remain historical provenance, not current release identity. Later documentation-only commits may advance `main` without changing the frozen `v0.1.0` identity. The release is described as exact-SHA and evidence-bound; this document does not claim that GitHub's immutable-release setting is enabled or that the annotated tag is cryptographically signed.
 
 ## Product claim
 
@@ -83,7 +86,7 @@ read-only DataHub MCP
 
 The current source also contains the reusable Compositional Risk Review Agent Skill under `skills/compositional-risk-review/`.
 
-The Live DataHub evidence is retained as exact evidence for the revision on which it was produced. It was **not** rerun on final `main` `1aead67c339c218f5858a9eb9de05868cdc3a0e5`. Later unrelated hardening and unchanged-source applicability arguments are not described as an exact-final-SHA live rerun.
+Live DataHub evidence remains revision-bound. The current release has an exact-SHA run on `4bf3a46dcbf6cf6a184067263102475e140abb04`: [Phase 5 Exact-SHA Live DataHub Evidence](https://github.com/Z3X-1337/toxicjoin/actions/runs/31699350889). Historical runs prove only their recorded revisions and are not relabeled as current evidence.
 
 ## Stable runtime vs staged vNext
 
@@ -155,8 +158,10 @@ For **Build with DataHub: The Agent Hackathon**:
 - executable setup instructions;
 - judge testing guide;
 - sample outputs under `examples/`;
-- public deterministic replay URL;
-- real DataHub OSS + official MCP evidence;
+- current public synthetic-fixture demo at https://toxicjoin-public-demo.onrender.com/;
+- historical deterministic replay URL, explicitly labeled as historical;
+- published [v0.1.0 release](https://github.com/Z3X-1337/toxicjoin/releases/tag/v0.1.0) with exact-SHA evidence assets;
+- real DataHub OSS + official MCP evidence on the release SHA;
 - DataHub Skill;
 - open-source DataHub contribution recorded honestly as open/pending review.
 
@@ -196,7 +201,8 @@ Before submission, the Devpost write-up must ensure that:
 - benchmark claims retain their bounded-regression qualifier;
 - DataHub write-back plus fresh read-back is prominent;
 - the open DataHub Skills contribution is described as open/pending review, not merged;
-- the public replay is labeled historical and policy `0.1.0`;
+- the Current Public Demo is described as a temporary synthetic fixture over the real protected path, not Live DataHub;
+- the Vercel replay is labeled historical and policy `0.1.0`;
 - PR #118 is described only as off-main draft work when mentioned;
 - the video URL is public and under three minutes.
 
