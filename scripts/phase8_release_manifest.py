@@ -46,13 +46,20 @@ def validate_phase8(
         raise ValueError("Phase 8 created an immutable release prematurely")
     if set(retention.get("lifecycle_classes", [])) != {"current", "historical"}:
         raise ValueError("Phase 8 lifecycle classification is incomplete")
-    if set(retention.get("purpose_classes", [])) != {
+    required_purpose_classes = {
         "operational",
         "preview",
         "submission",
-    }:
+    }
+    if set(retention.get("purpose_classes", [])) != required_purpose_classes:
         raise ValueError("Phase 8 purpose classification is incomplete")
-    if not isinstance(retention.get("object_count"), int) or retention["object_count"] < 4:
+    # Every retained object has exactly one purpose. Requiring coverage of every
+    # active purpose class is the meaningful lower bound; a retired evidence
+    # provider must not force an unrelated fourth placeholder object.
+    if (
+        not isinstance(retention.get("object_count"), int)
+        or retention["object_count"] < len(required_purpose_classes)
+    ):
         raise ValueError("Phase 8 retained object count is incomplete")
     if not isinstance(retrieval, dict) or retrieval.get("verified") is not True:
         raise ValueError("Phase 8 retrieval proof is missing")

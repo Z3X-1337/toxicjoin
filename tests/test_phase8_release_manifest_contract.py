@@ -55,7 +55,7 @@ def test_release_manifest_validator_requires_durable_retrieval() -> None:
             "storage_backend": "git-content-addressed",
             "independent_of_actions_expiry": True,
             "catalog_sha256": "d" * 64,
-            "object_count": 4,
+            "object_count": 3,
             "lifecycle_classes": ["current", "historical"],
             "purpose_classes": [
                 "operational",
@@ -83,6 +83,7 @@ def test_release_manifest_validator_requires_durable_retrieval() -> None:
     )
     result = RELEASE.validate_phase8({RELEASE.ARTIFACT_NAME: bundle}, source_sha)
     assert result["retrieval_verified"] is True
+    assert result["retained_object_count"] == 3
     payload["retrieval"]["retrieved_sha256"] = "f" * 64
     payload["report_sha256"] = ARTIFACTS.canonical_sha256(
         {key: value for key, value in payload.items() if key != "report_sha256"}
