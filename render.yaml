@@ -1,32 +1,39 @@
-# Render deployment for the public judge interface.
+# Zero-cost Render deployment for the public judge interface.
 #
-# Same posture as fly.toml: FIXTURE mode, open, synthetic warehouse, real pipeline behind it.
-# Live DataHub mode belongs in a separate service with its own secrets — see
-# docs/deploy-public.md.
+# This Blueprint creates exactly one Free web service. It intentionally defines no database,
+# disk, add-on, or secret: the synthetic fixture is seeded locally at startup and all demo
+# state is discarded on restart, redeploy, or Free-service idle spin-down. Live DataHub mode
+# remains a separate, credentialed deployment and is never configured here.
 
 services:
   - type: web
-    name: toxicjoin
+    name: toxicjoin-public-demo
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: starter
+    plan: free
     region: frankfurt
     healthCheckPath: /api/health
-    autoDeploy: false
+    # Deploy manually from this branch after inspecting the Render creation screen. This
+    # avoids an unreviewed deploy after a later push and never uses a keep-alive workaround.
+    autoDeployTrigger: "off"
 
     envVars:
       - key: TOXICJOIN_HOST
         value: "0.0.0.0"
+      # Keep Render's routed port aligned with the Docker health check and app binding.
+      - key: PORT
+        value: "8000"
       - key: TOXICJOIN_PORT
         value: "8000"
       - key: TOXICJOIN_WEB_DIST
         value: /app/apps/web/dist
+      - key: TOXICJOIN_MODE
+        value: fixture
 
-      # Render's free and starter tiers have an ephemeral filesystem, so the runtime directory
-      # is placed under /tmp rather than a mount. Receipts and the disclosure ledger therefore
-      # do not survive a restart. That is acceptable for a demo — and only for a demo: a live
-      # deployment must persist both, because receipts are audit evidence and the ledger is
-      # cumulative privacy state whose loss would reset every principal's budget.
+      # A Free instance has an ephemeral filesystem and cannot attach a persistent disk. Keep
+      # the runtime directory under /tmp: it contains only a deterministic synthetic DuckDB
+      # fixture plus demo receipts and the demo disclosure ledger. These are recreated after a
+      # restart; no real rows, credentials, or Live DataHub evidence are placed in this service.
       - key: TOXICJOIN_RUNTIME_DIR
         value: /tmp/toxicjoin
 
