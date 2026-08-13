@@ -34,11 +34,11 @@ execution.
 
 The reviewed `main` configuration in `render.yaml` defines exactly one Docker **Web Service**
 with `plan: free`. It defines no Render Postgres database, persistent disk, add-on, secret, paid
-instance, or keep-alive process. The existing Render service still runs the previously reviewed
-image and has not yet been retargeted to `main`. Retargeting and a manual deployment from reviewed
-`main` are a separate deployment step. When that step is performed, keep manual deploys enabled;
-the service must not deploy automatically on subsequent pushes, and the Render screen must show a
-total of **$0.00** with no payment method requested.
+instance, or keep-alive process. The service uses manual deployments and `autoDeployTrigger: off`
+must remain enabled. Before making any release claim, verify in Render that **Source Branch** is
+`main` and that the deployed commit equals the asserted SHA; the Render deployment record is the
+authority for the exact published revision. The service must remain at **$0.00** with no payment
+method required.
 
 The service explicitly runs `TOXICJOIN_MODE=fixture`, so it initializes the deterministic
 synthetic judge warehouse using the real parser, policy engine, read-only executor, independent
