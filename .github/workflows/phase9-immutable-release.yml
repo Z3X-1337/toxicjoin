@@ -285,7 +285,7 @@ jobs:
           done
           echo "Configured tag and Release state remained unchanged"
       - name: Upload exact-head release preview
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: phase9-immutable-release-preview
           path: artifacts/phase9/preview
@@ -478,7 +478,7 @@ jobs:
           assert report["tag_resolved_sha"] == "${{ env.PHASE9_SOURCE_SHA }}"
           PY
       - name: Upload release-identity verification evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: phase9-immutable-release-verification
           path: |
