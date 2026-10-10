@@ -163,7 +163,7 @@ jobs:
           --output-dir "${{ env.PHASE3_EVIDENCE_DIR }}"
 
       - name: Upload exact-platform bootstrap evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: phase3-bootstrap-${{ matrix.os }}-python-${{ matrix.python }}
           path: ${{ env.PHASE3_EVIDENCE_DIR }}/
@@ -210,7 +210,7 @@ jobs:
 
       - name: Upload benchmark evidence
         if: matrix.python-version == '3.11.15'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: toxicjoin-benchmark
           path: artifacts/benchmark/
@@ -225,7 +225,7 @@ jobs:
 
       - name: Upload PPMC hard-gate evidence
         if: matrix.python-version == '3.11.15'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: toxicjoin-ppmc-hard-gate
           path: artifacts/ppmc-hard-gate/
@@ -234,7 +234,7 @@ jobs:
 
       - name: Upload test diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: pytest-${{ matrix.python-version }}
           path: pytest-${{ matrix.python-version }}.log
@@ -273,7 +273,7 @@ jobs:
           npm run check 2>&1 | tee web-check.log
 
       - name: Upload generated package lock
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: toxicjoin-web-lock
           path: apps/web/package-lock.json
@@ -282,7 +282,7 @@ jobs:
 
       - name: Upload judge interface build
         if: success()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: toxicjoin-judge-interface
           path: apps/web/dist/
@@ -291,7 +291,7 @@ jobs:
 
       - name: Upload frontend diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: toxicjoin-web-check
           path: apps/web/web-check.log
@@ -425,7 +425,7 @@ jobs:
 
       - name: Upload container diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: toxicjoin-container-log
           path: toxicjoin-container.log

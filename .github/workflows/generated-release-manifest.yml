@@ -138,7 +138,7 @@ jobs:
               assert payload["gate_summary"][key] == []
           PY
       - name: Upload exact-candidate release manifest
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: toxicjoin-candidate-release-manifest
           path: artifacts/release/candidate-release-manifest.json
@@ -192,7 +192,7 @@ jobs:
             --base-main-sha "${{ steps.identity.outputs.current_main_sha }}" \
             --output artifacts/release/release-manifest.json
       - name: Upload exact-main release manifest
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: toxicjoin-generated-release-manifest
           path: artifacts/release/release-manifest.json

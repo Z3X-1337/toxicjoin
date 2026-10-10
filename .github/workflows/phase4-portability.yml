@@ -87,7 +87,7 @@ jobs:
           --output-dir "${{ env.PHASE4_EVIDENCE_DIR }}"
       - name: Upload exact-platform Phase 4 evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: phase4-portability-${{ matrix.os }}-python-${{ matrix.python }}
           path: ${{ env.PHASE4_EVIDENCE_DIR }}/
@@ -122,7 +122,7 @@ jobs:
           --output-dir .toxicjoin/phase4-parity
       - name: Upload Phase 4 parity comparison
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: phase4-portability-parity
           path: .toxicjoin/phase4-parity/
